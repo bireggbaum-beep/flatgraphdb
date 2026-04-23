@@ -2,7 +2,7 @@
 FLATGRAPH - Leichtgewichtige, filebasierte Graph-Datenbank fuer Python
 =============================================================================
 
-Version:  2.0
+Version:  2.1
 Stand:    April 2026
 Lizenz:   Privatprojekt, keine Lizenz vergeben
 Autor:    [User]
@@ -18,7 +18,7 @@ INHALTSVERZEICHNIS
 =============================================================================
 
   1. Zweck und Philosophie
-  2. Wann Flatgraph passt - und wann nicht
+  2. Leistungsbeschreibung
   3. Verzeichnisstruktur auf der Platte
   4. Schnellstart
   5. Kernkonzepte
@@ -65,27 +65,99 @@ Leitprinzipien:
 
 
 =============================================================================
-2. WANN FLATGRAPH PASST - UND WANN NICHT
+2. LEISTUNGSBESCHREIBUNG
 =============================================================================
 
-GEEIGNET fuer:
+2.1 POSITIONIERUNG
+------------------
+FlatGraphDB liegt zwischen einfachen JSON-Dicts (kein Beziehungsmodell)
+und vollstaendigen Datenbanksystemen (zu gross, zu viele Abhaengigkeiten).
 
-  - Persoenliche und kleine Team-Projekte mit einigen hundert bis wenigen
-    tausend Objekten pro Collection
-  - Strukturierte Datenmodelle mit vielen verschiedenen Beziehungstypen
-  - Use-Cases, wo Versionierung via Git oder manuelle Inspektion wichtig ist
-  - Single-User oder sequenzielle Prozesse
-  - Faelle, wo Schemaflexibilitaet wichtiger ist als Performance
+  Entscheidungshilfe:
 
-NICHT GEEIGNET fuer:
+  Nur Objekte, keine Beziehungen       -> dict / TinyDB
+  Objekte + Beziehungen, bis ~5k Nodes -> FlatGraphDB       <- hier
+  Hohe Parallelitaet oder >10k Nodes   -> SQLite + Erweiterung
+  Komplexe Graph-Queries, Produktion   -> Neo4j / ArangoDB
 
-  - Hohe Parallelitaet mit vielen gleichzeitigen Schreibzugriffen
-    (dann entweder FileLocker ergaenzen oder SQLite nehmen)
-  - Datenmengen im fuenfstelligen Bereich oder grosser pro Collection
-    (lineares Scannen wird sichtbar langsam)
-  - Echte Volltextsuche ueber grosse Textmengen (FTS fehlt)
-  - Transaktionen ueber mehrere Operationen hinweg
-  - Produktiv-Systeme mit Compliance-Anforderungen
+
+2.2 LEISTUNGEN
+--------------
+Datenhaltung:
+  - Nodes in typisierten Collections (eine JSON-Datei pro Collection)
+  - Edges in typisierten Beziehungsdateien (eine JSON-Datei pro rel_type)
+  - Beliebige Felder pro Node und Edge, kein erzwungenes Schema
+  - Optionale Schema-Validierung pro Collection (Pflichtfelder + Typen)
+  - Duplicate-Schutz: create_node wirft Fehler bei bereits vorhandener ID
+  - Asset-Verwaltung: binaere Dateien im Vault, Archivierung bei Loeschung
+
+Zugriff:
+  - RAM-Cache: alle Reads in Mikrosekunden nach initialem Ladevorgang
+  - Atomic Writes: kein Datenverlust bei Absturz (temp + rename)
+  - Explizite Fehler bei beschaedigten JSON-Dateien (kein stiller Datenverlust)
+  - Isolierte Copies bei allen Read-Methoden (kein Cache-Aliasing)
+
+Beziehungen:
+  - Gerichtete Edges mit frei waehlbarem Beziehungstyp
+  - Metadaten direkt am Edge (Menge, Reihenfolge, Prioritaet, ...)
+  - Traversal ein- und ausgehend (direction=in/out)
+  - Filter nach Beziehungstyp und Ziel-Collection
+  - BFS-Traversal ueber beliebig viele Hops (traverse)
+  - Kettenabfragen ueber gemischte Beziehungstypen (collect_related)
+  - Cascade-Delete: Ziel-Node stirbt mit Quell-Node (transitiv)
+
+Wartung:
+  - Soft-Delete: Node unsichtbar, rueckholbar bis GC laeuft
+  - Restore: Soft-Delete rueckgaengig machen
+  - Garbage Collector (MaintenanceEngine): 3-Phasen-Bereinigung
+    (Scan -> Cascade -> Purge), idempotent und wiederanlauffaehig
+  - Autoincrement-IDs mit Prefix und Zero-Padding (next_id)
+
+
+2.3 KAPAZITAETSGRENZEN
+-----------------------
+Richtwerte basierend auf der Architektur (lineares Scannen, vollstaendiger
+Datei-Rewrite bei jedem Schreibvorgang einer Collection/eines Edge-Typs):
+
+  Nodes pro Collection      bis ~5.000   problemlos
+                            bis ~20.000  spuerbar langsamer
+                            ueber 20.000 andere Loesung waehlen
+
+  Edges pro rel_type        bis ~5.000   problemlos
+                            (eine Datei pro Typ, groessere Gesamtmengen
+                            moeglich ohne gegenseitige Beeinflussung)
+
+  Initialer Ladevorgang     einmalig beim Start; danach nur RAM-Cache
+                            10k Nodes + 10k Edges: ca. 1-2 Sekunden
+
+  Schreiblatenz             1-10 ms pro Operation (ein Datei-Write)
+
+
+2.4 EIGNUNGSRAHMEN
+------------------
+FlatGraphDB passt wenn:
+
+  - Single-Process oder sequenzielle Schreibzugriffe (ein Prozess schreibt)
+  - Datenmengen im dreistelligen bis niedrigen vierstelligen Bereich
+  - Beziehungsmodell mit mehreren verschiedenen Typen benoetigt wird
+  - Daten menschenlesbar bleiben sollen (Git, rsync, manuell editierbar)
+  - Kein externer Datenbankserver gewuenscht (embedded, zero deployment)
+  - Schemaflexibilitaet wichtig ist (neue Felder ohne Migration hinzufuegbar)
+  - Persoenliche Tools, Prototypen, kleine Team-Werkzeuge gebaut werden
+
+
+2.5 AUSSCHLUSSKRITERIEN
+-----------------------
+FlatGraphDB passt NICHT wenn:
+
+  - Mehrere Prozesse gleichzeitig schreiben (kein File-Locking, Issue #1)
+  - Atomare Multi-Operationen benoetigt werden (kein Transaction-Manager,
+    Issue #2)
+  - Abfragen nach Feldinhalten noetig sind (kein Feldindex, nur lineares
+    Scannen via list_nodes + Python-Filter)
+  - Volltext-Suche benoetigt wird (nicht vorhanden)
+  - Compliance- oder Audit-Anforderungen bestehen
+  - Produktiv-System mit definierten SLA-Anforderungen
 
 
 =============================================================================
@@ -96,19 +168,25 @@ Flatgraph legt beim Initialisieren folgende Ordnerstruktur an:
 
   projekt_root/
     datenbank/
-      nodes/              <- Node-Collections als JSON-Dateien
+      nodes/                  <- Node-Collections als JSON-Dateien
         dokumente.json
         equipment.json
         ...
-      edges/              <- Beziehungen (alle in einer Datei)
-        objektlinks.json
-      maintenance.log     <- Logbuch der GC-Laeufe
-    vault/                <- Aktive Binaerdateien (PDFs, Bilder, ...)
-    vault_archive/        <- Quarantaene fuer physisch geloeschte Assets
+      edges/                  <- eine JSON-Datei pro Beziehungstyp
+        hat_subprozess.json
+        gehoert_zu.json
+        ...
+      maintenance.log         <- Logbuch der GC-Laeufe
+    vault/                    <- Aktive Binaerdateien (PDFs, Bilder, ...)
+    vault_archive/            <- Quarantaene fuer physisch geloeschte Assets
 
-Jede Node-Collection ist ein flaches Dict {node_id: node_data}. Die
-Edge-Datei ist ein flaches Dict {edge_id: edge_data}. Alle Felder sind
-direkt lesbar und editierbar.
+Jede Node-Collection und jeder Edge-Typ ist ein flaches Dict
+{id: daten}. Neue Edge-Typen entstehen automatisch beim ersten
+create_edge() mit diesem Typ. Alle Dateien sind direkt lesbar
+und bei Bedarf manuell editierbar.
+
+Migration: Existiert noch eine alte objektlinks.json, wird sie beim
+naechsten Start automatisch in Einzel-Dateien aufgeteilt und geloescht.
 
 
 =============================================================================
