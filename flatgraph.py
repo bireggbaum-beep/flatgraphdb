@@ -58,27 +58,61 @@ class FlatGraphDB:
         for path in self.dirs.values():
             os.makedirs(path, exist_ok=True)
 
-        # Zentrale Edge-Datei
-        self.edges_file = os.path.join(self.dirs["edges"], "objektlinks.json")
-
-        # RAM-Cache
+        # RAM-Cache: edges = {rel_type: {edge_id: edge_data}}
         self._cache = {"nodes": {}, "edges": {}}
+        self._edge_type_index = {}  # {edge_id: rel_type} - RAM-only Reverse-Index
         self._initialize_cache()
 
     # ------------------------------------------------------------------
     # Interne Helfer
     # ------------------------------------------------------------------
 
+    def _edges_file(self, rel_type):
+        """Pfad zur Edge-Datei fuer einen rel_type."""
+        safe = rel_type.replace("/", "_").replace("\\", "_")
+        return os.path.join(self.dirs["edges"], f"{safe}.json")
+
+    def _persist_edge_type(self, rel_type):
+        """Schreibt einen Edge-Typ atomar auf Disk."""
+        self._save_json_atomic(
+            self._edges_file(rel_type),
+            self._cache["edges"].get(rel_type, {})
+        )
+
+    def _migrate_legacy_edges(self):
+        """Migriert objektlinks.json -> eine Datei pro rel_type."""
+        legacy = os.path.join(self.dirs["edges"], "objektlinks.json")
+        if not os.path.exists(legacy):
+            return
+        all_edges = self._load_json_from_disk(legacy)
+        by_type = {}
+        for edge_id, edge_data in all_edges.items():
+            t = edge_data.get("typ", "_unknown")
+            by_type.setdefault(t, {})[edge_id] = edge_data
+        for t, edges in by_type.items():
+            self._save_json_atomic(self._edges_file(t), edges)
+        os.remove(legacy)
+
     def _initialize_cache(self):
         """Laedt alle JSON-Dateien einmalig in den RAM."""
-        self._cache["edges"] = self._load_json_from_disk(self.edges_file)
-
         if os.path.exists(self.dirs["nodes"]):
             for filename in os.listdir(self.dirs["nodes"]):
                 if filename.endswith(".json"):
                     collection_name = filename.replace(".json", "")
                     path = os.path.join(self.dirs["nodes"], filename)
                     self._cache["nodes"][collection_name] = self._load_json_from_disk(path)
+
+        self._migrate_legacy_edges()
+
+        if os.path.exists(self.dirs["edges"]):
+            for filename in os.listdir(self.dirs["edges"]):
+                if filename.endswith(".json"):
+                    rel_type = filename[:-5]
+                    path = os.path.join(self.dirs["edges"], filename)
+                    edges = self._load_json_from_disk(path)
+                    self._cache["edges"][rel_type] = edges
+                    for edge_id in edges:
+                        self._edge_type_index[edge_id] = rel_type
 
     def _load_json_from_disk(self, filepath):
         """Laedt JSON-Datei vom Disk. Fehlende Datei = leer; beschaedigte Datei = Ausnahme."""
@@ -103,10 +137,6 @@ class FlatGraphDB:
         """Schreibt eine Node-Collection vom RAM auf Disk."""
         path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
         self._save_json_atomic(path, self._cache["nodes"].get(collection_name, {}))
-
-    def _persist_edges(self):
-        """Schreibt Edges vom RAM auf Disk."""
-        self._save_json_atomic(self.edges_file, self._cache["edges"])
 
     def _validate_node(self, collection_name, data):
         """Prueft Daten gegen das Schema, falls eines definiert ist."""
@@ -295,20 +325,26 @@ class FlatGraphDB:
             safe_meta = {k: v for k, v in meta.items() if k not in _RESERVED_EDGE_FIELDS}
             edge_data.update(safe_meta)
 
-        self._cache["edges"][edge_id] = edge_data
-        self._persist_edges()
+        self._cache["edges"].setdefault(rel_type, {})[edge_id] = edge_data
+        self._edge_type_index[edge_id] = rel_type
+        self._persist_edge_type(rel_type)
         return edge_id
 
     def get_edge(self, edge_id):
         """Liest ein Edge-Objekt."""
-        edge = self._cache["edges"].get(edge_id)
+        rel_type = self._edge_type_index.get(edge_id)
+        if rel_type is None:
+            return None
+        edge = self._cache["edges"].get(rel_type, {}).get(edge_id)
         return copy.deepcopy(edge) if edge is not None else None
 
     def delete_edge(self, edge_id):
         """Loescht eine Kante physisch (Edges haben keinen Soft-Delete)."""
-        if edge_id in self._cache["edges"]:
-            del self._cache["edges"][edge_id]
-            self._persist_edges()
+        rel_type = self._edge_type_index.get(edge_id)
+        if rel_type and edge_id in self._cache["edges"].get(rel_type, {}):
+            del self._cache["edges"][rel_type][edge_id]
+            del self._edge_type_index[edge_id]
+            self._persist_edge_type(rel_type)
             return True
         return False
 
@@ -317,11 +353,15 @@ class FlatGraphDB:
         Gibt alle Edges zurueck, optional gefiltert nach Typ.
         Format: {edge_id: edge_data}
         """
-        if rel_type is None:
-            return {eid: copy.deepcopy(e) for eid, e in self._cache["edges"].items()}
+        if rel_type is not None:
+            return {
+                eid: copy.deepcopy(e)
+                for eid, e in self._cache["edges"].get(rel_type, {}).items()
+            }
         return {
-            eid: copy.deepcopy(e) for eid, e in self._cache["edges"].items()
-            if e.get("typ") == rel_type
+            eid: copy.deepcopy(e)
+            for bucket in self._cache["edges"].values()
+            for eid, e in bucket.items()
         }
 
     def get_connected(self, node_ref, direction="out", rel_type=None,
@@ -335,11 +375,13 @@ class FlatGraphDB:
         :param include_deleted: soft-deleted Targets mit einschliessen
         :return: Liste von Node-Refs
         """
-        results = []
-        for edge in self._cache["edges"].values():
-            if rel_type and edge.get("typ") != rel_type:
-                continue
+        if rel_type:
+            buckets = [self._cache["edges"].get(rel_type, {}).values()]
+        else:
+            buckets = [b.values() for b in self._cache["edges"].values()]
 
+        results = []
+        for edge in (e for b in buckets for e in b):
             if direction == "out" and edge["quelle"] == node_ref:
                 target = edge["ziel"]
             elif direction == "in" and edge["ziel"] == node_ref:
@@ -367,14 +409,18 @@ class FlatGraphDB:
         Wie get_connected, aber gibt die vollen Edge-Objekte zurueck (inkl. Metadaten).
         Format: [(edge_id, edge_data), ...]
         """
+        if rel_type:
+            buckets = [(rel_type, self._cache["edges"].get(rel_type, {}))]
+        else:
+            buckets = list(self._cache["edges"].items())
+
         results = []
-        for edge_id, edge in self._cache["edges"].items():
-            if rel_type and edge.get("typ") != rel_type:
-                continue
-            if direction == "out" and edge["quelle"] == node_ref:
-                results.append((edge_id, copy.deepcopy(edge)))
-            elif direction == "in" and edge["ziel"] == node_ref:
-                results.append((edge_id, copy.deepcopy(edge)))
+        for _, bucket in buckets:
+            for edge_id, edge in bucket.items():
+                if direction == "out" and edge["quelle"] == node_ref:
+                    results.append((edge_id, copy.deepcopy(edge)))
+                elif direction == "in" and edge["ziel"] == node_ref:
+                    results.append((edge_id, copy.deepcopy(edge)))
         return results
 
     def traverse(self, start_ref, rel_type=None, direction="out",
@@ -546,7 +592,8 @@ class MaintenanceEngine(FlatGraphDB):
         changed = True
         while changed:
             changed = False
-            for edge in self._cache["edges"].values():
+            all_edges = [e for b in self._cache["edges"].values() for e in b.values()]
+            for edge in all_edges:
                 if not edge.get("_cascade_delete"):
                     continue
                 # Quelle ist markiert, Ziel noch nicht -> expandieren
@@ -578,16 +625,21 @@ class MaintenanceEngine(FlatGraphDB):
 
     def _cascade_delete_edges(self, refs_to_delete):
         """Phase B: entfernt alle Edges, die auf zu loeschende Nodes zeigen."""
-        edges_to_remove = [
-            eid for eid, e in self._cache["edges"].items()
-            if e["quelle"] in refs_to_delete or e["ziel"] in refs_to_delete
-        ]
-        for eid in edges_to_remove:
-            del self._cache["edges"][eid]
-
-        if edges_to_remove:
-            self._persist_edges()
-        return len(edges_to_remove)
+        dirty_types = set()
+        count = 0
+        for rel_type, bucket in self._cache["edges"].items():
+            to_remove = [
+                eid for eid, e in bucket.items()
+                if e["quelle"] in refs_to_delete or e["ziel"] in refs_to_delete
+            ]
+            for eid in to_remove:
+                del bucket[eid]
+                self._edge_type_index.pop(eid, None)
+                dirty_types.add(rel_type)
+                count += 1
+        for rel_type in dirty_types:
+            self._persist_edge_type(rel_type)
+        return count
 
     def _purge_node(self, collection_name, node_id, node_data):
         """
