@@ -24,11 +24,14 @@ Features:
 =============================================================================
 """
 
+import copy
 import os
 import json
 import shutil
 import uuid
 from datetime import datetime, timezone
+
+_RESERVED_EDGE_FIELDS = {"quelle", "ziel", "typ", "erstellt_am", "_cascade_delete"}
 
 
 # =============================================================================
@@ -78,14 +81,16 @@ class FlatGraphDB:
                     self._cache["nodes"][collection_name] = self._load_json_from_disk(path)
 
     def _load_json_from_disk(self, filepath):
-        """Laedt JSON-Datei sicher. Gibt leeres Dict bei Fehler zurueck."""
+        """Laedt JSON-Datei vom Disk. Fehlende Datei = leer; beschaedigte Datei = Ausnahme."""
         if not os.path.exists(filepath):
             return {}
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Datei '{filepath}' ist kein gueltiges JSON: {e}") from e
+        except IOError as e:
+            raise RuntimeError(f"Datei '{filepath}' konnte nicht gelesen werden: {e}") from e
 
     def _save_json_atomic(self, filepath, data):
         """Atomic Write: erst in .tmp schreiben, dann os.replace()."""
@@ -128,13 +133,20 @@ class FlatGraphDB:
         """
         Erstellt einen Knoten.
         :return: Node-Referenz als String "collection/id"
+        :raises KeyError: wenn node_id in dieser Collection bereits existiert
         """
         self._validate_node(collection_name, data)
 
         if collection_name not in self._cache["nodes"]:
             self._cache["nodes"][collection_name] = {}
 
-        self._cache["nodes"][collection_name][node_id] = data
+        if node_id in self._cache["nodes"][collection_name]:
+            raise KeyError(
+                f"Node '{node_id}' existiert bereits in Collection '{collection_name}'. "
+                f"update_node() verwenden um Felder zu aendern."
+            )
+
+        self._cache["nodes"][collection_name][node_id] = copy.deepcopy(data)
         self._persist_collection(collection_name)
         return f"{collection_name}/{node_id}"
 
@@ -150,7 +162,7 @@ class FlatGraphDB:
 
         node_data = self._cache["nodes"].get(col, {}).get(n_id)
         if node_data and not self._is_deleted(node_data):
-            return node_data
+            return copy.deepcopy(node_data)
         return None
 
     def get_node_raw(self, node_ref):
@@ -162,7 +174,8 @@ class FlatGraphDB:
             col, n_id = node_ref.split("/", 1)
         except ValueError:
             return None
-        return self._cache["nodes"].get(col, {}).get(n_id)
+        raw = self._cache["nodes"].get(col, {}).get(n_id)
+        return copy.deepcopy(raw) if raw is not None else None
 
     def update_node(self, collection_name, node_id, update_data):
         """
@@ -195,8 +208,8 @@ class FlatGraphDB:
         """
         col = self._cache["nodes"].get(collection_name, {})
         if include_deleted:
-            return dict(col)
-        return {nid: data for nid, data in col.items() if not self._is_deleted(data)}
+            return {nid: copy.deepcopy(data) for nid, data in col.items()}
+        return {nid: copy.deepcopy(data) for nid, data in col.items() if not self._is_deleted(data)}
 
     def list_collections(self):
         """Gibt Namen aller bekannten Node-Collections zurueck."""
@@ -264,6 +277,11 @@ class FlatGraphDB:
                                Subprozesse die zu einem Hauptprozess gehoeren, etc.
         :return: edge_id
         """
+        if self.get_node(source_ref) is None:
+            raise ValueError(f"Quell-Node '{source_ref}' existiert nicht oder ist geloescht.")
+        if self.get_node(target_ref) is None:
+            raise ValueError(f"Ziel-Node '{target_ref}' existiert nicht oder ist geloescht.")
+
         edge_id = f"link_{uuid.uuid4().hex[:12]}"
         edge_data = {
             "quelle": source_ref,
@@ -274,7 +292,8 @@ class FlatGraphDB:
         if cascade_delete:
             edge_data["_cascade_delete"] = True
         if meta:
-            edge_data.update(meta)
+            safe_meta = {k: v for k, v in meta.items() if k not in _RESERVED_EDGE_FIELDS}
+            edge_data.update(safe_meta)
 
         self._cache["edges"][edge_id] = edge_data
         self._persist_edges()
@@ -282,7 +301,8 @@ class FlatGraphDB:
 
     def get_edge(self, edge_id):
         """Liest ein Edge-Objekt."""
-        return self._cache["edges"].get(edge_id)
+        edge = self._cache["edges"].get(edge_id)
+        return copy.deepcopy(edge) if edge is not None else None
 
     def delete_edge(self, edge_id):
         """Loescht eine Kante physisch (Edges haben keinen Soft-Delete)."""
@@ -298,9 +318,9 @@ class FlatGraphDB:
         Format: {edge_id: edge_data}
         """
         if rel_type is None:
-            return dict(self._cache["edges"])
+            return {eid: copy.deepcopy(e) for eid, e in self._cache["edges"].items()}
         return {
-            eid: e for eid, e in self._cache["edges"].items()
+            eid: copy.deepcopy(e) for eid, e in self._cache["edges"].items()
             if e.get("typ") == rel_type
         }
 
@@ -331,10 +351,12 @@ class FlatGraphDB:
             if target_collection and not target.startswith(f"{target_collection}/"):
                 continue
 
-            # Soft-Deleted rausfiltern (konsistent mit get_node)
+            # Nicht-existente und soft-deleted Targets herausfiltern
             if not include_deleted:
-                raw = self.get_node_raw(target)
-                if self._is_deleted(raw):
+                raw = self._cache["nodes"].get(
+                    target.split("/", 1)[0] if "/" in target else "", {}
+                ).get(target.split("/", 1)[1] if "/" in target else "")
+                if raw is None or self._is_deleted(raw):
                     continue
 
             results.append(target)
@@ -350,9 +372,9 @@ class FlatGraphDB:
             if rel_type and edge.get("typ") != rel_type:
                 continue
             if direction == "out" and edge["quelle"] == node_ref:
-                results.append((edge_id, edge))
+                results.append((edge_id, copy.deepcopy(edge)))
             elif direction == "in" and edge["ziel"] == node_ref:
-                results.append((edge_id, edge))
+                results.append((edge_id, copy.deepcopy(edge)))
         return results
 
     def traverse(self, start_ref, rel_type=None, direction="out",
@@ -577,8 +599,10 @@ class MaintenanceEngine(FlatGraphDB):
         asset_status = None
 
         if asset_path:
-            full_asset_path = os.path.join(self.root, asset_path)
-            if os.path.exists(full_asset_path):
+            vault_real = os.path.realpath(self.dirs["vault"])
+            candidate = os.path.realpath(os.path.join(self.root, asset_path))
+            # Pfad ausserhalb des Vaults wird ignoriert (verhindert Path-Traversal)
+            if candidate.startswith(vault_real + os.sep) and os.path.exists(candidate):
                 if keep_asset:
                     # Datei bleibt im Vault (wird zum Orphan)
                     asset_status = False
@@ -586,13 +610,13 @@ class MaintenanceEngine(FlatGraphDB):
                     # Verschieben nach vault_archive (Sicherheitsnetz)
                     target_path = os.path.join(
                         self.dirs["vault_archive"],
-                        os.path.basename(full_asset_path)
+                        os.path.basename(candidate)
                     )
                     # Namenskonflikt im Archiv vermeiden
                     if os.path.exists(target_path):
                         base, ext = os.path.splitext(target_path)
                         target_path = f"{base}_{uuid.uuid4().hex[:6]}{ext}"
-                    shutil.move(full_asset_path, target_path)
+                    shutil.move(candidate, target_path)
                     asset_status = True
 
         # Node endgueltig entfernen (ALLERLETZTER Schritt -> Idempotenz)
