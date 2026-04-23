@@ -153,9 +153,8 @@ FlatGraphDB passt NICHT wenn:
   - Mehrere Prozesse gleichzeitig schreiben (kein File-Locking, Issue #1)
   - Atomare Multi-Operationen benoetigt werden (kein Transaction-Manager,
     Issue #2)
-  - Abfragen nach Feldinhalten noetig sind (kein Feldindex, nur lineares
-    Scannen via list_nodes + Python-Filter)
-  - Volltext-Suche benoetigt wird (nicht vorhanden)
+  - Komplexe Volltextsuche mit Ranking oder Stemming benoetigt wird
+    (einfache Feldabfragen und Textsuche: Issue #5 in Arbeit)
   - Compliance- oder Audit-Anforderungen bestehen
   - Produktiv-System mit definierten SLA-Anforderungen
 
