@@ -25,8 +25,10 @@ Features:
 """
 
 import copy
+import hashlib
 import os
 import json
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -52,6 +54,7 @@ class FlatGraphDB:
         self.dirs = {
             "nodes": os.path.join(root_dir, "datenbank", "nodes"),
             "edges": os.path.join(root_dir, "datenbank", "edges"),
+            "index": os.path.join(root_dir, "datenbank", "index"),
             "vault": os.path.join(root_dir, "vault"),
             "vault_archive": os.path.join(root_dir, "vault_archive"),
         }
@@ -61,6 +64,8 @@ class FlatGraphDB:
         # RAM-Cache: edges = {rel_type: {edge_id: edge_data}}
         self._cache = {"nodes": {}, "edges": {}}
         self._edge_type_index = {}  # {edge_id: rel_type} - RAM-only Reverse-Index
+        self._index_cache = {}      # {collection: {field: {value_lower: [node_ids]}}}
+        self._dirty_index = set()   # Collections die nach einem Write neu indexiert werden muessen
         self._initialize_cache()
 
     # ------------------------------------------------------------------
@@ -156,6 +161,69 @@ class FlatGraphDB:
         return node_data is not None and "_deletion_flag" in node_data
 
     # ------------------------------------------------------------------
+    # Interne Helfer - Feldindex
+    # ------------------------------------------------------------------
+
+    def _index_file(self, collection):
+        return os.path.join(self.dirs["index"], f"{collection}.json")
+
+    def _collection_checksum(self, collection):
+        keys = sorted(self._cache["nodes"].get(collection, {}).keys())
+        return hashlib.md5("|".join(keys).encode()).hexdigest()
+
+    def _mark_index_dirty(self, collection):
+        self._dirty_index.add(collection)
+        self._index_cache.pop(collection, None)
+
+    def _load_index_from_disk(self, collection):
+        """Laedt Index vom Disk. Gibt None zurueck wenn fehlend oder veraltet."""
+        path = self._index_file(collection)
+        if not os.path.exists(path):
+            return None
+        try:
+            data = self._load_json_from_disk(path)
+        except RuntimeError:
+            return None
+        if data.get("_meta", {}).get("checksum") != self._collection_checksum(collection):
+            return None
+        return {k: v for k, v in data.items() if k != "_meta"}
+
+    def _build_field_index(self, collection, field):
+        """Baut den Index fuer ein einzelnes Feld aus dem Cache."""
+        idx = {}
+        for node_id, data in self._cache["nodes"].get(collection, {}).items():
+            if self._is_deleted(data):
+                continue
+            val = data.get(field)
+            if val is not None:
+                idx.setdefault(str(val).lower(), []).append(node_id)
+        return idx
+
+    def _persist_index(self, collection):
+        data = dict(self._index_cache.get(collection, {}))
+        data["_meta"] = {"checksum": self._collection_checksum(collection)}
+        self._save_json_atomic(self._index_file(collection), data)
+
+    def _get_field_index(self, collection, field):
+        """Gibt den Index fuer ein Feld zurueck. Baut ihn bei Bedarf auf."""
+        self._dirty_index.discard(collection)
+
+        if collection in self._index_cache and field in self._index_cache[collection]:
+            return self._index_cache[collection][field]
+
+        if collection not in self._index_cache:
+            loaded = self._load_index_from_disk(collection)
+            if loaded is not None:
+                self._index_cache[collection] = loaded
+                if field in loaded:
+                    return loaded[field]
+
+        field_idx = self._build_field_index(collection, field)
+        self._index_cache.setdefault(collection, {})[field] = field_idx
+        self._persist_index(collection)
+        return field_idx
+
+    # ------------------------------------------------------------------
     # OEFFENTLICHE API - NODES
     # ------------------------------------------------------------------
 
@@ -178,6 +246,7 @@ class FlatGraphDB:
 
         self._cache["nodes"][collection_name][node_id] = copy.deepcopy(data)
         self._persist_collection(collection_name)
+        self._mark_index_dirty(collection_name)
         return f"{collection_name}/{node_id}"
 
     def get_node(self, node_ref):
@@ -229,6 +298,7 @@ class FlatGraphDB:
 
         col_cache[node_id].update(update_data)
         self._persist_collection(collection_name)
+        self._mark_index_dirty(collection_name)
         return True
 
     def list_nodes(self, collection_name, include_deleted=False):
@@ -244,6 +314,54 @@ class FlatGraphDB:
     def list_collections(self):
         """Gibt Namen aller bekannten Node-Collections zurueck."""
         return list(self._cache["nodes"].keys())
+
+    def find_nodes(self, collection_name, match):
+        """
+        Sucht Nodes nach Feldinhalten. Unterstuetzt drei Modi pro Feld:
+
+          Exakt/Substring  {"title": "trocken"}      -> case-insensitive Substring
+          Wildcard         {"title": "LH*Trocken*"}   -> * als Platzhalter
+          Praedikat        {"title": lambda v: ...}   -> freie Logik, linearer Scan
+
+        Mehrere Felder werden mit AND verknuepft.
+        :return: {node_id: node_data}
+        """
+        if not match:
+            return self.list_nodes(collection_name)
+
+        result_ids = None
+
+        for field, criterion in match.items():
+            if callable(criterion):
+                nodes = self._cache["nodes"].get(collection_name, {})
+                matching = {
+                    nid for nid, data in nodes.items()
+                    if not self._is_deleted(data) and criterion(data.get(field))
+                }
+            elif isinstance(criterion, str) and "*" in criterion:
+                pattern = re.compile(
+                    "^" + re.escape(criterion.lower()).replace(r"\*", ".*") + "$"
+                )
+                field_idx = self._get_field_index(collection_name, field)
+                matching = {nid for val, ids in field_idx.items()
+                            if pattern.match(val) for nid in ids}
+            else:
+                needle = str(criterion).lower()
+                field_idx = self._get_field_index(collection_name, field)
+                matching = {nid for val, ids in field_idx.items()
+                            if needle in val for nid in ids}
+
+            result_ids = matching if result_ids is None else result_ids & matching
+
+        if result_ids is None:
+            return {}
+
+        nodes = self._cache["nodes"].get(collection_name, {})
+        return {
+            nid: copy.deepcopy(nodes[nid])
+            for nid in result_ids
+            if nid in nodes and not self._is_deleted(nodes[nid])
+        }
 
     def next_id(self, collection_name, prefix="", padding=0):
         """
@@ -293,6 +411,7 @@ class FlatGraphDB:
         col_cache[node_id].pop("_deletion_flag", None)
         col_cache[node_id].pop("_keep_asset", None)
         self._persist_collection(collection_name)
+        self._mark_index_dirty(collection_name)
         return True
 
     # ------------------------------------------------------------------
@@ -674,6 +793,7 @@ class MaintenanceEngine(FlatGraphDB):
         # Node endgueltig entfernen (ALLERLETZTER Schritt -> Idempotenz)
         del self._cache["nodes"][collection_name][node_id]
         self._persist_collection(collection_name)
+        self._mark_index_dirty(collection_name)
         return asset_status
 
     def _write_maintenance_log(self, stats):
