@@ -6,7 +6,7 @@ Run: pip install flask && python pdms_app.py
 import os
 import json
 from datetime import datetime, timezone
-from flask import Flask, render_template_string, request, redirect, url_for, flash
+from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file
 from flatgraph import FlatGraphDB, MaintenanceEngine
 
 app = Flask(__name__)
@@ -504,15 +504,28 @@ def document_detail(ref):
   <h2>Originaldatei</h2>
   {% if orig_nodes %}
     {% for eid,e,o in orig_nodes %}
-    <div class="kv">
-      <span class="k">Dateiname</span><span class="v">{{o.filename}}</span>
+    <div class="kv" style="margin-bottom:.5rem">
+      <span class="k">Dateiname</span>
+      <span class="v"><a href="/vault/{{o.datei.split('vault/')[-1]}}">{{o.filename}}</a></span>
       <span class="k">Typ</span><span class="v">{{o.file_type}}</span>
-      <span class="k">Pfad</span><span class="v" style="color:#999">{{o.datei}}</span>
+      <span class="k">Hochgeladen</span><span class="v" style="color:#999">{{o.get('uploaded_at','')[:10]}}</span>
     </div>
+    <form class="il" method="post" action="/edge/{{eid}}/delete"
+          onsubmit="return confirm('Originaldatei-Verknüpfung entfernen?')">
+      <button class="btn sm sec">Entfernen</button>
+    </form>
     {% endfor %}
   {% else %}
-  <p style="color:#999;font-size:.85rem">Kein Original angehängt.</p>
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Kein Original angehängt.</p>
   {% endif %}
+  <form method="post" action="/document/{{ref}}/upload"
+        enctype="multipart/form-data" style="margin-top:.75rem">
+    <div class="row">
+      <input type="file" name="file" accept=".pdf,.dxf,.docx,.doc,.xlsx,.txt,.png,.jpg,.dwg"
+             style="flex:1;margin:0;padding:.3rem">
+      <button class="btn sm" type="submit">Hochladen</button>
+    </div>
+  </form>
 </div>
 </div>
 
@@ -637,6 +650,77 @@ def edge_delete(edge_id):
         log_audit(db, edge["quelle"], "link_deleted", old_value=edge_id, new_value=edge.get("ziel",""))
     flash("Edge gelöscht.")
     return redirect(referrer)
+
+
+# =============================================================================
+# FILE UPLOAD / DOWNLOAD
+# =============================================================================
+
+ALLOWED_EXTENSIONS = {"pdf", "dxf", "docx", "doc", "xlsx", "txt", "png", "jpg", "dwg"}
+VAULT_DIR = os.path.join(DB_ROOT, "vault")
+
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def safe_vault_path(filename):
+    """Return absolute vault path, raises ValueError on path traversal attempt."""
+    safe_name = os.path.basename(filename)
+    if not safe_name or safe_name != filename:
+        raise ValueError("Ungültiger Dateiname.")
+    return os.path.join(VAULT_DIR, safe_name)
+
+
+@app.route("/document/<path:ref>/upload", methods=["POST"])
+def document_upload(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+
+    f = request.files.get("file")
+    if not f or f.filename == "":
+        flash("Keine Datei ausgewählt.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    if not allowed_file(f.filename):
+        flash(f"Dateityp nicht erlaubt. Erlaubt: {', '.join(sorted(ALLOWED_EXTENSIONS))}", "err")
+        return redirect(url_for("document_detail", ref=ref))
+
+    os.makedirs(VAULT_DIR, exist_ok=True)
+    nid_safe   = ref.replace("/", "_")
+    ext        = f.filename.rsplit(".", 1)[1].lower()
+    vault_name = f"{nid_safe}.{ext}"
+    vault_path = safe_vault_path(vault_name)
+    f.save(vault_path)
+
+    t        = now()
+    orig_nid = db.next_id("originals", prefix="ORI-", padding=5)
+    db.create_node("originals", orig_nid, {
+        "filename":    f.filename,
+        "file_type":   ext.upper(),
+        "datei":       f"vault/{vault_name}",
+        "uploaded_at": t,
+    })
+    orig_ref = f"originals/{orig_nid}"
+    db.create_edge(ref, orig_ref, "hat_original", cascade_delete=True)
+    log_audit(db, ref, "file_uploaded", new_value=f.filename)
+    flash(f"Datei '{f.filename}' hochgeladen.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/vault/<path:filename>")
+def vault_download(filename):
+    try:
+        path = safe_vault_path(filename)
+    except ValueError:
+        flash("Ungültiger Dateipfad.", "err")
+        return redirect(url_for("documents"))
+    if not os.path.isfile(path):
+        flash("Datei nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    return send_file(path, as_attachment=True)
 
 
 # =============================================================================
