@@ -5,8 +5,9 @@ Run: pip install flask && python pdms_app.py
 
 import os
 import json
+import urllib.request as _urllib
 from datetime import datetime, timezone
-from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file
+from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file, Response
 from flatgraph import FlatGraphDB, MaintenanceEngine
 
 app = Flask(__name__)
@@ -20,6 +21,12 @@ STATUS_LABEL = {"WK": "In Arbeit", "FR": "Freigegeben", "OB": "Veraltet"}
 STATUS_COLOR = {"WK": "#4361ee", "FR": "#2a9d60", "OB": "#888"}
 CATEGORIES = {"M": "Maschine", "F": "Fahrzeug", "I": "Instrument", "E": "Elektro"}
 EQ_STATUS = {"AKTIV": "#2a9d60", "INAKTIV": "#e67e22", "STILLGELEGT": "#888"}
+
+ISSUE_TYPES       = {"STOERUNG": "Störung", "WARTUNG": "Wartung",
+                     "AENDERUNG": "Änderungsantrag", "PRUEFUNG": "Prüfung"}
+ISSUE_STATUS      = {"OFFEN": "#e74c3c", "IN_ARBEIT": "#e67e22", "ERLEDIGT": "#2a9d60"}
+ISSUE_STATUS_FLOW = {"OFFEN": "IN_ARBEIT", "IN_ARBEIT": "ERLEDIGT", "ERLEDIGT": None}
+ISSUE_PRIORITY    = {"HOCH": "#e74c3c", "MITTEL": "#e67e22", "NIEDRIG": "#888"}
 
 LOCKED_FIELDS = {
     "_global":              {"created_at", "created_by", "_deletion_flag"},
@@ -74,6 +81,24 @@ def log_audit(db, ref, action, field="", old_value=None, new_value=None):
         "new_value": str(new_value) if new_value is not None else "",
         "changed_by": DEFAULT_USER, "changed_at": now()
     })
+
+
+def fire_webhooks(event, payload):
+    db = get_db()
+    if "webhooks" not in db.list_collections():
+        return
+    for wh in db.list_nodes("webhooks").values():
+        if not wh.get("active"):
+            continue
+        if wh.get("event") not in (event, "issue_all"):
+            continue
+        try:
+            data = json.dumps(payload).encode()
+            req  = _urllib.Request(wh["url"], data=data,
+                       headers={"Content-Type": "application/json"}, method="POST")
+            _urllib.urlopen(req, timeout=3)
+        except Exception:
+            pass
 
 
 def now():
@@ -203,6 +228,7 @@ NAV = """
   <a href="/doc-types" style="color:#adb5d0">Dok-Typen</a>
   <a href="/traversal" style="color:#adb5d0">Traversal</a>
   <a href="/gc" style="color:#adb5d0">GC</a>
+  <a href="/issues" style="color:#adb5d0">Issues</a>
   <a href="/settings" style="color:#adb5d0;margin-left:auto;font-size:1.1rem"
      title="Einstellungen">⚙</a>
 </nav>
@@ -1079,8 +1105,10 @@ def equipment_detail(ref):
 
     fls_all   = db.list_nodes("functional_locations")
     eqs_all   = db.list_nodes("equipments")
-    audit_log = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
-                       key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
+    audit_log  = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
+                        key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
+    issue_refs = db.get_connected(ref, direction="out", rel_type="hat_issue")
+    eq_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
 
     T = tmpl("""
 <div style="margin-bottom:.5rem"><a href="/equipments">← Equipment</a></div>
@@ -1204,6 +1232,44 @@ def equipment_detail(ref):
 </div>
 </div>
 </div>
+<div class="card" style="margin-top:1rem">
+  <h2>Issues ({{eq_issues|length}})</h2>
+  {% if eq_issues %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Nr</th><th>Titel</th><th>Typ</th><th>Prio</th><th>Status</th><th>Fällig</th></tr>
+    {% for ir,id in eq_issues %}
+    <tr>
+      <td><a href="/issue/{{ir}}">{{ir.split('/')[-1]}}</a></td>
+      <td>{{id.title[:40]}}</td>
+      <td><span class="badge">{{itypes.get(id.issue_type,id.issue_type)}}</span></td>
+      <td><span class="badge" style="background:{{iprio.get(id.priority,'#888')}};color:#fff">{{id.priority}}</span></td>
+      <td><span class="badge" style="background:{{istatus.get(id.status,'#888')}};color:#fff">{{id.status}}</span></td>
+      <td style="color:#999;font-size:.8rem">{{id.get('due_date','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine offenen Issues.</p>
+  {% endif %}
+  <form method="post" action="/node/{{ref}}/issue/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div style="flex:2"><label>Titel *</label>
+        <input type="text" name="title" placeholder="Kurzbeschreibung" style="margin:0"></div>
+      <div><label>Typ</label>
+        <select name="issue_type" style="width:130px;margin:0">
+          {% for k,v in itypes.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}
+        </select></div>
+      <div><label>Priorität</label>
+        <select name="priority" style="width:100px;margin:0">
+          {% for k in iprio.keys() %}<option value="{{k}}">{{k}}</option>{% endfor %}
+        </select></div>
+      <div><label>Fällig</label>
+        <input type="date" name="due_date" style="width:140px;margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Issue</button></div>
+    </div>
+  </form>
+</div>
 {% if audit_log %}
 <div class="card" style="margin-top:1rem">
   <h2>Änderungshistorie</h2>
@@ -1226,7 +1292,8 @@ def equipment_detail(ref):
         children=children, parent=parent, fl_data=fl_data, docs=docs,
         tree_docs=tree_docs, fls_all=fls_all, eqs_all=eqs_all,
         colors=STATUS_COLOR, st_col=EQ_STATUS, cats=CATEGORIES,
-        audit_log=audit_log)
+        audit_log=audit_log, eq_issues=eq_issues,
+        itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
 
 
 @app.route("/equipment/<path:ref>/link-fl", methods=["POST"])
@@ -1732,12 +1799,62 @@ def settings():
   </form>
 </div>
 {% endfor %}
+<div class="card" style="margin-bottom:1rem">
+  <h2>Webhooks</h2>
+  <p style="font-size:.83rem;color:#666;margin-bottom:.75rem">
+    HTTP POST bei Issue-Events. Kompatibel mit n8n, Make, Teams, Slack Incoming Webhooks.</p>
+  {% if webhooks %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Beschreibung</th><th>Event</th><th>URL</th><th>Aktiv</th><th></th></tr>
+    {% for nid,wh in webhooks %}
+    <tr>
+      <td>{{wh.get('description','')}}</td>
+      <td><span class="badge">{{wh.get('event','')}}</span></td>
+      <td style="font-size:.78rem;color:#666;max-width:200px;overflow:hidden;text-overflow:ellipsis">
+        {{wh.get('url','')}}</td>
+      <td>
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/toggle">
+          <button class="btn sm {% if wh.active %}sec{% else %}warn{% endif %}">
+            {% if wh.active %}Aktiv{% else %}Inaktiv{% endif %}</button>
+        </form>
+      </td>
+      <td style="display:flex;gap:.3rem">
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/test">
+          <button class="btn sm sec">Test</button></form>
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/delete"
+              onsubmit="return confirm('Löschen?')">
+          <button class="btn sm danger">✕</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Webhooks konfiguriert.</p>
+  {% endif %}
+  <form method="post" action="/settings/webhook/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div style="flex:2"><label>URL *</label>
+        <input type="text" name="url" placeholder="https://..." style="margin:0"></div>
+      <div><label>Event</label>
+        <select name="event" style="width:160px;margin:0">
+          <option value="issue_all">Alle Issue-Events</option>
+          <option value="issue_created">Issue angelegt</option>
+          <option value="issue_status_changed">Status geändert</option>
+        </select></div>
+      <div style="flex:1"><label>Beschreibung</label>
+        <input type="text" name="description" placeholder="z.B. Teams Wartung" style="margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Webhook</button></div>
+    </div>
+  </form>
+</div>
 """)
     return render_template_string(T,
         sections=[
             ("documents", "Dokumente", sorted(defs_docs.items())),
             ("equipments", "Equipment",  sorted(defs_eqs.items())),
         ],
+        webhooks=sorted(get_db().list_nodes("webhooks").items()),
         field_types=FIELD_TYPES)
 
 
@@ -1769,6 +1886,257 @@ def settings_field_delete(nid):
     get_db().soft_delete("field_definitions", nid)
     flash("Felddefinition gelöscht.")
     return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/new", methods=["POST"])
+def settings_webhook_new():
+    url  = request.form.get("url","").strip()
+    ev   = request.form.get("event","issue_all")
+    desc = request.form.get("description","").strip()
+    if not url:
+        flash("URL ist Pflicht.", "err")
+        return redirect(url_for("settings"))
+    db  = get_db()
+    nid = db.next_id("webhooks", prefix="WHK-", padding=4)
+    db.create_node("webhooks", nid, {"url": url, "event": ev,
+                                     "description": desc, "active": True})
+    flash(f"Webhook {nid} angelegt.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/toggle", methods=["POST"])
+def settings_webhook_toggle(nid):
+    db   = get_db()
+    data = db.get_node(f"webhooks/{nid}")
+    if data:
+        db.update_node("webhooks", nid, {"active": not data.get("active", True)})
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/delete", methods=["POST"])
+def settings_webhook_delete(nid):
+    get_db().soft_delete("webhooks", nid)
+    flash("Webhook gelöscht.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/test", methods=["POST"])
+def settings_webhook_test(nid):
+    db   = get_db()
+    data = db.get_node(f"webhooks/{nid}")
+    if not data:
+        flash("Webhook nicht gefunden.", "err")
+        return redirect(url_for("settings"))
+    try:
+        payload = json.dumps({"event": "test", "source": "pDMS", "message": "Test-Ping"}).encode()
+        req = _urllib.Request(data["url"], data=payload,
+                  headers={"Content-Type": "application/json"}, method="POST")
+        _urllib.urlopen(req, timeout=5)
+        flash(f"Test-Ping an {data['url']} gesendet.")
+    except Exception as e:
+        flash(f"Fehler: {e}", "err")
+    return redirect(url_for("settings"))
+
+
+# =============================================================================
+# ISSUES
+# =============================================================================
+
+@app.route("/issues")
+def issues_list():
+    db      = get_db()
+    typ     = request.args.get("issue_type", "")
+    status  = request.args.get("status", "")
+    prio    = request.args.get("priority", "")
+    all_iss = db.list_nodes("issues")
+    if typ:    all_iss = {k:v for k,v in all_iss.items() if v.get("issue_type")==typ}
+    if status: all_iss = {k:v for k,v in all_iss.items() if v.get("status")==status}
+    if prio:   all_iss = {k:v for k,v in all_iss.items() if v.get("priority")==prio}
+    iss_sorted = sorted(all_iss.items(), key=lambda x: (
+        {"HOCH":0,"MITTEL":1,"NIEDRIG":2}.get(x[1].get("priority","NIEDRIG"),1),
+        x[1].get("due_date","9999")))
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Issues</h1>
+</div>
+<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem">
+  <form method="get" style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+    <div><label>Typ</label>
+      <select name="issue_type" style="width:150px;margin:0">
+        <option value="">Alle</option>
+        {% for k,v in itypes.items() %}<option value="{{k}}" {% if k==typ %}selected{% endif %}>{{v}}</option>{% endfor %}
+      </select></div>
+    <div><label>Status</label>
+      <select name="status" style="width:130px;margin:0">
+        <option value="">Alle</option>
+        {% for k in istatus.keys() %}<option value="{{k}}" {% if k==status %}selected{% endif %}>{{k}}</option>{% endfor %}
+      </select></div>
+    <div><label>Priorität</label>
+      <select name="priority" style="width:110px;margin:0">
+        <option value="">Alle</option>
+        {% for k in iprio.keys() %}<option value="{{k}}" {% if k==prio %}selected{% endif %}>{{k}}</option>{% endfor %}
+      </select></div>
+    <button class="btn sm" type="submit">Filtern</button>
+    <a class="btn sm sec" href="/issues">Reset</a>
+  </form>
+</div>
+{% if iss %}
+<table>
+  <tr><th>Nr</th><th>Titel</th><th>Typ</th><th>Prio</th><th>Status</th><th>Verknüpft</th><th>Fällig</th></tr>
+  {% for nid,i in iss %}
+  <tr>
+    <td><a href="/issue/issues/{{nid}}"><strong>{{nid}}</strong></a></td>
+    <td>{{i.title[:45]}}</td>
+    <td><span class="badge">{{itypes.get(i.issue_type, i.issue_type)}}</span></td>
+    <td><span class="badge" style="background:{{iprio.get(i.priority,'#888')}};color:#fff">{{i.priority}}</span></td>
+    <td><span class="badge" style="background:{{istatus.get(i.status,'#888')}};color:#fff">{{i.status}}</span></td>
+    <td style="font-size:.8rem;color:#666">{{i.get('linked_ref','').split('/')[-1]}}</td>
+    <td style="font-size:.8rem;color:#999">{{i.get('due_date','')}}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="card"><p style="color:#999">Keine Issues gefunden.</p></div>
+{% endif %}
+""")
+    return render_template_string(T, iss=iss_sorted, typ=typ, status=status, prio=prio,
+                                  itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
+
+
+@app.route("/issue/<path:ref>")
+def issue_detail(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Issue nicht gefunden.", "err")
+        return redirect(url_for("issues_list"))
+    nid        = ref.split("/",1)[1]
+    next_st    = ISSUE_STATUS_FLOW.get(data.get("status","OFFEN"))
+    linked     = db.get_node(data.get("linked_ref","")) if data.get("linked_ref") else None
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/issues">← Issues</a></div>
+<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem">
+  <h1 style="margin:0">{{nid}}</h1>
+  <span class="badge" style="background:{{istatus[data.status]}};color:#fff">{{data.status}}</span>
+  <span class="badge" style="background:{{iprio.get(data.priority,'#888')}};color:#fff">{{data.priority}}</span>
+  <span class="badge">{{itypes.get(data.issue_type,data.issue_type)}}</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
+<div class="card">
+  <h2>Details</h2>
+  <div class="kv">
+    <span class="k">Titel</span><span class="v">{{data.title}}</span>
+    <span class="k">Beschreibung</span><span class="v">{{data.get('description','—')}}</span>
+    <span class="k">Fälligkeit</span><span class="v">{{data.get('due_date','—')}}</span>
+    <span class="k">Erstellt am</span><span class="v">{{data.created_at[:10]}}</span>
+  </div>
+  <div style="margin-top:.75rem;display:flex;gap:.5rem">
+    {% if next_st %}
+    <form class="il" method="post" action="/issue/{{ref}}/status">
+      <input type="hidden" name="new_status" value="{{next_st}}">
+      <button class="btn {% if next_st=='ERLEDIGT' %}sec{% endif %}">→ {{next_st}}</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+</div>
+<div>
+{% if linked %}
+<div class="card">
+  <h2>Verknüpftes Objekt</h2>
+  <div class="kv">
+    <span class="k">Ref</span>
+    <span class="v"><a href="/{% if 'equipment' in data.linked_ref %}equipment{% else %}document{% endif %}/{{data.linked_ref}}">
+      {{data.linked_ref}}</a></span>
+    <span class="k">Name</span>
+    <span class="v">{{linked.get('title') or linked.get('description','')}}</span>
+  </div>
+</div>
+{% endif %}
+</div>
+</div>
+""")
+    return render_template_string(T, ref=ref, nid=nid, data=data, linked=linked,
+                                  next_st=next_st, itypes=ISSUE_TYPES,
+                                  istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
+
+
+@app.route("/issue/<path:ref>/status", methods=["POST"])
+def issue_status(ref):
+    parts = ref.split("/",1)
+    if len(parts) != 2:
+        return redirect(url_for("issues_list"))
+    col, nid   = parts
+    new_status = request.form.get("new_status","")
+    db         = get_db()
+    data       = db.get_node(ref)
+    if not data:
+        flash("Issue nicht gefunden.", "err")
+        return redirect(url_for("issues_list"))
+    cur = data.get("status","OFFEN")
+    if ISSUE_STATUS_FLOW.get(cur) != new_status:
+        flash(f"Übergang {cur}→{new_status} nicht erlaubt.", "err")
+    else:
+        db.update_node(col, nid, {"status": new_status, "changed_at": now()})
+        fire_webhooks("issue_status_changed",
+                      {"ref": ref, "old_status": cur, "new_status": new_status,
+                       "title": data.get("title",""), "linked_ref": data.get("linked_ref","")})
+        flash(f"Status auf {new_status} gesetzt.")
+    return redirect(url_for("issue_detail", ref=ref))
+
+
+@app.route("/node/<path:linked_ref>/issue/new", methods=["POST"])
+def issue_new(linked_ref):
+    title    = request.form.get("title","").strip()
+    itype    = request.form.get("issue_type","WARTUNG")
+    priority = request.form.get("priority","MITTEL")
+    due_date = request.form.get("due_date","").strip()
+    desc     = request.form.get("description","").strip()
+    if not title:
+        flash("Titel ist Pflicht.", "err")
+        return redirect(request.referrer or url_for("issues_list"))
+    db  = get_db()
+    t   = now()
+    nid = db.next_id("issues", prefix="ISS-", padding=5)
+    db.create_node("issues", nid, {
+        "title": title, "issue_type": itype, "status": "OFFEN",
+        "priority": priority, "description": desc,
+        "due_date": due_date, "linked_ref": linked_ref,
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t,
+    })
+    issue_ref = f"issues/{nid}"
+    db.create_edge(linked_ref, issue_ref, "hat_issue")
+    fire_webhooks("issue_created", {
+        "ref": issue_ref, "title": title, "issue_type": itype,
+        "priority": priority, "due_date": due_date, "linked_ref": linked_ref,
+    })
+    flash(f"Issue {nid} angelegt.")
+    return redirect(request.referrer or url_for("issues_list"))
+
+
+@app.route("/issue/<path:ref>/ics")
+def issue_ics(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Issue nicht gefunden.", "err")
+        return redirect(url_for("issues_list"))
+    nid      = ref.split("/",1)[1]
+    due      = (data.get("due_date","") or "").replace("-","")
+    dt_start = due if due else datetime.now(timezone.utc).strftime("%Y%m%d")
+    ics = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//pDMS//Issues//DE\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"UID:{nid}@pdms\r\n"
+        f"SUMMARY:[pDMS] {data['title']}\r\n"
+        f"DTSTART;VALUE=DATE:{dt_start}\r\n"
+        f"DESCRIPTION:{ISSUE_TYPES.get(data.get('issue_type',''),'')} – "
+        f"{data.get('description','').replace(chr(10),' ')}\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    return Response(ics, mimetype="text/calendar",
+        headers={"Content-Disposition": f"attachment; filename={nid}.ics"})
 
 
 if __name__ == "__main__":
