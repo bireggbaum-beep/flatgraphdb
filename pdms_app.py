@@ -203,6 +203,8 @@ NAV = """
   <a href="/doc-types" style="color:#adb5d0">Dok-Typen</a>
   <a href="/traversal" style="color:#adb5d0">Traversal</a>
   <a href="/gc" style="color:#adb5d0">GC</a>
+  <a href="/settings" style="color:#adb5d0;margin-left:auto;font-size:1.1rem"
+     title="Einstellungen">⚙</a>
 </nav>
 """
 
@@ -883,15 +885,41 @@ def node_edit(col, nid):
             "is_locked": (field in locked) or auto_locked,
             "value":     value,
         })
+
+    # Felder aus field_definitions die noch nicht im Node sind
+    existing_names = {f["name"] for f in fields}
+    for fd in get_field_defs(col).values():
+        fname = fd.get("name", "")
+        if not fname or fname in existing_names:
+            continue
+        ft    = fd.get("field_type", "text")
+        opts  = [o.strip() for o in fd.get("options","").split(",") if o.strip()]
+        if ft == "number":
+            html = f'<input type="number" name="{fname}" value="">'
+        elif ft == "select" and opts:
+            o_html = "".join(f'<option value="{o}">{o}</option>' for o in opts)
+            html   = f'<select name="{fname}"><option value="">—</option>{o_html}</select>'
+        else:
+            html = f'<input type="text" name="{fname}" value="">'
+        fields.append({
+            "name":      fname,
+            "label":     fd.get("label", fname),
+            "html":      html,
+            "is_locked": False,
+            "value":     "",
+            "is_new":    True,
+        })
     T = tmpl("""
 <div style="margin-bottom:.5rem"><a href="{{back_url}}">{{back_text}}</a></div>
 <h1>Bearbeiten: {{nid}}</h1>
 <div class="card" style="max-width:640px">
   <form method="post">
     {% for f in fields %}
-    <label>{{f.label}}{% if f.is_locked %}
-      <span style="font-weight:400;color:#999;font-size:.78rem"> (gesperrt)</span>
-    {% endif %}</label>
+    <label>{{f.label}}
+      {% if f.is_locked %}<span style="font-weight:400;color:#999;font-size:.78rem"> (gesperrt)</span>
+      {% elif f.is_new %}<span style="font-weight:400;color:#4361ee;font-size:.78rem"> (neu)</span>
+      {% endif %}
+    </label>
     {% if f.is_locked %}
       <div style="padding:.42rem .7rem;border:1px solid #e0e0e0;border-radius:5px;
                   background:#f8f8f8;margin-bottom:.8rem;color:#888;font-size:.88rem">
@@ -1625,6 +1653,122 @@ def node_restore(col, nid):
     else:
         flash(f"{col}/{nid} konnte nicht wiederhergestellt werden.", "err")
     return redirect(url_for("gc_view"))
+
+
+# =============================================================================
+# SETTINGS
+# =============================================================================
+
+FIELD_TYPES = {"text": "Text", "number": "Zahl", "select": "Dropdown"}
+SETTINGS_ENTITIES = {"documents": "Dokumente", "equipments": "Equipment"}
+
+
+def get_field_defs(col=None):
+    db   = get_db()
+    defs = db.list_nodes("field_definitions")
+    if col:
+        defs = {k: v for k, v in defs.items() if v.get("entity_type") == col}
+    return defs
+
+
+@app.route("/settings")
+def settings():
+    defs_docs = get_field_defs("documents")
+    defs_eqs  = get_field_defs("equipments")
+    T = tmpl("""
+<h1>⚙ Einstellungen <span style="font-size:.75rem;color:#999;font-weight:400">Developer</span></h1>
+<p style="color:#666;font-size:.87rem;margin-bottom:1.25rem">
+  Hier können zusätzliche Felder für Dokumente und Equipment definiert werden.
+  Nützlich zum Ausprobieren vor der Hardcodierung im Code.
+</p>
+{% for entity, entity_label, defs in sections %}
+<div class="card" style="margin-bottom:1rem">
+  <h2>{{entity_label}} – Zusatzfelder</h2>
+  {% if defs %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Feldname</th><th>Label</th><th>Typ</th><th>Optionen</th><th>Pflicht</th><th></th></tr>
+    {% for nid,d in defs %}
+    <tr>
+      <td><code>{{d.name}}</code></td>
+      <td>{{d.label}}</td>
+      <td><span class="badge">{{d.field_type}}</span></td>
+      <td style="color:#999;font-size:.8rem">{{d.get('options','')}}</td>
+      <td>{% if d.required %}✓{% endif %}</td>
+      <td>
+        <form class="il" method="post" action="/settings/field/{{nid}}/delete"
+              onsubmit="return confirm('Feld löschen?')">
+          <button class="btn sm danger">✕</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Zusatzfelder definiert.</p>
+  {% endif %}
+  <form method="post" action="/settings/field/new">
+    <input type="hidden" name="entity_type" value="{{entity}}">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div><label>Feldname *</label>
+        <input type="text" name="name" placeholder="z.B. revision" style="width:140px;margin:0"></div>
+      <div><label>Label *</label>
+        <input type="text" name="label" placeholder="z.B. Revision" style="width:140px;margin:0"></div>
+      <div><label>Typ</label>
+        <select name="field_type" style="width:110px;margin:0">
+          {% for k,v in field_types.items() %}
+          <option value="{{k}}">{{v}}</option>
+          {% endfor %}
+        </select></div>
+      <div><label>Optionen (Dropdown)</label>
+        <input type="text" name="options" placeholder="A,B,C" style="width:140px;margin:0"></div>
+      <div><label>Pflichtfeld</label>
+        <select name="required" style="width:80px;margin:0">
+          <option value="false">Nein</option>
+          <option value="true">Ja</option>
+        </select></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Hinzufügen</button></div>
+    </div>
+  </form>
+</div>
+{% endfor %}
+""")
+    return render_template_string(T,
+        sections=[
+            ("documents", "Dokumente", sorted(defs_docs.items())),
+            ("equipments", "Equipment",  sorted(defs_eqs.items())),
+        ],
+        field_types=FIELD_TYPES)
+
+
+@app.route("/settings/field/new", methods=["POST"])
+def settings_field_new():
+    entity_type = request.form.get("entity_type", "")
+    name        = request.form.get("name", "").strip().lower().replace(" ", "_")
+    label       = request.form.get("label", "").strip()
+    field_type  = request.form.get("field_type", "text")
+    options     = request.form.get("options", "").strip()
+    required    = request.form.get("required", "false") == "true"
+
+    if not name or not label:
+        flash("Feldname und Label sind Pflicht.", "err")
+        return redirect(url_for("settings"))
+
+    db  = get_db()
+    nid = db.next_id("field_definitions", prefix="FD-", padding=4)
+    db.create_node("field_definitions", nid, {
+        "entity_type": entity_type, "name": name, "label": label,
+        "field_type": field_type, "options": options, "required": required,
+    })
+    flash(f"Feld '{name}' für {SETTINGS_ENTITIES.get(entity_type, entity_type)} hinzugefügt.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/field/<nid>/delete", methods=["POST"])
+def settings_field_delete(nid):
+    get_db().soft_delete("field_definitions", nid)
+    flash("Felddefinition gelöscht.")
+    return redirect(url_for("settings"))
 
 
 if __name__ == "__main__":
