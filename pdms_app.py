@@ -280,7 +280,18 @@ def dashboard():
     for d in docs.values():
         status_counts[d.get("status", "WK")] = status_counts.get(d.get("status", "WK"), 0) + 1
 
-    recent = sorted(docs.items(), key=lambda x: x[1].get("changed_at",""), reverse=True)[:5]
+    recent    = sorted(docs.items(), key=lambda x: x[1].get("changed_at",""), reverse=True)[:5]
+    activity  = sorted(db.list_nodes("audit_log").values(),
+                       key=lambda x: x.get("changed_at",""), reverse=True)[:15]
+
+    ACTION_LABEL = {
+        "update":        "Bearbeitet",
+        "status_change": "Status",
+        "soft_delete":   "Archiviert",
+        "link_created":  "Link +",
+        "link_deleted":  "Link −",
+        "file_uploaded": "Datei +",
+    }
 
     T = tmpl("""
 <h1>Dashboard</h1>
@@ -293,23 +304,49 @@ def dashboard():
   <div class="card stat"><div class="num" style="color:#2a9d60">{{fr}}</div><div class="lbl">Freigegeben (FR)</div></div>
   <div class="card stat"><div class="num" style="color:#888">{{ob}}</div><div class="lbl">Veraltet (OB)</div></div>
 </div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
 <h2>Zuletzt geändert</h2>
 <table><tr><th>Dokument</th><th>Titel</th><th>Typ</th><th>Status</th><th>Geändert</th></tr>
 {% for nid,d in recent %}
 <tr>
   <td><a href="/document/documents/{{nid}}">{{nid}}</a></td>
-  <td>{{d.title}}</td>
+  <td>{{d.title[:30]}}</td>
   <td><span class="badge">{{d.doc_type}}</span></td>
   <td><span class="badge" style="background:{{colors[d.status]}};color:#fff">{{labels[d.status]}}</span></td>
-  <td style="color:#999;font-size:.8rem">{{d.changed_at[:19].replace('T',' ')}}</td>
+  <td style="color:#999;font-size:.8rem">{{d.changed_at[:10]}}</td>
 </tr>
 {% endfor %}
 </table>
+</div>
+<div>
+<h2>Aktivitätsfeed</h2>
+{% if activity %}
+<table>
+  <tr><th>Zeit</th><th>Aktion</th><th>Objekt</th><th>Detail</th></tr>
+  {% for e in activity %}
+  <tr>
+    <td style="color:#999;font-size:.78rem;white-space:nowrap">{{e.changed_at[11:19]}}</td>
+    <td><span class="badge">{{action_labels.get(e.action, e.action)}}</span></td>
+    <td style="font-size:.8rem">{{e.ref.split('/')[-1]}}</td>
+    <td style="font-size:.78rem;color:#555;max-width:140px;overflow:hidden;text-overflow:ellipsis">
+      {% if e.field %}{{e.field}}: {% endif %}
+      {% if e.new_value %}{{e.new_value[:30]}}{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p style="color:#999;font-size:.85rem">Noch keine Aktivität.</p>
+{% endif %}
+</div>
+</div>
 """)
     return render_template_string(T,
         docs=len(docs), eqs=len(eqs), fls=len(fls), links=len(links),
         wk=status_counts["WK"], fr=status_counts["FR"], ob=status_counts["OB"],
-        recent=recent, colors=STATUS_COLOR, labels=STATUS_LABEL)
+        recent=recent, activity=activity, action_labels=ACTION_LABEL,
+        colors=STATUS_COLOR, labels=STATUS_LABEL)
 
 
 # =============================================================================
@@ -1413,7 +1450,7 @@ def gc_view():
     for col in db.list_collections():
         for nid, data in db.list_nodes(col, include_deleted=True).items():
             if "_deletion_flag" in data:
-                pending.append((f"{col}/{nid}", data.get("_deletion_flag","")[:19], col))
+                pending.append((f"{col}/{nid}", data.get("_deletion_flag","")[:19], col, nid))
     T = tmpl("""
 <h1>Garbage Collector</h1>
 <div class="card" style="max-width:600px">
@@ -1438,11 +1475,16 @@ def gc_view():
 <div class="card">
   <h2>Warten auf Bereinigung ({{pending|length}})</h2>
   {% if pending %}
-  <table><tr><th>Ref</th><th>Collection</th><th>Markiert am</th></tr>
-  {% for ref,flag,col in pending %}
+  <table><tr><th>Ref</th><th>Collection</th><th>Markiert am</th><th></th></tr>
+  {% for ref,flag,col,nid in pending %}
   <tr>
     <td>{{ref}}</td><td>{{col}}</td>
     <td style="color:#999;font-size:.8rem">{{flag.replace('T',' ')}}</td>
+    <td>
+      <form class="il" method="post" action="/restore/{{col}}/{{nid}}">
+        <button class="btn sm sec">Wiederherstellen</button>
+      </form>
+    </td>
   </tr>
   {% endfor %}
   </table>
@@ -1460,7 +1502,7 @@ def gc_run():
     for col in gc.list_collections():
         for nid, data in gc.list_nodes(col, include_deleted=True).items():
             if "_deletion_flag" in data:
-                pending.append((f"{col}/{nid}", data.get("_deletion_flag","")[:19], col))
+                pending.append((f"{col}/{nid}", data.get("_deletion_flag","")[:19], col, nid))
     flash(f"GC: {stats['nodes_purged']} Node(s) bereinigt, {stats['edges_removed']} Edge(s) entfernt.")
     T = tmpl("""
 <h1>Garbage Collector</h1>
@@ -1481,13 +1523,28 @@ def gc_run():
 </div>
 <div class="card">
   <h2>Verbleibend ({{pending|length}})</h2>
-  {% if pending %}<table><tr><th>Ref</th><th>Collection</th><th>Flag</th></tr>
-  {% for ref,flag,col in pending %}<tr><td>{{ref}}</td><td>{{col}}</td>
-  <td style="color:#999">{{flag}}</td></tr>{% endfor %}</table>
+  {% if pending %}<table><tr><th>Ref</th><th>Collection</th><th>Flag</th><th></th></tr>
+  {% for ref,flag,col,nid in pending %}<tr><td>{{ref}}</td><td>{{col}}</td>
+  <td style="color:#999">{{flag}}</td>
+  <td><form class="il" method="post" action="/restore/{{col}}/{{nid}}">
+    <button class="btn sm sec">Wiederherstellen</button></form></td>
+  </tr>{% endfor %}</table>
   {% else %}<p style="color:#999">Keine pending Nodes.</p>{% endif %}
 </div>
 """)
     return render_template_string(T, pending=pending, stats=stats)
+
+
+@app.route("/restore/<col>/<path:nid>", methods=["POST"])
+def node_restore(col, nid):
+    db = get_db()
+    ok = db.restore_node(col, nid)
+    if ok:
+        log_audit(db, f"{col}/{nid}", "restore")
+        flash(f"{col}/{nid} wiederhergestellt.")
+    else:
+        flash(f"{col}/{nid} konnte nicht wiederhergestellt werden.", "err")
+    return redirect(url_for("gc_view"))
 
 
 if __name__ == "__main__":
