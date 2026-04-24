@@ -21,6 +21,50 @@ STATUS_COLOR = {"WK": "#4361ee", "FR": "#2a9d60", "OB": "#888"}
 CATEGORIES = {"M": "Maschine", "F": "Fahrzeug", "I": "Instrument", "E": "Elektro"}
 EQ_STATUS = {"AKTIV": "#2a9d60", "INAKTIV": "#e67e22", "STILLGELEGT": "#888"}
 
+LOCKED_FIELDS = {
+    "_global":              {"created_at", "created_by", "_deletion_flag"},
+    "documents":            {"doc_nr", "doc_type", "doc_part", "status"},
+    "equipments":           {"status"},
+    "functional_locations": set(),
+    "originals":            set(),
+    "doc_types":            set(),
+}
+
+
+def get_locked(col):
+    return LOCKED_FIELDS["_global"] | LOCKED_FIELDS.get(col, set())
+
+
+def field_input(name, value):
+    if name.endswith("_at"):
+        return (str(value) if value is not None else "", True)
+    str_value = "" if value is None else str(value)
+    escaped   = str_value.replace('"', "&quot;").replace("<", "&lt;")
+    if isinstance(value, bool):
+        sel_t = "selected" if value     else ""
+        sel_f = "selected" if not value else ""
+        html  = (f'<select name="{name}">'
+                 f'<option value="true" {sel_t}>Ja</option>'
+                 f'<option value="false" {sel_f}>Nein</option>'
+                 f'</select>')
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        html = f'<input type="number" name="{name}" value="{escaped}">'
+    elif name == "language":
+        opts = "".join(f'<option value="{c}" {"selected" if str_value == c else ""}>{c}</option>'
+                       for c in ("DE", "EN"))
+        html = f'<select name="{name}">{opts}</select>'
+    elif name == "category":
+        opts = "".join(f'<option value="{k}" {"selected" if str_value == k else ""}>{k} – {v}</option>'
+                       for k, v in CATEGORIES.items())
+        html = f'<select name="{name}">{opts}</select>'
+    elif name == "file_type":
+        opts = "".join(f'<option value="{ft}" {"selected" if str_value == ft else ""}>{ft}</option>'
+                       for ft in ("PDF", "DXF", "DOCX", "TXT"))
+        html = f'<select name="{name}">{opts}</select>'
+    else:
+        html = f'<input type="text" name="{name}" value="{escaped}">'
+    return (html, False)
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -436,6 +480,7 @@ def document_detail(ref):
         → {{labels[next_status]}} setzen</button>
     </form>
     {% endif %}
+    <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
     <form class="il" method="post" action="/document/{{ref}}/delete"
           onsubmit="return confirm('Archivieren?')">
       <button class="btn danger sm">Archivieren</button>
@@ -554,6 +599,102 @@ def edge_delete(edge_id):
     get_db().delete_edge(edge_id)
     flash("Edge gelöscht.")
     return redirect(ref)
+
+
+# =============================================================================
+# GENERIC EDIT
+# =============================================================================
+
+_DETAIL_ROUTES = {
+    "documents":            ("document_detail",            "documents"),
+    "equipments":           ("equipment_detail",           "equipments"),
+    "functional_locations": ("functional_location_detail", "functional_locations"),
+}
+
+
+@app.route("/edit/<col>/<path:nid>", methods=["GET", "POST"])
+def node_edit(col, nid):
+    db   = get_db()
+    ref  = f"{col}/{nid}"
+    data = db.get_node(ref)
+    if data is None:
+        flash(f"Node '{ref}' nicht gefunden.", "err")
+        return redirect(url_for("dashboard"))
+    route_info = _DETAIL_ROUTES.get(col)
+    if route_info is None:
+        flash(f"Bearbeitung für '{col}' nicht unterstützt.", "err")
+        return redirect(url_for("dashboard"))
+    detail_view, _ = route_info
+    locked = get_locked(col)
+
+    if request.method == "POST":
+        updates = {}
+        for field, old_value in data.items():
+            if field in locked or field.endswith("_at") or field.startswith("_"):
+                continue
+            raw = request.form.get(field)
+            if raw is None:
+                continue
+            if isinstance(old_value, bool):
+                new_value = raw.lower() == "true"
+            elif isinstance(old_value, int) and not isinstance(old_value, bool):
+                try:    new_value = int(raw) if raw.strip() else None
+                except: new_value = raw
+            elif isinstance(old_value, float):
+                try:    new_value = float(raw) if raw.strip() else None
+                except: new_value = raw
+            else:
+                new_value = raw if raw != "" else (None if old_value is None else raw)
+            if new_value != old_value:
+                updates[field] = new_value
+        if updates:
+            if col == "documents":
+                updates["changed_at"] = now()
+            db.update_node(col, nid, updates)
+            flash(f"{nid} gespeichert.")
+        else:
+            flash("Keine Änderungen.")
+        return redirect(url_for(detail_view, ref=ref))
+
+    back_titles = {"documents": "← Dokumente", "equipments": "← Equipment",
+                   "functional_locations": "← Funktionale Plätze"}
+    back_url  = url_for(detail_view, ref=ref)
+    back_text = back_titles.get(col, "← Zurück")
+    fields = []
+    for field, value in data.items():
+        html_input, auto_locked = field_input(field, value)
+        fields.append({
+            "name":      field,
+            "label":     field.replace("_", " ").capitalize(),
+            "html":      html_input,
+            "is_locked": (field in locked) or auto_locked,
+            "value":     value,
+        })
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="{{back_url}}">{{back_text}}</a></div>
+<h1>Bearbeiten: {{nid}}</h1>
+<div class="card" style="max-width:640px">
+  <form method="post">
+    {% for f in fields %}
+    <label>{{f.label}}{% if f.is_locked %}
+      <span style="font-weight:400;color:#999;font-size:.78rem"> (gesperrt)</span>
+    {% endif %}</label>
+    {% if f.is_locked %}
+      <div style="padding:.42rem .7rem;border:1px solid #e0e0e0;border-radius:5px;
+                  background:#f8f8f8;margin-bottom:.8rem;color:#888;font-size:.88rem">
+        {{f.value if f.value is not none else '–'}}</div>
+    {% else %}{{f.html|safe}}
+    {% endif %}
+    {% endfor %}
+    <div style="display:flex;gap:.6rem;margin-top:.5rem">
+      <button class="btn" type="submit">Speichern</button>
+      <a class="btn sec" href="{{back_url}}">Abbrechen</a>
+    </div>
+  </form>
+</div>
+""")
+    return render_template_string(T, nid=nid, fields=fields,
+                                  back_url=back_url, back_text=back_text)
 
 
 # =============================================================================
@@ -687,7 +828,8 @@ def equipment_detail(ref):
     <span class="k">Baujahr</span><span class="v">{{data.get('construction_year','')}}</span>
     <span class="k">Kostenstelle</span><span class="v">{{data.get('cost_center','')}}</span>
   </div>
-  <div style="margin-top:.75rem">
+  <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
+    <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
     <form class="il" method="post" action="/equipment/{{ref}}/delete"
           onsubmit="return confirm('Stilllegen?')">
       <button class="btn sm danger">Stilllegen</button>
@@ -923,6 +1065,9 @@ def functional_location_detail(ref):
   <div class="kv">
     <span class="k">Beschreibung</span><span class="v">{{data.description}}</span>
     <span class="k">Kategorie</span><span class="v">{{data.get('category','')}}</span>
+  </div>
+  <div style="margin-top:.75rem">
+    <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
   </div>
 </div>
 {% if subs %}
