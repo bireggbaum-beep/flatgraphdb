@@ -281,6 +281,9 @@ def dashboard():
         status_counts[d.get("status", "WK")] = status_counts.get(d.get("status", "WK"), 0) + 1
 
     recent    = sorted(docs.items(), key=lambda x: x[1].get("changed_at",""), reverse=True)[:5]
+    doc_types = db.list_nodes("doc_types")
+    type_counts = {tid: sum(1 for d in docs.values() if d.get("doc_type") == tid)
+                   for tid in doc_types}
     activity  = sorted(db.list_nodes("audit_log").values(),
                        key=lambda x: x.get("changed_at",""), reverse=True)[:15]
 
@@ -303,6 +306,18 @@ def dashboard():
   <div class="card stat"><div class="num" style="color:#4361ee">{{wk}}</div><div class="lbl">In Arbeit (WK)</div></div>
   <div class="card stat"><div class="num" style="color:#2a9d60">{{fr}}</div><div class="lbl">Freigegeben (FR)</div></div>
   <div class="card stat"><div class="num" style="color:#888">{{ob}}</div><div class="lbl">Veraltet (OB)</div></div>
+</div>
+<h2 style="margin-bottom:.5rem">Nach Dokumenttyp</h2>
+<div class="grid" style="margin-bottom:1.25rem">
+  {% for tid,t in doc_types.items() %}
+  <a href="/documents?doc_type={{tid}}" style="text-decoration:none">
+    <div class="card stat" style="cursor:pointer;transition:box-shadow .15s">
+      <div class="num" style="font-size:1.4rem">{{type_counts.get(tid,0)}}</div>
+      <div style="font-weight:700;font-size:.85rem;color:#4361ee;margin:.1rem 0">{{tid}}</div>
+      <div class="lbl">{{t.description}}</div>
+    </div>
+  </a>
+  {% endfor %}
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
 <div>
@@ -346,6 +361,7 @@ def dashboard():
         docs=len(docs), eqs=len(eqs), fls=len(fls), links=len(links),
         wk=status_counts["WK"], fr=status_counts["FR"], ob=status_counts["OB"],
         recent=recent, activity=activity, action_labels=ACTION_LABEL,
+        doc_types=doc_types, type_counts=type_counts,
         colors=STATUS_COLOR, labels=STATUS_LABEL)
 
 
@@ -901,11 +917,40 @@ def node_edit(col, nid):
 @app.route("/equipments")
 def equipments():
     db  = get_db()
-    eqs = db.list_nodes("equipments")
+    q   = request.args.get("q", "").strip()
+    cat = request.args.get("category", "")
+
+    if q:
+        eqs = db.find_nodes("equipments", {"description": q})
+        if not eqs:
+            eqs = db.find_nodes("equipments", {"serial_nr": q})
+        if not eqs:
+            eqs = db.find_nodes("equipments", {"manufacturer": q})
+    else:
+        eqs = db.list_nodes("equipments")
+
+    if cat:
+        eqs = {k: v for k, v in eqs.items() if v.get("category") == cat}
+
     T = tmpl("""
 <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
   <h1 style="margin:0">Equipment</h1>
   <a class="btn sm" href="/equipments/new">+ Neu</a>
+</div>
+<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem">
+  <form method="get" style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+    <div><label>Suche (Beschreibung, Seriennr., Hersteller)</label>
+      <input type="text" name="q" value="{{q}}" style="width:300px;margin:0"></div>
+    <div><label>Kategorie</label>
+      <select name="category" style="width:130px;margin:0">
+        <option value="">Alle</option>
+        {% for k,v in cats.items() %}
+        <option value="{{k}}" {% if k==cat %}selected{% endif %}>{{k}} – {{v}}</option>
+        {% endfor %}
+      </select></div>
+    <button class="btn sm" type="submit">Suchen</button>
+    <a class="btn sm sec" href="/equipments">Reset</a>
+  </form>
 </div>
 <table>
   <tr><th>Nr</th><th>Beschreibung</th><th>Kat.</th><th>Hersteller</th><th>Status</th><th>Kostenstelle</th><th></th></tr>
@@ -924,7 +969,8 @@ def equipments():
   {% endfor %}
 </table>
 """)
-    return render_template_string(T, eqs=sorted(eqs.items()), st_col=EQ_STATUS)
+    return render_template_string(T, eqs=sorted(eqs.items()), q=q, cat=cat,
+                                  cats=CATEGORIES, st_col=EQ_STATUS)
 
 
 @app.route("/equipments/new", methods=["GET", "POST"])
