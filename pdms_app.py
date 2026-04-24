@@ -23,7 +23,7 @@ EQ_STATUS = {"AKTIV": "#2a9d60", "INAKTIV": "#e67e22", "STILLGELEGT": "#888"}
 
 LOCKED_FIELDS = {
     "_global":              {"created_at", "created_by", "_deletion_flag"},
-    "documents":            {"doc_nr", "doc_type", "doc_part", "status"},
+    "documents":            {"doc_nr", "doc_type", "doc_part", "status", "locked"},
     "equipments":           {"status"},
     "functional_locations": set(),
     "originals":            set(),
@@ -142,27 +142,27 @@ def seed_if_empty():
     db.create_node("documents", "10001-DRW", {
         "doc_nr": 10001, "doc_type": "DRW", "doc_part": "000",
         "title": "CNC Fräsmaschine DMG Mori – Gesamtzeichnung",
-        "status": "FR", "language": "DE", "lab_office": "Konstruktion",
+        "status": "FR", "locked": True, "language": "DE", "lab_office": "Konstruktion",
         "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
     db.create_node("documents", "10002-MAN", {
         "doc_nr": 10002, "doc_type": "MAN", "doc_part": "000",
         "title": "Betriebsanleitung DMU 50",
-        "status": "FR", "language": "DE", "lab_office": "Dokumentation",
+        "status": "FR", "locked": True, "language": "DE", "lab_office": "Dokumentation",
         "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
     db.create_node("documents", "10003-QSP", {
         "doc_nr": 10003, "doc_type": "QSP", "doc_part": "000",
         "title": "Prüfplan Spindelmotor Wartung",
-        "status": "WK", "language": "DE", "lab_office": "Qualität",
+        "status": "WK", "locked": False, "language": "DE", "lab_office": "Qualität",
         "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
     db.create_node("documents", "10004-DRW", {
         "doc_nr": 10004, "doc_type": "DRW", "doc_part": "000",
         "title": "KUKA KR 16 – Aufstellungsplan",
-        "status": "FR", "language": "DE", "lab_office": "Konstruktion",
+        "status": "FR", "locked": True, "language": "DE", "lab_office": "Konstruktion",
         "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
     db.create_node("documents", "10005-SPE", {
         "doc_nr": 10005, "doc_type": "SPE", "doc_part": "000",
         "title": "Spezifikation Schweißnahtgüte",
-        "status": "OB", "language": "DE", "lab_office": "Qualität",
+        "status": "OB", "locked": True, "language": "DE", "lab_office": "Qualität",
         "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
 
     # Fake-Asset für DOC 10001
@@ -446,7 +446,7 @@ def document_new():
             t = now()
             db.create_node("documents", node_id, {
                 "doc_nr": doc_nr, "doc_type": doc_type, "doc_part": "000",
-                "title": title, "status": "WK", "language": language,
+                "title": title, "status": "WK", "locked": False, "language": language,
                 "lab_office": lab_office, "created_by": DEFAULT_USER,
                 "created_at": t, "changed_at": t})
             flash(f"Dokument {node_id} angelegt.")
@@ -521,7 +521,15 @@ def document_detail(ref):
     <span class="k">Erstellt am</span><span class="v">{{data.created_at[:19].replace('T',' ')}}</span>
     <span class="k">Geändert am</span><span class="v">{{data.changed_at[:19].replace('T',' ')}}</span>
   </div>
-  <div style="margin-top:.8rem;display:flex;gap:.5rem;flex-wrap:wrap">
+  <div style="margin-top:.8rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <form class="il" method="post" action="/document/{{ref}}/lock"
+          title="{% if data.locked %}Entsperren{% else %}Sperren{% endif %}">
+      <button class="btn sm" style="background:{% if data.locked %}#e74c3c{% else %}#2a9d60{% endif %};
+              font-size:1rem;padding:.25rem .55rem">
+        {% if data.locked %}🔒{% else %}🔓{% endif %}
+      </button>
+    </form>
+    {% if not data.locked %}
     {% if next_status %}
     <form class="il" method="post" action="/document/{{ref}}/status">
       <input type="hidden" name="new_status" value="{{next_status}}">
@@ -530,6 +538,7 @@ def document_detail(ref):
     </form>
     {% endif %}
     <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
+    {% endif %}
     <form class="il" method="post" action="/document/{{ref}}/delete"
           onsubmit="return confirm('Archivieren?')">
       <button class="btn danger sm">Archivieren</button>
@@ -639,6 +648,9 @@ def document_status(ref):
     if not data:
         flash("Dokument nicht gefunden.", "err")
         return redirect(url_for("documents"))
+    if data.get("locked"):
+        flash("Dokument ist gesperrt. Bitte zuerst entsperren.", "err")
+        return redirect(url_for("document_detail", ref=ref))
     cur = data.get("status", "WK")
     if STATUS_FLOW.get(cur) != new_status:
         flash(f"Status-Übergang {cur}→{new_status} nicht erlaubt.", "err")
@@ -675,6 +687,24 @@ def document_delete(ref):
     log_audit(db, ref, "soft_delete")
     flash(f"{ref} archiviert (wartet auf GC).")
     return redirect(url_for("documents"))
+
+
+@app.route("/document/<path:ref>/lock", methods=["POST"])
+def document_lock_toggle(ref):
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        return redirect(url_for("documents"))
+    col, nid = parts
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    new_lock = not data.get("locked", False)
+    db.update_node(col, nid, {"locked": new_lock, "changed_at": now()})
+    log_audit(db, ref, "unlocked" if not new_lock else "locked")
+    flash("Dokument entsperrt." if not new_lock else "Dokument gesperrt.")
+    return redirect(url_for("document_detail", ref=ref))
 
 
 @app.route("/edge/<edge_id>/delete", methods=["POST"])
@@ -785,6 +815,10 @@ def node_edit(col, nid):
         return redirect(url_for("dashboard"))
     detail_view, _ = route_info
     locked = get_locked(col)
+
+    if col == "documents" and data.get("locked"):
+        flash("Dokument ist gesperrt. Bitte zuerst entsperren.", "err")
+        return redirect(url_for(detail_view, ref=ref))
 
     if request.method == "POST":
         updates = {}
