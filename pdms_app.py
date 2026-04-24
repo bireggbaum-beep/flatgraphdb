@@ -20,7 +20,8 @@ STATUS_FLOW = {"WK": "FR", "FR": "OB", "OB": None}
 STATUS_LABEL = {"WK": "In Arbeit", "FR": "Freigegeben", "OB": "Veraltet"}
 STATUS_COLOR = {"WK": "#4361ee", "FR": "#2a9d60", "OB": "#888"}
 CATEGORIES = {"M": "Maschine", "F": "Fahrzeug", "I": "Instrument", "E": "Elektro"}
-EQ_STATUS = {"AKTIV": "#2a9d60", "INAKTIV": "#e67e22", "STILLGELEGT": "#888"}
+EQ_STATUS      = {"AKTIV": "#2a9d60", "INAKTIV": "#e67e22", "STILLGELEGT": "#888"}
+EQ_STATUS_FLOW = {"AKTIV": "INAKTIV", "INAKTIV": "STILLGELEGT", "STILLGELEGT": None}
 
 ISSUE_TYPES       = {"STOERUNG": "Störung", "WARTUNG": "Wartung",
                      "AENDERUNG": "Änderungsantrag", "PRUEFUNG": "Prüfung"}
@@ -542,6 +543,8 @@ def document_detail(ref):
     fls         = db.list_nodes("functional_locations")
     audit_log   = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
                          key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
+    issue_refs  = db.get_connected(ref, direction="out", rel_type="hat_issue")
+    doc_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
 
     T = tmpl("""
 <div style="margin-bottom:.5rem"><a href="/documents">← Dokumente</a></div>
@@ -655,6 +658,44 @@ def document_detail(ref):
 </div>
 </div>
 </div>
+<div class="card" style="margin-top:1rem">
+  <h2>Issues ({{doc_issues|length}})</h2>
+  {% if doc_issues %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Nr</th><th>Titel</th><th>Typ</th><th>Prio</th><th>Status</th><th>Fällig</th></tr>
+    {% for ir,id in doc_issues %}
+    <tr>
+      <td><a href="/issue/{{ir}}">{{ir.split('/')[-1]}}</a></td>
+      <td>{{id.title[:40]}}</td>
+      <td><span class="badge">{{itypes.get(id.issue_type,id.issue_type)}}</span></td>
+      <td><span class="badge" style="background:{{iprio.get(id.priority,'#888')}};color:#fff">{{id.priority}}</span></td>
+      <td><span class="badge" style="background:{{istatus.get(id.status,'#888')}};color:#fff">{{id.status}}</span></td>
+      <td style="color:#999;font-size:.8rem">{{id.get('due_date','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Issues.</p>
+  {% endif %}
+  <form method="post" action="/node/{{ref}}/issue/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div style="flex:2"><label>Titel *</label>
+        <input type="text" name="title" placeholder="Kurzbeschreibung" style="margin:0"></div>
+      <div><label>Typ</label>
+        <select name="issue_type" style="width:130px;margin:0">
+          {% for k,v in itypes.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}
+        </select></div>
+      <div><label>Priorität</label>
+        <select name="priority" style="width:100px;margin:0">
+          {% for k in iprio.keys() %}<option value="{{k}}">{{k}}</option>{% endfor %}
+        </select></div>
+      <div><label>Fällig</label>
+        <input type="date" name="due_date" style="width:140px;margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Issue</button></div>
+    </div>
+  </form>
+</div>
 {% if audit_log %}
 <div class="card" style="margin-top:1rem">
   <h2>Änderungshistorie</h2>
@@ -677,7 +718,8 @@ def document_detail(ref):
                                   obj_links=obj_links, orig_nodes=orig_nodes,
                                   next_status=next_status, equipments=equipments,
                                   fls=fls, colors=STATUS_COLOR, labels=STATUS_LABEL,
-                                  audit_log=audit_log)
+                                  audit_log=audit_log, doc_issues=doc_issues,
+                                  itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
 
 
 @app.route("/document/<path:ref>/status", methods=["POST"])
@@ -1109,6 +1151,7 @@ def equipment_detail(ref):
                         key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
     issue_refs = db.get_connected(ref, direction="out", rel_type="hat_issue")
     eq_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
+    next_eq_status = EQ_STATUS_FLOW.get(data.get("status", "AKTIV"))
 
     T = tmpl("""
 <div style="margin-bottom:.5rem"><a href="/equipments">← Equipment</a></div>
@@ -1131,6 +1174,14 @@ def equipment_detail(ref):
   </div>
   <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
     <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
+    {% if next_eq_status %}
+    <form class="il" method="post" action="/equipment/{{ref}}/eq-status">
+      <input type="hidden" name="new_status" value="{{next_eq_status}}">
+      <button class="btn sm" style="background:{{st_col[next_eq_status]}};color:#fff"
+              onclick="return confirm('Status ändern zu {{next_eq_status}}?')">
+        → {{next_eq_status}}</button>
+    </form>
+    {% endif %}
     <form class="il" method="post" action="/equipment/{{ref}}/delete"
           onsubmit="return confirm('Stilllegen?')">
       <button class="btn sm danger">Stilllegen</button>
@@ -1293,7 +1344,8 @@ def equipment_detail(ref):
         tree_docs=tree_docs, fls_all=fls_all, eqs_all=eqs_all,
         colors=STATUS_COLOR, st_col=EQ_STATUS, cats=CATEGORIES,
         audit_log=audit_log, eq_issues=eq_issues,
-        itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
+        itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY,
+        next_eq_status=next_eq_status)
 
 
 @app.route("/equipment/<path:ref>/link-fl", methods=["POST"])
@@ -1318,6 +1370,26 @@ def equipment_add_child(ref):
     else:
         db.create_edge(ref, child, "ist_uebergeordnet", cascade_delete=True)
         flash(f"{child} als Unterbaugruppe hinzugefügt.")
+    return redirect(url_for("equipment_detail", ref=ref))
+
+
+@app.route("/equipment/<path:ref>/eq-status", methods=["POST"])
+def equipment_eq_status(ref):
+    new_status = request.form.get("new_status", "").strip()
+    db = get_db()
+    data = db.get_node(ref)
+    if not data or new_status not in EQ_STATUS_FLOW:
+        flash("Ungültiger Status.", "err")
+        return redirect(url_for("equipment_detail", ref=ref))
+    old_status = data.get("status", "AKTIV")
+    if EQ_STATUS_FLOW.get(old_status) != new_status:
+        flash("Status-Übergang nicht erlaubt.", "err")
+        return redirect(url_for("equipment_detail", ref=ref))
+    parts = ref.split("/", 1)
+    db.update_node(parts[0], parts[1], {"status": new_status})
+    log_audit(db, ref, "status_change", f"{old_status} → {new_status}")
+    fire_webhooks("equipment_status_changed", {"ref": ref, "old_status": old_status, "new_status": new_status})
+    flash(f"Status geändert: {old_status} → {new_status}")
     return redirect(url_for("equipment_detail", ref=ref))
 
 
