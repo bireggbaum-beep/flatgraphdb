@@ -66,6 +66,16 @@ def field_input(name, value):
     return (html, False)
 
 
+def log_audit(db, ref, action, field="", old_value=None, new_value=None):
+    nid = db.next_id("audit_log", prefix="AUD-", padding=6)
+    db.create_node("audit_log", nid, {
+        "ref": ref, "action": action, "field": field,
+        "old_value": str(old_value) if old_value is not None else "",
+        "new_value": str(new_value) if new_value is not None else "",
+        "changed_by": DEFAULT_USER, "changed_at": now()
+    })
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -449,6 +459,8 @@ def document_detail(ref):
     next_status = STATUS_FLOW.get(data.get("status", "WK"))
     equipments  = db.list_nodes("equipments")
     fls         = db.list_nodes("functional_locations")
+    audit_log   = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
+                         key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
 
     T = tmpl("""
 <div style="margin-bottom:.5rem"><a href="/documents">← Dokumente</a></div>
@@ -540,11 +552,29 @@ def document_detail(ref):
 </div>
 </div>
 </div>
+{% if audit_log %}
+<div class="card" style="margin-top:1rem">
+  <h2>Änderungshistorie</h2>
+  <table style="margin-top:.5rem">
+    <tr><th>Datum</th><th>Aktion</th><th>Feld</th><th>Alt</th><th>Neu</th></tr>
+    {% for e in audit_log %}
+    <tr>
+      <td style="color:#999;font-size:.79rem;white-space:nowrap">{{e.changed_at[:19].replace('T',' ')}}</td>
+      <td><span class="badge">{{e.action}}</span></td>
+      <td>{{e.get('field','')}}</td>
+      <td style="color:#888;max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('old_value','')}}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('new_value','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
 """)
     return render_template_string(T, ref=ref, nid=nid, data=data,
                                   obj_links=obj_links, orig_nodes=orig_nodes,
                                   next_status=next_status, equipments=equipments,
-                                  fls=fls, colors=STATUS_COLOR, labels=STATUS_LABEL)
+                                  fls=fls, colors=STATUS_COLOR, labels=STATUS_LABEL,
+                                  audit_log=audit_log)
 
 
 @app.route("/document/<path:ref>/status", methods=["POST"])
@@ -564,6 +594,7 @@ def document_status(ref):
         flash(f"Status-Übergang {cur}→{new_status} nicht erlaubt.", "err")
     else:
         db.update_node(col, nid, {"status": new_status, "changed_at": now()})
+        log_audit(db, ref, "status_change", field="status", old_value=cur, new_value=new_status)
         flash(f"Status auf {STATUS_LABEL[new_status]} gesetzt.")
     return redirect(url_for("document_detail", ref=ref))
 
@@ -578,6 +609,7 @@ def document_link(ref):
     t = now()
     db.create_edge(ref, target, "object_link",
                    meta={"linked_at": t, "linked_by": DEFAULT_USER})
+    log_audit(db, ref, "link_created", new_value=target)
     flash(f"Object Link zu {target} angelegt.")
     return redirect(url_for("document_detail", ref=ref))
 
@@ -588,17 +620,23 @@ def document_delete(ref):
     if len(parts) != 2:
         return redirect(url_for("documents"))
     col, nid = parts
-    get_db().soft_delete(col, nid)
+    db = get_db()
+    db.soft_delete(col, nid)
+    log_audit(db, ref, "soft_delete")
     flash(f"{ref} archiviert (wartet auf GC).")
     return redirect(url_for("documents"))
 
 
 @app.route("/edge/<edge_id>/delete", methods=["POST"])
 def edge_delete(edge_id):
-    ref = request.referrer or url_for("documents")
-    get_db().delete_edge(edge_id)
+    referrer = request.referrer or url_for("documents")
+    db = get_db()
+    edge = db.get_edge(edge_id)
+    db.delete_edge(edge_id)
+    if edge:
+        log_audit(db, edge["quelle"], "link_deleted", old_value=edge_id, new_value=edge.get("ziel",""))
     flash("Edge gelöscht.")
-    return redirect(ref)
+    return redirect(referrer)
 
 
 # =============================================================================
@@ -651,6 +689,10 @@ def node_edit(col, nid):
             if col == "documents":
                 updates["changed_at"] = now()
             db.update_node(col, nid, updates)
+            for field, new_val in updates.items():
+                if field != "changed_at":
+                    log_audit(db, ref, "update", field=field,
+                              old_value=data.get(field), new_value=new_val)
             flash(f"{nid} gespeichert.")
         else:
             flash("Keine Änderungen.")
@@ -806,8 +848,10 @@ def equipment_detail(ref):
                 tree_doc_refs.add(e["quelle"])
     tree_docs = [(r, db.get_node(r)) for r in sorted(tree_doc_refs) if db.get_node(r)]
 
-    fls_all = db.list_nodes("functional_locations")
-    eqs_all = db.list_nodes("equipments")
+    fls_all   = db.list_nodes("functional_locations")
+    eqs_all   = db.list_nodes("equipments")
+    audit_log = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
+                       key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
 
     T = tmpl("""
 <div style="margin-bottom:.5rem"><a href="/equipments">← Equipment</a></div>
@@ -931,11 +975,29 @@ def equipment_detail(ref):
 </div>
 </div>
 </div>
+{% if audit_log %}
+<div class="card" style="margin-top:1rem">
+  <h2>Änderungshistorie</h2>
+  <table style="margin-top:.5rem">
+    <tr><th>Datum</th><th>Aktion</th><th>Feld</th><th>Alt</th><th>Neu</th></tr>
+    {% for e in audit_log %}
+    <tr>
+      <td style="color:#999;font-size:.79rem;white-space:nowrap">{{e.changed_at[:19].replace('T',' ')}}</td>
+      <td><span class="badge">{{e.action}}</span></td>
+      <td>{{e.get('field','')}}</td>
+      <td style="color:#888;max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('old_value','')}}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('new_value','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
 """)
     return render_template_string(T, ref=ref, nid=nid, data=data,
         children=children, parent=parent, fl_data=fl_data, docs=docs,
         tree_docs=tree_docs, fls_all=fls_all, eqs_all=eqs_all,
-        colors=STATUS_COLOR, st_col=EQ_STATUS, cats=CATEGORIES)
+        colors=STATUS_COLOR, st_col=EQ_STATUS, cats=CATEGORIES,
+        audit_log=audit_log)
 
 
 @app.route("/equipment/<path:ref>/link-fl", methods=["POST"])
@@ -967,7 +1029,9 @@ def equipment_add_child(ref):
 def equipment_delete(ref):
     parts = ref.split("/", 1)
     if len(parts) == 2:
-        get_db().soft_delete(parts[0], parts[1])
+        db = get_db()
+        db.soft_delete(parts[0], parts[1])
+        log_audit(db, ref, "soft_delete")
         flash(f"{ref} stillgelegt (wartet auf GC).")
     return redirect(url_for("equipments"))
 
