@@ -173,32 +173,115 @@ def main():
     total_write = time.perf_counter() - t0
     print(f"\nSchreiben gesamt: {total_write:.2f}s")
 
-    # --- Lesetest ---
-    print("\nLesetest:")
+    # ---------------------------------------------------------------
+    # BENCHMARK 1: Kaltstart — DB neu laden von Disk
+    # ---------------------------------------------------------------
+    print("\nBenchmark 1 — Kaltstart (alle Collections von Disk laden):")
     t1 = time.perf_counter()
-    all_eq = db.list_nodes("equipments")
-    print(f"  list_nodes(equipments):              {time.perf_counter()-t1:.3f}s  ({len(all_eq)} Nodes)")
+    db2 = FlatGraphDB(args.db)
+    t_load = time.perf_counter() - t1
+    total_nodes = sum(len(db2._cache["nodes"].get(c, {})) for c in db2.list_collections())
+    print(f"  Ladezeit: {t_load:.3f}s  ({total_nodes} Nodes, {len(db2.list_collections())} Collections)")
+
+    # ---------------------------------------------------------------
+    # BENCHMARK 2: Reads — verschiedene Abfragetypen
+    # ---------------------------------------------------------------
+    print("\nBenchmark 2 — Reads:")
 
     t1 = time.perf_counter()
-    aktiv = db.find_nodes("equipments", {"status": "AKTIV"})
-    print(f"  find_nodes(status=AKTIV):            {time.perf_counter()-t1:.3f}s  ({len(aktiv)} Treffer)")
+    all_eq = db2.list_nodes("equipments")
+    print(f"  list_nodes(equipments):                    {time.perf_counter()-t1:.4f}s  ({len(all_eq)} Nodes)")
 
     t1 = time.perf_counter()
-    offene = db.find_nodes("issues", {"status": "OFFEN"})
-    print(f"  find_nodes(issues, status=OFFEN):    {time.perf_counter()-t1:.3f}s  ({len(offene)} Treffer)")
+    aktiv = db2.find_nodes("equipments", {"status": "AKTIV"})
+    print(f"  find_nodes(status=AKTIV):                  {time.perf_counter()-t1:.4f}s  ({len(aktiv)} Treffer)")
 
-    if eq_refs:
-        t1 = time.perf_counter()
-        connected = db.get_connected(eq_refs[0], direction="out")
-        print(f"  get_connected(EQ-00001, out):        {time.perf_counter()-t1:.3f}s  ({len(connected)} Edges)")
+    t1 = time.perf_counter()
+    gefiltert = db2.find_nodes("equipments", {"category": "MECHANISCH", "status": "AKTIV"})
+    print(f"  find_nodes(category+status, 2 Filter):     {time.perf_counter()-t1:.4f}s  ({len(gefiltert)} Treffer)")
 
-    # --- GC ---
+    t1 = time.perf_counter()
+    offene = db2.find_nodes("issues", {"status": "OFFEN"})
+    print(f"  find_nodes(issues, status=OFFEN):          {time.perf_counter()-t1:.4f}s  ({len(offene)} Treffer)")
+
+    t1 = time.perf_counter()
+    hoch = db2.find_nodes("issues", {"priority": "HOCH", "status": "OFFEN"})
+    print(f"  find_nodes(issues, priority+status):       {time.perf_counter()-t1:.4f}s  ({len(hoch)} Treffer)")
+
+    # get_connected auf einen Node mit vielen Edges
+    busiest = max(eq_refs, key=lambda r: len(db2.get_connected(r, direction="out")))
+    t1 = time.perf_counter()
+    connected = db2.get_connected(busiest, direction="out")
+    print(f"  get_connected(busiest eq, out):            {time.perf_counter()-t1:.4f}s  ({len(connected)} Edges)")
+
+    t1 = time.perf_counter()
+    for ref in list(all_eq.keys())[:100]:
+        db2.get_node(f"equipments/{ref}")
+    t_100 = time.perf_counter() - t1
+    print(f"  get_node() x100 einzeln:                   {t_100:.4f}s  ({t_100/100*1000:.3f}ms/Node)")
+
+    # ---------------------------------------------------------------
+    # BENCHMARK 3: Einzelschreiben (ausserhalb Transaktion)
+    # ---------------------------------------------------------------
+    print("\nBenchmark 3 — Einzelschreiben (kein transaction()):")
+
+    t1 = time.perf_counter()
+    for i in range(100):
+        db2.update_node("equipments", f"EQ-{i+1:05d}", {"changed_at": "2026-04-25T12:00:00Z"})
+    t_100w = time.perf_counter() - t1
+    print(f"  update_node() x100:                        {t_100w:.3f}s  ({t_100w/100*1000:.1f}ms/Write)")
+
+    t1 = time.perf_counter()
+    db2.update_node("equipments", "EQ-00001", {"cost_center": "K-999"})
+    print(f"  update_node() einzeln:                     {time.perf_counter()-t1:.4f}s")
+
+    # ---------------------------------------------------------------
+    # BENCHMARK 4: Bulk-Write mit transaction()
+    # ---------------------------------------------------------------
+    print("\nBenchmark 4 — Bulk-Write mit transaction():")
+
+    t1 = time.perf_counter()
+    with db2.transaction():
+        for i in range(100):
+            db2.update_node("equipments", f"EQ-{i+1:05d}", {"cost_center": "K-100"})
+    t_tx = time.perf_counter() - t1
+    print(f"  update_node() x100 in transaction():       {t_tx:.3f}s  ({t_tx/100*1000:.2f}ms/Write)")
+    print(f"  Speedup vs. Einzelschreiben:               {t_100w/t_tx:.0f}x")
+
+    # ---------------------------------------------------------------
+    # BENCHMARK 5: RAM-Verbrauch
+    # ---------------------------------------------------------------
+    print("\nBenchmark 5 — RAM-Verbrauch (Schaetzung):")
+    import sys as _sys
+    try:
+        import tracemalloc
+        tracemalloc.start()
+        db3 = FlatGraphDB(args.db)
+        _ = db3.list_nodes("equipments")
+        _ = db3.list_nodes("documents")
+        current, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        print(f"  Peak RAM nach Laden:                       {peak/1024/1024:.1f} MB")
+        print(f"  Aktuell belegt:                            {current/1024/1024:.1f} MB")
+    except Exception as e:
+        print(f"  (tracemalloc nicht verfuegbar: {e})")
+
+    # ---------------------------------------------------------------
+    # BENCHMARK 6: GC mit echten Loeschungen
+    # ---------------------------------------------------------------
     if args.gc:
-        print("\nGarbage Collection:")
+        print("\nBenchmark 6 — Garbage Collection:")
+        n_delete = max(10, n_eq // 20)  # ~5% loeschen
+        with db2.transaction():
+            for i in range(1, n_delete + 1):
+                db2.soft_delete("equipments", f"EQ-{i:05d}")
+
         gc = MaintenanceEngine(args.db)
         t1 = time.perf_counter()
         stats = gc.run_garbage_collection(verbose=False)
-        print(f"  Laufzeit: {time.perf_counter()-t1:.2f}s  |  {stats}")
+        t_gc = time.perf_counter() - t1
+        print(f"  {n_delete} Nodes soft-deleted, GC-Laufzeit: {t_gc:.3f}s")
+        print(f"  {stats}")
 
     print(f"\nFertig. DB liegt in: {os.path.abspath(args.db)}")
 
