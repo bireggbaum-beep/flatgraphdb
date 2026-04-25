@@ -106,8 +106,30 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+_db = None
+
 def get_db():
-    return FlatGraphDB(root_dir=DB_ROOT)
+    global _db
+    if _db is None:
+        _db = FlatGraphDB(root_dir=DB_ROOT)
+    return _db
+
+
+@app.before_request
+def _begin_transaction():
+    get_db()._transaction_depth += 1
+
+
+@app.teardown_request
+def _end_transaction(exc):
+    db = get_db()
+    if exc is None:
+        db._transaction_depth -= 1
+        db._flush_pending_writes()
+    else:
+        db._transaction_depth -= 1
+        db._dirty_nodes.clear()
+        db._dirty_edges.clear()
 
 
 def seed_if_empty():

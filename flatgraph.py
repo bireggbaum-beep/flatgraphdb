@@ -237,6 +237,10 @@ class FlatGraphDB:
         self._dirty_edges.clear()
 
     @contextlib.contextmanager
+    def flush(self):
+        """Schreibt alle gepufferten Writes sofort auf Disk. Nuetzlich ausserhalb von transaction()."""
+        self._flush_pending_writes()
+
     def transaction(self):
         """
         Atomare Transaktion: alle Writes werden im RAM gepuffert und erst beim
