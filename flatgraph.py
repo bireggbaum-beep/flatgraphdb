@@ -35,7 +35,8 @@ import sys
 import uuid
 from datetime import datetime, timezone
 
-_RESERVED_EDGE_FIELDS = {"quelle", "ziel", "typ", "erstellt_am", "_cascade_delete"}
+_RESERVED_EDGE_FIELDS  = {"quelle", "ziel", "typ", "erstellt_am", "_cascade_delete"}
+_INTERNAL_COLLECTIONS = {"_audit_log"}
 
 
 # =============================================================================
@@ -43,17 +44,20 @@ _RESERVED_EDGE_FIELDS = {"quelle", "ziel", "typ", "erstellt_am", "_cascade_delet
 # =============================================================================
 
 class FlatGraphDB:
-    def __init__(self, root_dir, schemas=None, file_lock=False):
+    def __init__(self, root_dir, schemas=None, file_lock=False, audit=False):
         """
         Initialisiert die Graph-Engine.
         :param root_dir: Basisverzeichnis der Datenbank.
         :param schemas: Optional. Dict {collection_name: {field: expected_type}}.
         :param file_lock: Aktiviert File-Locking fuer Multi-Process-Sicherheit.
+        :param audit: Schreibt automatisch Audit-Eintraege bei jedem Write.
         """
         self.root = root_dir
         self.schemas = schemas or {}
         self.file_lock = file_lock
+        self.audit = audit
         self._lock_path = os.path.join(root_dir, ".flatgraph.lock")
+        self._audit_writing = False  # verhindert rekursive Audit-Eintraege
 
         # Verzeichnisstruktur
         self.dirs = {
@@ -375,6 +379,7 @@ class FlatGraphDB:
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
+        self._log_audit("create", collection_name, node_id)
         return f"{collection_name}/{node_id}"
 
     def get_node(self, node_ref):
@@ -428,6 +433,9 @@ class FlatGraphDB:
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
+        public_fields = {k: v for k, v in update_data.items() if not k.startswith("_")}
+        if public_fields:
+            self._log_audit("update", collection_name, node_id, str(list(public_fields.keys())))
         return True
 
     def list_nodes(self, collection_name, include_deleted=False):
@@ -441,8 +449,32 @@ class FlatGraphDB:
         return {nid: copy.deepcopy(data) for nid, data in col.items() if not self._is_deleted(data)}
 
     def list_collections(self):
-        """Gibt Namen aller bekannten Node-Collections zurueck."""
-        return list(self._cache["nodes"].keys())
+        """Gibt Namen aller bekannten Node-Collections zurueck (interne ausgeblendet)."""
+        return [c for c in self._cache["nodes"] if c not in _INTERNAL_COLLECTIONS]
+
+    def _log_audit(self, action, collection, node_id, details=None):
+        """Schreibt einen Audit-Eintrag in _audit_log (nur wenn audit=True)."""
+        if not self.audit or self._audit_writing:
+            return
+        if collection in _INTERNAL_COLLECTIONS:
+            return
+        self._audit_writing = True
+        try:
+            entry_id = uuid.uuid4().hex
+            entry = {
+                "ref":        f"{collection}/{node_id}",
+                "action":     action,
+                "changed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if details:
+                entry["details"] = details
+            if "_audit_log" not in self._cache["nodes"]:
+                self._cache["nodes"]["_audit_log"] = {}
+            self._cache["nodes"]["_audit_log"][entry_id] = entry
+            self._mark_node_dirty("_audit_log", entry_id)
+            self._persist_collection("_audit_log")
+        finally:
+            self._audit_writing = False
 
     def find_nodes(self, collection_name, match):
         """
@@ -525,10 +557,13 @@ class FlatGraphDB:
 
     def soft_delete(self, collection_name, node_id, keep_asset=True):
         """Markiert einen Knoten fuer den Garbage Collector."""
-        return self.update_node(collection_name, node_id, {
+        result = self.update_node(collection_name, node_id, {
             "_deletion_flag": datetime.now(timezone.utc).isoformat(),
             "_keep_asset": keep_asset,
         })
+        if result:
+            self._log_audit("soft_delete", collection_name, node_id)
+        return result
 
     def restore_node(self, collection_name, node_id):
         """
@@ -542,6 +577,7 @@ class FlatGraphDB:
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
+        self._log_audit("restore", collection_name, node_id)
         return True
 
     # ------------------------------------------------------------------
