@@ -27,11 +27,13 @@ Features:
 import contextlib
 import copy
 import hashlib
-import os
 import json
+import os
 import re
 import shutil
 import sys
+import threading
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 
@@ -44,18 +46,22 @@ _INTERNAL_COLLECTIONS = {"_audit_log"}
 # =============================================================================
 
 class FlatGraphDB:
-    def __init__(self, root_dir, schemas=None, file_lock=False, audit=False):
+    def __init__(self, root_dir, schemas=None, file_lock=False, audit=False, webhooks=None):
         """
         Initialisiert die Graph-Engine.
         :param root_dir: Basisverzeichnis der Datenbank.
         :param schemas: Optional. Dict {collection_name: {field: expected_type}}.
         :param file_lock: Aktiviert File-Locking fuer Multi-Process-Sicherheit.
         :param audit: Schreibt automatisch Audit-Eintraege bei jedem Write.
+        :param webhooks: Liste von Hook-Configs:
+                         [{"url": "https://...", "events": "*", "collections": "*"}]
+                         events/collections: "*" = alle, oder Liste z.B. ["create_node"]
         """
         self.root = root_dir
         self.schemas = schemas or {}
         self.file_lock = file_lock
         self.audit = audit
+        self.webhooks = webhooks or []
         self._lock_path = os.path.join(root_dir, ".flatgraph.lock")
         self._audit_writing = False  # verhindert rekursive Audit-Eintraege
 
@@ -380,6 +386,7 @@ class FlatGraphDB:
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
         self._log_audit("create", collection_name, node_id)
+        self._fire_hooks("create_node", collection_name, node_id)
         return f"{collection_name}/{node_id}"
 
     def get_node(self, node_ref):
@@ -436,6 +443,7 @@ class FlatGraphDB:
         public_fields = {k: v for k, v in update_data.items() if not k.startswith("_")}
         if public_fields:
             self._log_audit("update", collection_name, node_id, str(list(public_fields.keys())))
+            self._fire_hooks("update_node", collection_name, node_id)
         return True
 
     def list_nodes(self, collection_name, include_deleted=False):
@@ -475,6 +483,37 @@ class FlatGraphDB:
             self._persist_collection("_audit_log")
         finally:
             self._audit_writing = False
+
+    def _fire_hooks(self, event, collection, node_id):
+        """Sendet HTTP-POST an alle passenden Webhook-URLs (nicht-blockierend, Fehler werden ignoriert)."""
+        if not self.webhooks or collection in _INTERNAL_COLLECTIONS:
+            return
+        payload = json.dumps({
+            "event":      event,
+            "collection": collection,
+            "node_id":    node_id,
+            "ref":        f"{collection}/{node_id}",
+            "timestamp":  datetime.now(timezone.utc).isoformat(),
+        }).encode()
+        for hook in self.webhooks:
+            events      = hook.get("events", "*")
+            collections = hook.get("collections", "*")
+            if events != "*" and event not in events:
+                continue
+            if collections != "*" and collection not in collections:
+                continue
+            url = hook.get("url", "")
+            if not url:
+                continue
+            def _send(u=url, p=payload):
+                try:
+                    req = urllib.request.Request(
+                        u, data=p, headers={"Content-Type": "application/json"}, method="POST"
+                    )
+                    urllib.request.urlopen(req, timeout=3)
+                except Exception:
+                    pass
+            threading.Thread(target=_send, daemon=True).start()
 
     def find_nodes(self, collection_name, match):
         """
@@ -563,6 +602,7 @@ class FlatGraphDB:
         })
         if result:
             self._log_audit("soft_delete", collection_name, node_id)
+            self._fire_hooks("soft_delete", collection_name, node_id)
         return result
 
     def restore_node(self, collection_name, node_id):
@@ -578,6 +618,7 @@ class FlatGraphDB:
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
         self._log_audit("restore", collection_name, node_id)
+        self._fire_hooks("restore_node", collection_name, node_id)
         return True
 
     # ------------------------------------------------------------------
