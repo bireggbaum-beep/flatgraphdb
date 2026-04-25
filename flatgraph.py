@@ -24,12 +24,14 @@ Features:
 =============================================================================
 """
 
+import contextlib
 import copy
 import hashlib
 import os
 import json
 import re
 import shutil
+import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -41,14 +43,17 @@ _RESERVED_EDGE_FIELDS = {"quelle", "ziel", "typ", "erstellt_am", "_cascade_delet
 # =============================================================================
 
 class FlatGraphDB:
-    def __init__(self, root_dir, schemas=None):
+    def __init__(self, root_dir, schemas=None, file_lock=False):
         """
         Initialisiert die Graph-Engine.
         :param root_dir: Basisverzeichnis der Datenbank.
         :param schemas: Optional. Dict {collection_name: {field: expected_type}}.
+        :param file_lock: Aktiviert File-Locking fuer Multi-Process-Sicherheit.
         """
         self.root = root_dir
         self.schemas = schemas or {}
+        self.file_lock = file_lock
+        self._lock_path = os.path.join(root_dir, ".flatgraph.lock")
 
         # Verzeichnisstruktur
         self.dirs = {
@@ -63,9 +68,10 @@ class FlatGraphDB:
 
         # RAM-Cache: edges = {rel_type: {edge_id: edge_data}}
         self._cache = {"nodes": {}, "edges": {}}
-        self._edge_type_index = {}  # {edge_id: rel_type} - RAM-only Reverse-Index
-        self._index_cache = {}      # {collection: {field: {value_lower: [node_ids]}}}
-        self._dirty_index = set()   # Collections die nach einem Write neu indexiert werden muessen
+        self._edge_type_index = {}   # {edge_id: rel_type} - RAM-only Reverse-Index
+        self._index_cache = {}       # {collection: {field: {value_lower: [node_ids]}}}
+        self._dirty_index = set()    # Collections die nach einem Write neu indexiert werden muessen
+        self._dirty_nodes = {}       # {collection: set(node_ids)} - pending Temp-File Writes
         self._initialize_cache()
 
     # ------------------------------------------------------------------
@@ -99,13 +105,22 @@ class FlatGraphDB:
         os.remove(legacy)
 
     def _initialize_cache(self):
-        """Laedt alle JSON-Dateien einmalig in den RAM."""
+        """Laedt alle JSON-Dateien einmalig in den RAM. Temp-Files werden auf Basis-Stand gemergt."""
         if os.path.exists(self.dirs["nodes"]):
             for filename in os.listdir(self.dirs["nodes"]):
-                if filename.endswith(".json"):
-                    collection_name = filename.replace(".json", "")
-                    path = os.path.join(self.dirs["nodes"], filename)
-                    self._cache["nodes"][collection_name] = self._load_json_from_disk(path)
+                if filename.endswith("_temp.json") or not filename.endswith(".json"):
+                    continue
+                collection_name = filename[:-5]
+                path = os.path.join(self.dirs["nodes"], filename)
+                self._cache["nodes"][collection_name] = self._load_json_from_disk(path)
+
+            # Temp-Files auf den Basis-Stand mergen (ausstehende Writes aus vorheriger Session)
+            for filename in os.listdir(self.dirs["nodes"]):
+                if not filename.endswith("_temp.json"):
+                    continue
+                collection_name = filename[: -len("_temp.json")]
+                temp_data = self._load_json_from_disk(os.path.join(self.dirs["nodes"], filename))
+                self._cache["nodes"].setdefault(collection_name, {}).update(temp_data)
 
         self._migrate_legacy_edges()
 
@@ -138,10 +153,61 @@ class FlatGraphDB:
             json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(temp_file, filepath)
 
+    def _temp_file(self, collection_name):
+        return os.path.join(self.dirs["nodes"], f"{collection_name}_temp.json")
+
+    @contextlib.contextmanager
+    def _acquire_lock(self):
+        """File-Lock fuer Multi-Process-Sicherheit (nur wenn file_lock=True)."""
+        if not self.file_lock:
+            yield
+            return
+        lock_fh = open(self._lock_path, "a", encoding="utf-8")
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_fh, fcntl.LOCK_EX)
+            yield
+        finally:
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            lock_fh.close()
+
+    def _mark_node_dirty(self, collection_name, node_id):
+        """Markiert einen Node als geaendert — wird beim naechsten persist in Temp-File geschrieben."""
+        self._dirty_nodes.setdefault(collection_name, set()).add(node_id)
+
     def _persist_collection(self, collection_name):
-        """Schreibt eine Node-Collection vom RAM auf Disk."""
+        """Schreibt nur geaenderte Nodes in das Temp-File der Collection (schneller Schreibpfad)."""
+        dirty_ids = self._dirty_nodes.pop(collection_name, set())
+        if not dirty_ids:
+            return
+        temp_path = self._temp_file(collection_name)
+        temp_data = self._load_json_from_disk(temp_path)
+        col_data = self._cache["nodes"].get(collection_name, {})
+        for nid in dirty_ids:
+            if nid in col_data:
+                temp_data[nid] = col_data[nid]
+            else:
+                temp_data.pop(nid, None)
+        with self._acquire_lock():
+            self._save_json_atomic(temp_path, temp_data)
+
+    def _persist_collection_full(self, collection_name):
+        """Schreibt die gesamte Collection in die Basis-Datei und loescht das Temp-File (GC-Kompaktierung)."""
         path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
         self._save_json_atomic(path, self._cache["nodes"].get(collection_name, {}))
+        temp_path = self._temp_file(collection_name)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        self._dirty_nodes.pop(collection_name, None)
 
     def _validate_node(self, collection_name, data):
         """Prueft Daten gegen das Schema, falls eines definiert ist."""
@@ -245,6 +311,7 @@ class FlatGraphDB:
             )
 
         self._cache["nodes"][collection_name][node_id] = copy.deepcopy(data)
+        self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
         return f"{collection_name}/{node_id}"
@@ -297,6 +364,7 @@ class FlatGraphDB:
                 raise
 
         col_cache[node_id].update(update_data)
+        self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
         return True
@@ -410,6 +478,7 @@ class FlatGraphDB:
             return False
         col_cache[node_id].pop("_deletion_flag", None)
         col_cache[node_id].pop("_keep_asset", None)
+        self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
         return True
@@ -682,6 +751,16 @@ class MaintenanceEngine(FlatGraphDB):
             print(f"[GC] {stats['nodes_purged']} Node(s) endgueltig geloescht.")
             print(f"[GC] {stats['assets_archived']} Asset(s) archiviert, {stats['assets_kept']} behalten.")
 
+        # Kompaktierung: alle Collections mit geloeschten Nodes vollstaendig auf Disk schreiben
+        purged_collections = {col for col, _, _ in to_delete}
+        for col in purged_collections:
+            self._persist_collection_full(col)
+
+        # Auch alle anderen ausstehenden Temp-Files kompaktieren
+        for col in list(self._cache["nodes"].keys()):
+            if os.path.exists(self._temp_file(col)):
+                self._persist_collection_full(col)
+
         self._write_maintenance_log(stats)
         return stats
 
@@ -726,6 +805,7 @@ class MaintenanceEngine(FlatGraphDB):
                         if target_node and not self._is_deleted(target_node):
                             target_node["_deletion_flag"] = datetime.now(timezone.utc).isoformat()
                             target_node.setdefault("_keep_asset", True)
+                            self._mark_node_dirty(col, nid)
                             dirty_collections.add(col)
                     except ValueError:
                         pass
@@ -797,7 +877,7 @@ class MaintenanceEngine(FlatGraphDB):
 
         # Node endgueltig entfernen (ALLERLETZTER Schritt -> Idempotenz)
         del self._cache["nodes"][collection_name][node_id]
-        self._persist_collection(collection_name)
+        self._dirty_nodes.pop(collection_name, None)  # kein Temp-Write fuer geloeschte Nodes
         self._mark_index_dirty(collection_name)
         return asset_status
 
