@@ -72,6 +72,8 @@ class FlatGraphDB:
         self._index_cache = {}       # {collection: {field: {value_lower: [node_ids]}}}
         self._dirty_index = set()    # Collections die nach einem Write neu indexiert werden muessen
         self._dirty_nodes = {}       # {collection: set(node_ids)} - pending Temp-File Writes
+        self._dirty_edges = set()    # rel_types mit ausstehenden Edge-Writes
+        self._transaction_depth = 0  # >0 = aktive Transaktion, Writes werden gepuffert
         self._initialize_cache()
 
     # ------------------------------------------------------------------
@@ -84,11 +86,12 @@ class FlatGraphDB:
         return os.path.join(self.dirs["edges"], f"{safe}.json")
 
     def _persist_edge_type(self, rel_type):
-        """Schreibt einen Edge-Typ atomar auf Disk."""
-        self._save_json_atomic(
-            self._edges_file(rel_type),
-            self._cache["edges"].get(rel_type, {})
-        )
+        """Schreibt einen Edge-Typ auf Disk — oder puffert bei aktiver Transaktion."""
+        if self._transaction_depth > 0:
+            self._dirty_edges.add(rel_type)
+            return
+        self._dirty_edges.discard(rel_type)
+        self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
 
     def _migrate_legacy_edges(self):
         """Migriert objektlinks.json -> eine Datei pro rel_type."""
@@ -185,10 +188,13 @@ class FlatGraphDB:
         self._dirty_nodes.setdefault(collection_name, set()).add(node_id)
 
     def _persist_collection(self, collection_name):
-        """Schreibt nur geaenderte Nodes in das Temp-File der Collection (schneller Schreibpfad)."""
-        dirty_ids = self._dirty_nodes.pop(collection_name, set())
+        """Schreibt nur geaenderte Nodes in das Temp-File — oder puffert bei aktiver Transaktion."""
+        dirty_ids = self._dirty_nodes.get(collection_name, set())
         if not dirty_ids:
             return
+        if self._transaction_depth > 0:
+            return  # Gepuffert bis zum Commit
+        self._dirty_nodes.pop(collection_name, None)
         temp_path = self._temp_file(collection_name)
         temp_data = self._load_json_from_disk(temp_path)
         col_data = self._cache["nodes"].get(collection_name, {})
@@ -199,6 +205,61 @@ class FlatGraphDB:
                 temp_data.pop(nid, None)
         with self._acquire_lock():
             self._save_json_atomic(temp_path, temp_data)
+
+    def _flush_pending_writes(self):
+        """Schreibt alle gepufferten Node- und Edge-Writes auf Disk (Transaction-Commit)."""
+        for collection_name in list(self._dirty_nodes.keys()):
+            dirty_ids = self._dirty_nodes.pop(collection_name, set())
+            if not dirty_ids:
+                continue
+            temp_path = self._temp_file(collection_name)
+            temp_data = self._load_json_from_disk(temp_path)
+            col_data = self._cache["nodes"].get(collection_name, {})
+            for nid in dirty_ids:
+                if nid in col_data:
+                    temp_data[nid] = col_data[nid]
+                else:
+                    temp_data.pop(nid, None)
+            with self._acquire_lock():
+                self._save_json_atomic(temp_path, temp_data)
+        for rel_type in list(self._dirty_edges):
+            self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+        self._dirty_edges.clear()
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """
+        Atomare Transaktion: alle Writes werden im RAM gepuffert und erst beim
+        Exit als Batch auf Disk geschrieben. Bei Exception: vollstaendiger Rollback.
+        Verschachtelte Transaktionen joinen die aeussere.
+        """
+        if self._transaction_depth > 0:
+            self._transaction_depth += 1
+            try:
+                yield
+            finally:
+                self._transaction_depth -= 1
+            return
+
+        # Snapshot fuer Rollback
+        snap_nodes    = copy.deepcopy(self._cache["nodes"])
+        snap_edges    = copy.deepcopy(self._cache["edges"])
+        snap_edge_idx = copy.deepcopy(self._edge_type_index)
+
+        self._transaction_depth = 1
+        try:
+            yield
+            self._transaction_depth = 0
+            self._flush_pending_writes()
+        except Exception:
+            self._transaction_depth = 0
+            self._cache["nodes"]   = snap_nodes
+            self._cache["edges"]   = snap_edges
+            self._edge_type_index  = snap_edge_idx
+            self._dirty_nodes.clear()
+            self._dirty_edges.clear()
+            self._dirty_index.update(snap_nodes.keys())
+            raise
 
     def _persist_collection_full(self, collection_name):
         """Schreibt die gesamte Collection in die Basis-Datei und loescht das Temp-File (GC-Kompaktierung)."""
