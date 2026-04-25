@@ -1,6 +1,22 @@
+# Testdatenbanken
+_test_db/
+_pdms_db/
+_demo_db/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
-_pdms_db/
-_flatgraph_db/
-_test_db/
+.pytest_cache/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# FlatGraphDB Lock
+.flatgraph.lock
