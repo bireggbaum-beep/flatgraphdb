@@ -173,8 +173,8 @@ def seed_if_empty():
         "description": "Halle A – Fertigung", "category": "Halle"})
     db.create_node("functional_locations", "WERK-01-HALLE-B", {
         "description": "Halle B – Montage", "category": "Halle"})
-    db.create_edge("functional_locations/WERK-01", "functional_locations/WERK-01-HALLE-A", "hat_unterbereich")
-    db.create_edge("functional_locations/WERK-01", "functional_locations/WERK-01-HALLE-B", "hat_unterbereich")
+    db.create_edge("functional_locations/WERK-01", "functional_locations/WERK-01-HALLE-A", "has_subarea")
+    db.create_edge("functional_locations/WERK-01", "functional_locations/WERK-01-HALLE-B", "has_subarea")
 
     # Equipment
     db.create_node("equipments", "EQ-00001", {
@@ -199,13 +199,13 @@ def seed_if_empty():
         "status": "AKTIV", "cost_center": "K-200"})
 
     # Equipment Hierarchie (EQ-00001 ist Parent von EQ-00002 und EQ-00003)
-    db.create_edge("equipments/EQ-00001", "equipments/EQ-00002", "ist_uebergeordnet", cascade_delete=True)
-    db.create_edge("equipments/EQ-00001", "equipments/EQ-00003", "ist_uebergeordnet", cascade_delete=True)
+    db.create_edge("equipments/EQ-00001", "equipments/EQ-00002", "is_parent_of", cascade_delete=True)
+    db.create_edge("equipments/EQ-00001", "equipments/EQ-00003", "is_parent_of", cascade_delete=True)
 
     # Equipment → Functional Location
-    db.create_edge("equipments/EQ-00001", "functional_locations/WERK-01-HALLE-A", "installiert_in",
+    db.create_edge("equipments/EQ-00001", "functional_locations/WERK-01-HALLE-A", "installed_at",
                    meta={"since": "2021-06-01"})
-    db.create_edge("equipments/EQ-00004", "functional_locations/WERK-01-HALLE-B", "installiert_in",
+    db.create_edge("equipments/EQ-00004", "functional_locations/WERK-01-HALLE-B", "installed_at",
                    meta={"since": "2019-03-15"})
 
     # Dokumente
@@ -246,7 +246,7 @@ def seed_if_empty():
         "file_type": "PDF",
         "datei": "vault/10001-DRW_Gesamtzeichnung.pdf",
         "uploaded_at": t})
-    db.create_edge("documents/10001-DRW", orig_ref, "hat_original", cascade_delete=True)
+    db.create_edge("documents/10001-DRW", orig_ref, "has_original", cascade_delete=True)
 
     # Object Links: Dokumente → Equipment
     db.create_edge("documents/10001-DRW", "equipments/EQ-00001", "object_link",
@@ -601,25 +601,25 @@ def document_detail(ref):
     in_edges  = db.get_connected_edges(ref, direction="in")
 
     # Originaldatei
-    originals = [(eid, e) for eid, e in out_edges if e["typ"] == "hat_original"]
+    originals = [(eid, e) for eid, e in out_edges if e["type"] == "has_original"]
 
     # Objektverknüpfungen: beide Richtungen zusammenführen
-    out_obj = [(eid, e, db.get_node(e["ziel"]),   e["ziel"])   for eid,e in out_edges
-               if e["typ"] == "object_link" and db.get_node(e["ziel"])]
-    in_obj  = [(eid, e, db.get_node(e["quelle"]), e["quelle"]) for eid,e in in_edges
-               if e["typ"] == "object_link" and db.get_node(e["quelle"])]
+    out_obj = [(eid, e, db.get_node(e["target"]),   e["target"])   for eid,e in out_edges
+               if e["type"] == "object_link" and db.get_node(e["target"])]
+    in_obj  = [(eid, e, db.get_node(e["source"]), e["source"]) for eid,e in in_edges
+               if e["type"] == "object_link" and db.get_node(e["source"])]
     obj_links = out_obj + in_obj
-    orig_nodes = [(eid, e, db.get_node(e["ziel"])) for eid, e in originals if db.get_node(e["ziel"])]
+    orig_nodes = [(eid, e, db.get_node(e["target"])) for eid, e in originals if db.get_node(e["target"])]
 
     next_status = STATUS_FLOW.get(data.get("status", "WK"))
     equipments  = db.list_nodes("equipments")
     fls         = db.list_nodes("functional_locations")
     audit_log   = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
                          key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
-    issue_refs  = db.get_connected(ref, direction="out", rel_type="hat_issue")
+    issue_refs  = db.get_connected(ref, direction="out", rel_type="has_issue")
     doc_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
 
-    log_refs = db.get_connected(ref, direction="out", rel_type="hat_logbuch")
+    log_refs = db.get_connected(ref, direction="out", rel_type="has_logbook")
     logbook  = sorted(
         [(r, db.get_node(r)) for r in log_refs if db.get_node(r)],
         key=lambda x: (x[1].get("entry_date",""), x[1].get("created_at","")),
@@ -919,7 +919,7 @@ def edge_delete(edge_id):
     edge = db.get_edge(edge_id)
     db.delete_edge(edge_id)
     if edge:
-        log_audit(db, edge["quelle"], "link_deleted", old_value=edge_id, new_value=edge.get("ziel",""))
+        log_audit(db, edge["source"], "link_deleted", old_value=edge_id, new_value=edge.get("ziel",""))
     flash("Edge gelöscht.")
     return redirect(referrer)
 
@@ -976,7 +976,7 @@ def document_upload(ref):
         "uploaded_at": t,
     })
     orig_ref = f"originals/{orig_nid}"
-    db.create_edge(ref, orig_ref, "hat_original", cascade_delete=True)
+    db.create_edge(ref, orig_ref, "has_original", cascade_delete=True)
     log_audit(db, ref, "file_uploaded", new_value=f.filename)
     flash(f"Datei '{f.filename}' hochgeladen.")
     return redirect(url_for("document_detail", ref=ref))
@@ -1254,30 +1254,30 @@ def equipment_detail(ref):
         return redirect(url_for("equipments"))
     nid = ref.split("/", 1)[1]
 
-    children_refs = db.get_connected(ref, direction="out", rel_type="ist_uebergeordnet")
+    children_refs = db.get_connected(ref, direction="out", rel_type="is_parent_of")
     children = [(r, db.get_node(r)) for r in children_refs if db.get_node(r)]
 
-    parent_refs = db.get_connected(ref, direction="in", rel_type="ist_uebergeordnet")
+    parent_refs = db.get_connected(ref, direction="in", rel_type="is_parent_of")
     parent = (parent_refs[0], db.get_node(parent_refs[0])) if parent_refs else None
 
-    fl_refs = db.get_connected_edges(ref, direction="out", rel_type="installiert_in")
-    fl_data = [(eid, e, db.get_node(e["ziel"])) for eid,e in fl_refs if db.get_node(e["ziel"])]
+    fl_refs = db.get_connected_edges(ref, direction="out", rel_type="installed_at")
+    fl_data = [(eid, e, db.get_node(e["target"])) for eid,e in fl_refs if db.get_node(e["target"])]
 
     # Objektverknüpfungen: beide Richtungen zusammenführen
     out_obj = db.get_connected_edges(ref, direction="out", rel_type="object_link")
     in_obj  = db.get_connected_edges(ref, direction="in",  rel_type="object_link")
     obj_links_eq = (
-        [(eid, e, db.get_node(e["ziel"]),   e["ziel"])   for eid,e in out_obj if db.get_node(e["ziel"])] +
-        [(eid, e, db.get_node(e["quelle"]), e["quelle"]) for eid,e in in_obj  if db.get_node(e["quelle"])]
+        [(eid, e, db.get_node(e["target"]),   e["target"])   for eid,e in out_obj if db.get_node(e["target"])] +
+        [(eid, e, db.get_node(e["source"]), e["source"]) for eid,e in in_obj  if db.get_node(e["source"])]
     )
 
-    all_docs_in_tree = db.traverse(ref, rel_type="ist_uebergeordnet",
+    all_docs_in_tree = db.traverse(ref, rel_type="is_parent_of",
                                    direction="out", include_start=True)
     tree_doc_refs = set()
     for eq_ref in all_docs_in_tree:
         for _, e in db.get_connected_edges(eq_ref, direction="in", rel_type="object_link"):
-            if e["quelle"].startswith("documents/"):
-                tree_doc_refs.add(e["quelle"])
+            if e["source"].startswith("documents/"):
+                tree_doc_refs.add(e["source"])
     tree_docs = [(r, db.get_node(r)) for r in sorted(tree_doc_refs) if db.get_node(r)]
 
     fls_all   = db.list_nodes("functional_locations")
@@ -1285,11 +1285,11 @@ def equipment_detail(ref):
     docs_all  = db.list_nodes("documents")
     audit_log  = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
                         key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
-    issue_refs = db.get_connected(ref, direction="out", rel_type="hat_issue")
+    issue_refs = db.get_connected(ref, direction="out", rel_type="has_issue")
     eq_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
     next_eq_status = EQ_STATUS_FLOW.get(data.get("status", "AKTIV"))
 
-    log_refs = db.get_connected(ref, direction="out", rel_type="hat_logbuch")
+    log_refs = db.get_connected(ref, direction="out", rel_type="has_logbook")
     logbook  = sorted(
         [(r, db.get_node(r)) for r in log_refs if db.get_node(r)],
         key=lambda x: (x[1].get("entry_date",""), x[1].get("created_at","")),
@@ -1338,7 +1338,7 @@ def equipment_detail(ref):
     {% for eid,e,fl in fl_data %}
     <div class="kv" style="margin-bottom:.5rem">
       <span class="k">Platz</span>
-      <span class="v"><a href="/functional-location/{{e.ziel}}">{{e.ziel}}</a></span>
+      <span class="v"><a href="/functional-location/{{e.target}}">{{e.target}}</a></span>
       <span class="k">Beschreibung</span><span class="v">{{fl.description}}</span>
       <span class="k">Seit</span><span class="v">{{e.get('since','')}}</span>
     </div>
@@ -1554,7 +1554,7 @@ def equipment_link_fl(ref):
     if not fl_ref or not db.get_node(fl_ref):
         flash("Funktionaler Platz nicht gefunden.", "err")
     else:
-        db.create_edge(ref, fl_ref, "installiert_in", meta={"since": since})
+        db.create_edge(ref, fl_ref, "installed_at", meta={"since": since})
         flash(f"Installationsort {fl_ref} zugeordnet.")
     return redirect(url_for("equipment_detail", ref=ref))
 
@@ -1566,7 +1566,7 @@ def equipment_add_child(ref):
     if not child or not db.get_node(child):
         flash("Equipment nicht gefunden.", "err")
     else:
-        db.create_edge(ref, child, "ist_uebergeordnet", cascade_delete=True)
+        db.create_edge(ref, child, "is_parent_of", cascade_delete=True)
         flash(f"{child} als Unterbaugruppe hinzugefügt.")
     return redirect(url_for("equipment_detail", ref=ref))
 
@@ -1630,7 +1630,7 @@ def functional_locations():
     eq_counts = {}
     for fid in fls:
         eq_counts[fid] = len(db.get_connected(
-            f"functional_locations/{fid}", direction="in", rel_type="installiert_in"))
+            f"functional_locations/{fid}", direction="in", rel_type="installed_at"))
     return render_template_string(T, fls=sorted(fls.items()), eq_counts=eq_counts)
 
 
@@ -1675,14 +1675,14 @@ def functional_location_detail(ref):
         flash("Funktionaler Platz nicht gefunden.", "err")
         return redirect(url_for("functional_locations"))
 
-    eq_refs = db.get_connected(ref, direction="in", rel_type="installiert_in")
+    eq_refs = db.get_connected(ref, direction="in", rel_type="installed_at")
     eqs = [(r, db.get_node(r)) for r in eq_refs if db.get_node(r)]
 
     all_doc_refs = db.collect_related(
-        ref, ["installiert_in", "object_link"], direction="in")
+        ref, ["installed_at", "object_link"], direction="in")
     docs = [(r, db.get_node(r)) for r in all_doc_refs if db.get_node(r)]
 
-    sub_refs = db.get_connected(ref, direction="out", rel_type="hat_unterbereich")
+    sub_refs = db.get_connected(ref, direction="out", rel_type="has_subarea")
     subs = [(r, db.get_node(r)) for r in sub_refs if db.get_node(r)]
 
     T = tmpl("""
@@ -2376,7 +2376,7 @@ def issue_new(linked_ref):
         "created_by": DEFAULT_USER, "created_at": t, "changed_at": t,
     })
     issue_ref = f"issues/{nid}"
-    db.create_edge(linked_ref, issue_ref, "hat_issue")
+    db.create_edge(linked_ref, issue_ref, "has_issue")
     fire_webhooks("issue_created", {
         "ref": issue_ref, "title": title, "issue_type": itype,
         "priority": priority, "due_date": due_date, "linked_ref": linked_ref,
@@ -2591,7 +2591,7 @@ def logbook_new(ref):
         "entry_date": entry_date, "text": text,
         "ref": ref, "created_by": DEFAULT_USER, "created_at": t,
     })
-    db.create_edge(ref, f"logbook/{nid}", "hat_logbuch")
+    db.create_edge(ref, f"logbook/{nid}", "has_logbook")
     flash(f"Logbucheintrag {nid} angelegt.")
     return redirect(request.referrer or "/")
 

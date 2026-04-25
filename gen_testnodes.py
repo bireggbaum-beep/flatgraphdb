@@ -10,7 +10,7 @@ Erzeugt realistische Testnodes in mehreren Collections:
   issues       (~20%)
   logbook      (~10%)
 
-Und verbindet sie mit Edges (hat_issue, object_link, hat_logbuch).
+Und verbindet sie mit Edges (has_issue, object_link, has_logbook).
 """
 
 import argparse
@@ -151,7 +151,7 @@ def main():
                 "linked_ref":  linked or "",
             })
             if linked:
-                db.create_edge(linked, f"issues/{nid}", "hat_issue")
+                db.create_edge(linked, f"issues/{nid}", "has_issue")
         print(f"  Issues:      {time.perf_counter()-t1:.2f}s")
 
         # --- Logbuch ---
@@ -167,7 +167,7 @@ def main():
                 "ref":        linked or "",
             })
             if linked:
-                db.create_edge(linked, f"logbook/{nid}", "hat_logbuch")
+                db.create_edge(linked, f"logbook/{nid}", "has_logbook")
         print(f"  Logbuch:     {time.perf_counter()-t1:.2f}s")
 
     total_write = time.perf_counter() - t0
