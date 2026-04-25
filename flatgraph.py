@@ -705,30 +705,35 @@ class MaintenanceEngine(FlatGraphDB):
             return []
 
         # Schritt 2: Cascade-Expansion - folge allen cascade_delete-Edges rekursiv
-        # Sammele alle Refs die in die Loeschliste muessen
+        # Nur RAM-Markierungen waehrend der Expansion, kein Persist mitten im Loop.
+        # Alle betroffenen Collections werden erst nach abgeschlossener Expansion
+        # in einem Rutsch persistiert, damit der Disk-Zustand konsistent bleibt.
         to_delete_refs = {f"{col}/{nid}" for col, nid, _ in direct}
+        dirty_collections = set()
 
         changed = True
         while changed:
             changed = False
-            all_edges = [e for b in self._cache["edges"].values() for e in b.values()]
-            for edge in all_edges:
+            edges_snapshot = [e for b in self._cache["edges"].values() for e in b.values()]
+            for edge in edges_snapshot:
                 if not edge.get("_cascade_delete"):
                     continue
-                # Quelle ist markiert, Ziel noch nicht -> expandieren
                 if edge["quelle"] in to_delete_refs and edge["ziel"] not in to_delete_refs:
                     to_delete_refs.add(edge["ziel"])
-                    # Ziel-Node markieren (Soft-Delete-Flag setzen) - vererbt Keep-Flag
                     try:
                         col, nid = edge["ziel"].split("/", 1)
                         target_node = self._cache["nodes"].get(col, {}).get(nid)
                         if target_node and not self._is_deleted(target_node):
                             target_node["_deletion_flag"] = datetime.now(timezone.utc).isoformat()
                             target_node.setdefault("_keep_asset", True)
-                            self._persist_collection(col)
+                            dirty_collections.add(col)
                     except ValueError:
                         pass
                     changed = True
+
+        # Expansion abgeschlossen — jetzt alle markierten Collections auf Disk schreiben
+        for col in dirty_collections:
+            self._persist_collection(col)
 
         # Schritt 3: finale Liste aus aktuellem Zustand aufbauen
         found = []
