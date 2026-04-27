@@ -576,6 +576,7 @@ app.view_functions.pop("dashboard", None)
 @app.route("/")
 def dashboard():  # noqa: F811
     db   = get_db()
+    check_expired_docs(db)
     t    = today()
     docs = db.list_nodes("documents") if "documents" in db.list_collections() else {}
     rems = db.list_nodes("reminders") if "reminders" in db.list_collections() else {}
@@ -886,6 +887,10 @@ def document_detail(ref):
         <button class="btn sm warn">→ {{next_st}}</button>
       </form>
       {% endif %}
+      <form class="il" method="post" action="/document/{{ref}}/delete"
+            onsubmit="return confirm('{{nid}} wirklich löschen?')">
+        <button class="btn sm danger">Löschen</button>
+      </form>
     </div>
   </div>
 
@@ -1243,6 +1248,16 @@ def _doc_form(data, fields, contacts, action, submit_label, title):
     <div><label>Aussteller</label>
       <input type="text" name="issuer"
              value="{{{{data.get('issuer','')}}}}" placeholder="AXA, Swisscom…"></div>
+    <div><label>Aussteller (Kontakt verknüpfen)</label>
+      <select name="issuer_ref" style="width:100%">
+        <option value="">— kein Kontakt —</option>
+        {{% for cnid,c in contacts.items() %}}
+        <option value="contacts/{{{{cnid}}}}"
+          {{%if data.get('issuer_ref')=='contacts/'+cnid%}}selected{{%endif%}}>
+          {{{{c.get('name',cnid)}}}}
+        </option>
+        {{% endfor %}}
+      </select></div>
     {{% endif %}}
     {{% if 'doc_date' in fields %}}
     <div><label>Dokumentdatum</label>
@@ -1341,6 +1356,7 @@ def document_new():
             "asn":               request.form.get("asn", "").strip(),
             "language":          request.form.get("language", "DE"),
             "notes":             request.form.get("notes", "").strip(),
+            "issuer_ref":        request.form.get("issuer_ref", "").strip(),
             "status":            "AKTIV",
             "created_by":        DEFAULT_USER,
             "created_at":        t,
@@ -1405,6 +1421,7 @@ def document_edit(ref):
             "asn":               request.form.get("asn", "").strip(),
             "language":          request.form.get("language", "DE"),
             "notes":             request.form.get("notes", "").strip(),
+            "issuer_ref":        request.form.get("issuer_ref", "").strip(),
             "changed_at":        now(),
         }
         if amount:
@@ -2172,8 +2189,40 @@ def document_unlink(ref, target):
     return redirect(url_for("document_detail", ref=ref))
 
 
+# ---------------------------------------------------------------------------
+# SOFT-DELETE + AUTO-ABGELAUFEN
+# ---------------------------------------------------------------------------
+
+@app.route("/document/<path:ref>/delete", methods=["POST"])
+def document_delete(ref):
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        return redirect(url_for("documents"))
+    col, nid = parts
+    db = get_db()
+    if not db.get_node(ref):
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    db.soft_delete(col, nid)
+    flash(f"{nid} gelöscht.")
+    return redirect(url_for("documents"))
+
+
+def check_expired_docs(db):
+    """Set status ABGELAUFEN on docs whose expires_at < today. Called on dashboard load."""
+    if "documents" not in db.list_collections():
+        return
+    t = today()
+    for nid, d in db.list_nodes("documents").items():
+        if (d.get("expires_at") and d["expires_at"] < t
+                and d.get("status") == "AKTIV"):
+            db.update_node("documents", nid,
+                           {"status": "ABGELAUFEN", "changed_at": now()})
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
 
 
 
