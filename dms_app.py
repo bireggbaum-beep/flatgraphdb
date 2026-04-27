@@ -459,6 +459,27 @@ a:hover { text-decoration: underline; }
   font-size: var(--fz-xs); color: var(--c-ink-soft);
   border-top: 1px solid var(--c-border-sub); padding-top: var(--sp-3);
 }
+.det-table { width: 100%; font-size: var(--fz-sm); border-collapse: collapse; }
+.det-table td {
+  padding: 4px 6px; border-bottom: 1px solid var(--c-border-sub);
+  vertical-align: middle;
+}
+.det-table tr:last-child td { border-bottom: none; }
+.det-table td.nid {
+  width: 1%; white-space: nowrap; font-family: ui-monospace, monospace;
+  font-size: var(--fz-xs); color: var(--c-ink-mute);
+}
+.det-table td.act { width: 1%; white-space: nowrap; text-align: right; }
+.det-table .dir-in { color: var(--c-ink-soft); font-size: 11px; }
+.il { display: inline; margin: 0; }
+.link-form {
+  display: flex; gap: var(--sp-2); margin-top: var(--sp-2); align-items: center;
+}
+.link-form select {
+  flex: 1; padding: 5px 8px;
+  border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  font-size: var(--fz-sm); background: var(--c-surface);
+}
 
 /* FORM */
 .form-page {
@@ -683,6 +704,37 @@ tpl("workspace", r"""{% extends "base" %}
         <div style="font-size:var(--fz-sm);white-space:pre-wrap;color:var(--c-ink)">{{sel.notes}}</div>
       </div>
       {% endif %}
+
+      <div class="det-section">
+        <div class="det-sec-title">Verknüpft ({{links|length}})</div>
+        {% if links %}
+        <table class="det-table">
+          {% for l in links %}
+          <tr>
+            <td class="nid">{{l.nid}}{% if l.dir=='in' %} <span class="dir-in">←</span>{% endif %}</td>
+            <td><a href="/?doc={{l.nid}}">{{l.title or '(kein Titel)'}}</a></td>
+            <td class="act">
+              <form class="il" method="post" action="/link/{{l.eid}}/delete?back=/?doc={{sel.nid}}"
+                    onsubmit="return confirm('Verknüpfung entfernen?')">
+                <button class="btn sm danger">✕</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+        {% if link_targets %}
+        <form class="link-form" method="post" action="/d/{{sel.nid}}/link">
+          <select name="target">
+            {% for t in link_targets %}
+            <option value="{{t.nid}}">{{t.nid}} — {{t.title or '(kein Titel)'}}</option>
+            {% endfor %}
+          </select>
+          <button class="btn sm" type="submit">+ Verknüpfen</button>
+        </form>
+        {% endif %}
+      </div>
+
       <div class="det-footer">
         {{sel.nid}} · Erstellt {{(sel.created_at or '')[:10]}} · Geändert {{(sel.changed_at or '')[:10]}}
       </div>
@@ -854,12 +906,34 @@ def workspace():
     elif doc_list:
         sel = doc_list[0]; sel_nid = sel["nid"]
 
+    links, link_targets = [], []
+    if sel:
+        ref = f"documents/{sel['nid']}"
+        linked_nids = set()
+        for eid, e in db.get_connected_edges(ref, direction="out", rel_type="doc_link"):
+            tnid = e["target"].split("/", 1)[-1]
+            t = all_docs.get(tnid)
+            if t:
+                links.append({"eid": eid, "nid": tnid, "title": t.get("title", ""), "dir": "out"})
+                linked_nids.add(tnid)
+        for eid, e in db.get_connected_edges(ref, direction="in", rel_type="doc_link"):
+            snid = e["source"].split("/", 1)[-1]
+            s = all_docs.get(snid)
+            if s:
+                links.append({"eid": eid, "nid": snid, "title": s.get("title", ""), "dir": "in"})
+                linked_nids.add(snid)
+        for nid, d in sorted(all_docs.items()):
+            if nid == sel["nid"] or nid in linked_nids:
+                continue
+            link_targets.append({"nid": nid, "title": d.get("title", "")})
+
     ifiles = inbox_files() if not sf else []
 
     return render_template("workspace",
         nav="workspace", q=q, sf=sf,
         doc_list=doc_list, tc=tc,
         sel=sel, sel_nid=sel_nid,
+        links=links, link_targets=link_targets,
         ifiles=ifiles,
         sc=DOC_STATUS,
         **nav_counts())
@@ -978,6 +1052,44 @@ def doc_delete(nid):
         db.soft_delete("documents", nid, keep_asset=False)
         flash(f"{nid} gelöscht.")
     return redirect(url_for("workspace"))
+
+
+@app.route("/d/<nid>/link", methods=["POST"])
+def doc_link(nid):
+    db     = get_db()
+    target = request.form.get("target", "").strip()
+    src    = f"documents/{nid}"
+    tgt    = f"documents/{target}"
+    if not db.get_node(src):
+        flash("Quelle nicht gefunden.", "err")
+        return redirect(url_for("workspace"))
+    if not target or not db.get_node(tgt):
+        flash("Ziel nicht gefunden.", "err")
+        return redirect(url_for("workspace", doc=nid))
+    if target == nid:
+        flash("Dokument kann nicht mit sich selbst verknüpft werden.", "err")
+        return redirect(url_for("workspace", doc=nid))
+    for _, e in db.get_connected_edges(src, direction="out", rel_type="doc_link"):
+        if e["target"] == tgt:
+            flash("Verknüpfung existiert bereits.", "err")
+            return redirect(url_for("workspace", doc=nid))
+    for _, e in db.get_connected_edges(src, direction="in", rel_type="doc_link"):
+        if e["source"] == tgt:
+            flash("Verknüpfung existiert bereits (umgekehrte Richtung).", "err")
+            return redirect(url_for("workspace", doc=nid))
+    db.create_edge(src, tgt, "doc_link",
+                   meta={"linked_at": now(), "linked_by": DEFAULT_USER})
+    flash(f"Mit {target} verknüpft.")
+    return redirect(url_for("workspace", doc=nid))
+
+
+@app.route("/link/<edge_id>/delete", methods=["POST"])
+def link_delete(edge_id):
+    db   = get_db()
+    back = request.args.get("back") or url_for("workspace")
+    db.delete_edge(edge_id)
+    flash("Verknüpfung entfernt.")
+    return redirect(back)
 
 
 @app.route("/inbox/create")
