@@ -1109,6 +1109,7 @@ def vault_file(filename):
 
 
 if __name__ == "__main__":
+    print("HomeDMS läuft auf http://127.0.0.1:5002")
     app.run(debug=True, port=5002)
 
 
