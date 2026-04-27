@@ -365,6 +365,101 @@ a:hover { text-decoration: underline; }
 .flash.err { background: var(--c-bad-bg); color: var(--c-bad);
              border-bottom-color: var(--c-bad); }
 
+/* TABS */
+.tabs {
+  display: flex; border-bottom: 1px solid var(--c-border-sub);
+  padding: 0 var(--sp-2); flex-shrink: 0;
+}
+.tab {
+  padding: 7px var(--sp-3); font-size: var(--fz-xs);
+  color: var(--c-ink-mute); border-bottom: 2px solid transparent;
+  white-space: nowrap; cursor: pointer;
+}
+.tab:hover { color: var(--c-ink); text-decoration: none; }
+.tab.active { color: var(--c-acc); border-bottom-color: var(--c-acc); }
+.tab .cnt { opacity: .55; font-size: 10px; margin-left: 2px; }
+
+/* DOC ROWS */
+.doc-row {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--c-border-sub);
+  cursor: pointer; color: inherit;
+}
+.doc-row:hover { background: var(--c-surface-2); text-decoration: none; }
+.doc-row.sel { background: var(--c-acc-bg); }
+.doc-row-icon {
+  flex-shrink: 0; width: 26px; height: 26px;
+  border-radius: var(--radius-sm); background: var(--c-surface-2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; margin-top: 1px;
+}
+.doc-row-body { flex: 1; min-width: 0; }
+.doc-row-title {
+  font-size: var(--fz-sm); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.doc-row-meta {
+  font-size: var(--fz-xs); color: var(--c-ink-soft); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.doc-row-right {
+  flex-shrink: 0; display: flex; flex-direction: column;
+  align-items: flex-end; gap: 3px; padding-top: 1px;
+}
+.cat-badge {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  background: var(--c-surface-2); color: var(--c-ink-soft);
+  white-space: nowrap; border: 1px solid var(--c-border-sub);
+}
+.sdot {
+  width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+}
+.inbox-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid #f5d89a;
+  background: var(--c-warn-bg); font-size: var(--fz-sm);
+  color: var(--c-warn);
+}
+.inbox-row .fn {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* DETAIL */
+.ws-detail-scroll {
+  flex: 1; overflow-y: auto; padding: var(--sp-5);
+  display: flex; flex-direction: column; gap: var(--sp-4);
+}
+.det-header {
+  display: flex; align-items: flex-start; gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--c-border);
+}
+.det-title { flex: 1; font-size: var(--fz-lg); font-weight: 600; }
+.det-actions { display: flex; gap: var(--sp-2); flex-shrink: 0; flex-wrap: wrap; }
+.det-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: var(--sp-2) var(--sp-5);
+}
+.det-field {}
+.det-label {
+  font-size: var(--fz-xs); color: var(--c-ink-soft);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px;
+}
+.det-value { font-size: var(--fz-sm); }
+.det-section {
+  border-top: 1px solid var(--c-border-sub); padding-top: var(--sp-3);
+}
+.det-sec-title {
+  font-size: var(--fz-xs); font-weight: 600; color: var(--c-ink-mute);
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: var(--sp-2);
+}
+.det-footer {
+  font-size: var(--fz-xs); color: var(--c-ink-soft);
+  border-top: 1px solid var(--c-border-sub); padding-top: var(--sp-3);
+}
+
 @media print {
   .sb, .topbar, .ws-list, .btn, form { display: none !important; }
   .ws { display: block; }
@@ -466,27 +561,97 @@ tpl("workspace", r"""{% extends "base" %}
 {% endblock %}
 {% block main %}
 <div class="ws">
+
   <div class="ws-list">
-    <div class="ws-list-head">
-      <span>{{docs|length}} Dokumente</span>
+    <div class="tabs">
+      <a class="tab {% if not sf %}active{% endif %}" href="/?q={{q}}">Alle <span class="cnt">{{tc.alle}}</span></a>
+      <a class="tab {% if sf=='AKTIV' %}active{% endif %}" href="/?status=AKTIV&q={{q}}">Aktiv <span class="cnt">{{tc.aktiv}}</span></a>
+      <a class="tab {% if sf=='ARCHIVIERT' %}active{% endif %}" href="/?status=ARCHIVIERT&q={{q}}">Archiv <span class="cnt">{{tc.archiviert}}</span></a>
     </div>
     <div class="ws-list-body">
-      {% if not docs %}
+      {% for fn in ifiles %}
+      <div class="inbox-row">
+        <span>📥</span><span class="fn">{{fn}}</span>
+        <a class="btn sm" href="/inbox/create?file={{fn|urlencode}}">Erfassen</a>
+      </div>
+      {% endfor %}
+      {% if not doc_list and not ifiles %}
       <div class="empty">
         <div class="icon">📂</div>
-        <div class="title">Noch keine Dokumente</div>
-        <div class="hint">Zieh ein PDF in dieses Fenster<br>oder klicke „+ Neu"</div>
+        <div class="title">Keine Dokumente</div>
+        <div class="hint">Zieh ein PDF hierher<br>oder klicke „+ Neu"</div>
       </div>
       {% endif %}
+      {% for d in doc_list %}
+      <a class="doc-row {% if sel and sel.nid == d.nid %}sel{% endif %}"
+         href="/?doc={{d.nid}}&status={{sf}}&q={{q}}">
+        <div class="doc-row-icon">{% if d.has_file %}📄{% else %}📝{% endif %}</div>
+        <div class="doc-row-body">
+          <div class="doc-row-title">{{d.title or '(kein Titel)'}}</div>
+          <div class="doc-row-meta">
+            {{d.issuer or ''}}{% if d.issuer and d.doc_date %} · {% endif %}{{d.doc_date or ''}}
+          </div>
+        </div>
+        <div class="doc-row-right">
+          <span class="cat-badge">{{d.category or '—'}}</span>
+          <span class="sdot" style="background:{{sc.get(d.status,'#ccc')}}"></span>
+        </div>
+      </a>
+      {% endfor %}
     </div>
   </div>
+
   <div class="ws-detail">
+    {% if sel %}
+    <div class="ws-detail-scroll">
+      <div class="det-header">
+        <div class="det-title">{{sel.title or '(kein Titel)'}}</div>
+        <div class="det-actions">
+          {% if sel.vault_file %}<a class="btn sm" href="/vault/{{sel.vault_file}}" target="_blank">📎 Datei</a>{% endif %}
+          <a class="btn sm" href="/d/{{sel.nid}}/edit">✏ Bearbeiten</a>
+          <form method="post" action="/d/{{sel.nid}}/delete" onsubmit="return confirm('Löschen?')">
+            <button class="btn sm danger">Löschen</button>
+          </form>
+        </div>
+      </div>
+      <div class="det-grid">
+        {% set fields = [
+          ('Kategorie', sel.category), ('Typ', sel.doc_type),
+          ('Status', sel.status), ('Aussteller', sel.issuer),
+          ('Datum', sel.doc_date),
+          ('Betrag', ((sel.amount|string) ~ ' ' ~ (sel.currency or '')) if sel.amount else none),
+          ('Fälligkeit', sel.due_date), ('Ablauf', sel.expires_at),
+          ('Kündbar bis', sel.cancellable_until),
+          ('Sprache', sel.language), ('Archivnr.', sel.asn), ('Tags', sel.tags),
+        ] %}
+        {% for label, val in fields %}
+          {% if val %}
+          <div class="det-field">
+            <div class="det-label">{{label}}</div>
+            <div class="det-value">{{val}}</div>
+          </div>
+          {% endif %}
+        {% endfor %}
+      </div>
+      {% if sel.notes %}
+      <div class="det-section">
+        <div class="det-sec-title">Notizen</div>
+        <div style="font-size:var(--fz-sm);white-space:pre-wrap;color:var(--c-ink)">{{sel.notes}}</div>
+      </div>
+      {% endif %}
+      <div class="det-footer">
+        {{sel.nid}} · Erstellt {{(sel.created_at or '')[:10]}} · Geändert {{(sel.changed_at or '')[:10]}}
+      </div>
+    </div>
+    {% else %}
     <div class="empty">
       <div class="icon">←</div>
       <div class="title">Wähle ein Dokument</div>
       <div class="hint">oder zieh ein PDF in dieses Fenster</div>
     </div>
+    {% endif %}
   </div>
+
 </div>
 {% endblock %}
 """)
@@ -508,11 +673,51 @@ def nav_counts():
 
 @app.route("/")
 def workspace():
-    db   = get_db()
-    docs = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+    db  = get_db()
+    sf  = request.args.get("status", "")
+    q   = request.args.get("q", "").lower().strip()
+    sel_nid = request.args.get("doc", "")
+
+    all_docs = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+
+    tc = {
+        "alle":       len(all_docs),
+        "aktiv":      sum(1 for d in all_docs.values() if d.get("status") == "AKTIV"),
+        "archiviert": sum(1 for d in all_docs.values() if d.get("status") == "ARCHIVIERT"),
+    }
+
+    def matches(nid, d):
+        if sf and d.get("status") != sf:
+            return False
+        if q:
+            hay = " ".join([d.get("title",""), d.get("issuer",""),
+                            d.get("category",""), d.get("tags",""), nid]).lower()
+            if q not in hay:
+                return False
+        return True
+
+    doc_list = []
+    for nid, d in sorted(all_docs.items(),
+                         key=lambda x: x[1].get("doc_date", ""), reverse=True):
+        if matches(nid, d):
+            row = dict(d); row["nid"] = nid
+            row["has_file"] = bool(d.get("vault_file"))
+            doc_list.append(row)
+
+    sel = None
+    if sel_nid and sel_nid in all_docs:
+        sel = dict(all_docs[sel_nid]); sel["nid"] = sel_nid
+    elif doc_list:
+        sel = doc_list[0]; sel_nid = sel["nid"]
+
+    ifiles = inbox_files() if not sf else []
+
     return render_template("workspace",
-        nav="workspace", docs=docs,
-        q=request.args.get("q", ""),
+        nav="workspace", q=q, sf=sf,
+        doc_list=doc_list, tc=tc,
+        sel=sel, sel_nid=sel_nid,
+        ifiles=ifiles,
+        sc=DOC_STATUS,
         **nav_counts())
 
 
