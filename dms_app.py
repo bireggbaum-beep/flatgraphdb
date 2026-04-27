@@ -1180,8 +1180,232 @@ def attachment_set_primary(ref, att_nid):
     return redirect(url_for("document_detail", ref=ref))
 
 
+# ---------------------------------------------------------------------------
+# DOCUMENT NEW / EDIT
+# ---------------------------------------------------------------------------
+
+def _doc_form(data, fields, contacts, action, submit_label, title):
+    """Shared form template for new and edit."""
+    C = f"""
+<div style="max-width:780px">
+<div class="card">
+<form method="post" action="{action}">
+  <div class="form-grid">
+    <div style="grid-column:1/-1"><label>Titel *</label>
+      <input type="text" name="title" value="{{{{data.get('title','')}}}}"
+             required placeholder="Dokumententitel"></div>
+    <div><label>Kategorie</label>
+      <select name="category" onchange="this.form.submit()" style="width:100%">
+        {{% for c in cats %}}
+        <option value="{{{{c}}}}" {{%if c==data.get('category','')%}}selected{{%endif%}}>
+          {{{{c}}}}</option>
+        {{% endfor %}}
+      </select></div>
+    <div><label>Dokumenttyp</label>
+      <select name="doc_type" style="width:100%">
+        {{% for dt in dtypes %}}
+        <option value="{{{{dt}}}}" {{%if dt==data.get('doc_type','')%}}selected{{%endif%}}>
+          {{{{dt}}}}</option>
+        {{% endfor %}}
+      </select></div>
+  </div>
+  <div class="form-grid">
+    {{% if 'issuer' in fields %}}
+    <div><label>Aussteller</label>
+      <input type="text" name="issuer"
+             value="{{{{data.get('issuer','')}}}}" placeholder="AXA, Swisscom…"></div>
+    {{% endif %}}
+    {{% if 'doc_date' in fields %}}
+    <div><label>Dokumentdatum</label>
+      <input type="date" name="doc_date" value="{{{{data.get('doc_date','')}}}}" ></div>
+    {{% endif %}}
+    {{% if 'amount' in fields %}}
+    <div><label>Betrag</label>
+      <input type="number" name="amount" step="0.01"
+             value="{{{{data.get('amount','')}}}}" placeholder="0.00"></div>
+    {{% endif %}}
+    {{% if 'currency' in fields %}}
+    <div><label>Währung</label>
+      <select name="currency" style="width:100%">
+        {{% for cur in currencies %}}
+        <option value="{{{{cur}}}}"
+          {{%if cur==data.get('currency','CHF')%}}selected{{%endif%}}>
+          {{{{cur}}}}</option>
+        {{% endfor %}}
+      </select></div>
+    {{% endif %}}
+    {{% if 'due_date' in fields %}}
+    <div><label>Fälligkeit</label>
+      <input type="date" name="due_date" value="{{{{data.get('due_date','')}}}}" ></div>
+    {{% endif %}}
+    {{% if 'expires_at' in fields %}}
+    <div><label>Ablaufdatum</label>
+      <input type="date" name="expires_at"
+             value="{{{{data.get('expires_at','')}}}}" ></div>
+    {{% endif %}}
+    {{% if 'cancellable_until' in fields %}}
+    <div><label>Kündbar bis</label>
+      <input type="date" name="cancellable_until"
+             value="{{{{data.get('cancellable_until','')}}}}" ></div>
+    {{% endif %}}
+    {{% if 'asn' in fields %}}
+    <div><label>Archivnummer (physisch)</label>
+      <input type="text" name="asn" value="{{{{data.get('asn','')}}}}"
+             placeholder="Ordner-A/Fach-3"></div>
+    {{% endif %}}
+    {{% if 'language' in fields %}}
+    <div><label>Sprache</label>
+      <select name="language" style="width:100%">
+        {{% for lg in langs %}}
+        <option value="{{{{lg}}}}"
+          {{%if lg==data.get('language','DE')%}}selected{{%endif%}}>
+          {{{{lg}}}}</option>
+        {{% endfor %}}
+      </select></div>
+    {{% endif %}}
+    {{% if 'tags' in fields %}}
+    <div style="grid-column:1/-1"><label>Tags (kommagetrennt)</label>
+      <input type="text" name="tags"
+             value="{{{{', '.join(data.get('tags',[]))}}}}"
+             placeholder="rechnung, 2026, wichtig"></div>
+    {{% endif %}}
+  </div>
+  {{% if 'notes' in fields %}}
+  <div style="margin-bottom:10px"><label>Notizen</label>
+    <textarea name="notes">{{{{data.get('notes','')}}}}</textarea></div>
+  {{% endif %}}
+  <div style="display:flex;gap:8px;margin-top:4px">
+    <button class="btn" type="submit">{submit_label}</button>
+    <a class="btn sec" href="javascript:history.back()">Abbrechen</a>
+  </div>
+</form>
+</div>
+</div>
+"""
+    return C
+
+
+@app.route("/document/new", methods=["GET", "POST"])
+def document_new():
+    db  = get_db()
+    cat = request.args.get("category", request.form.get("category", DOC_CATEGORIES[0]))
+
+    if request.method == "POST" and "title" in request.form:
+        title    = request.form.get("title", "").strip()
+        if not title:
+            flash("Titel ist Pflicht.", "err")
+            return redirect(url_for("document_new"))
+        t        = now()
+        nid      = db.next_id("documents", prefix="DOC-", padding=5)
+        amount   = request.form.get("amount", "").strip()
+        tags_raw = request.form.get("tags", "").strip()
+        tags     = [t2.strip() for t2 in tags_raw.split(",") if t2.strip()]
+        doc_data = {
+            "title":             title,
+            "category":          request.form.get("category", cat),
+            "doc_type":          request.form.get("doc_type", DOC_TYPES[0]),
+            "issuer":            request.form.get("issuer", "").strip(),
+            "doc_date":          request.form.get("doc_date", "").strip(),
+            "due_date":          request.form.get("due_date", "").strip(),
+            "expires_at":        request.form.get("expires_at", "").strip(),
+            "cancellable_until": request.form.get("cancellable_until", "").strip(),
+            "asn":               request.form.get("asn", "").strip(),
+            "language":          request.form.get("language", "DE"),
+            "notes":             request.form.get("notes", "").strip(),
+            "status":            "AKTIV",
+            "created_by":        DEFAULT_USER,
+            "created_at":        t,
+            "changed_at":        t,
+        }
+        if amount:
+            try:
+                doc_data["amount"]   = float(amount)
+                doc_data["currency"] = request.form.get("currency", "CHF")
+            except ValueError:
+                pass
+        if tags:
+            doc_data["tags"] = tags
+        # Remove empty strings
+        doc_data = {k: v for k, v in doc_data.items() if v != "" and v != []}
+        db.create_node("documents", nid, doc_data)
+        fire_webhooks("document_created", {"ref": f"documents/{nid}", "title": title})
+        flash(f"Dokument {nid} angelegt.")
+        return redirect(url_for("document_detail", ref=f"documents/{nid}"))
+
+    fields   = get_field_profile(cat)
+    contacts = db.list_nodes("contacts") if "contacts" in db.list_collections() else {}
+    C = _doc_form({}, fields, contacts,
+                  action="/document/new",
+                  submit_label="Anlegen",
+                  title="Neues Dokument")
+    T = render("Neues Dokument", C, active="documents")
+    return render_template_string(T,
+        data={"category": cat}, fields=fields,
+        cats=DOC_CATEGORIES, dtypes=DOC_TYPES,
+        currencies=CURRENCIES, langs=LANGUAGES, contacts=contacts)
+
+
+@app.route("/document/<path:ref>/edit", methods=["GET", "POST"])
+def document_edit(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    parts    = ref.split("/", 1)
+    col, nid = parts[0], parts[1]
+    cat      = request.form.get("category", data.get("category", DOC_CATEGORIES[0]))
+
+    if request.method == "POST" and "title" in request.form:
+        title    = request.form.get("title", "").strip()
+        if not title:
+            flash("Titel ist Pflicht.", "err")
+            return redirect(url_for("document_edit", ref=ref))
+        amount   = request.form.get("amount", "").strip()
+        tags_raw = request.form.get("tags", "").strip()
+        tags     = [t2.strip() for t2 in tags_raw.split(",") if t2.strip()]
+        updates  = {
+            "title":             title,
+            "category":          cat,
+            "doc_type":          request.form.get("doc_type", DOC_TYPES[0]),
+            "issuer":            request.form.get("issuer", "").strip(),
+            "doc_date":          request.form.get("doc_date", "").strip(),
+            "due_date":          request.form.get("due_date", "").strip(),
+            "expires_at":        request.form.get("expires_at", "").strip(),
+            "cancellable_until": request.form.get("cancellable_until", "").strip(),
+            "asn":               request.form.get("asn", "").strip(),
+            "language":          request.form.get("language", "DE"),
+            "notes":             request.form.get("notes", "").strip(),
+            "changed_at":        now(),
+        }
+        if amount:
+            try:
+                updates["amount"]   = float(amount)
+                updates["currency"] = request.form.get("currency", "CHF")
+            except ValueError:
+                pass
+        if tags:
+            updates["tags"] = tags
+        db.update_node(col, nid, updates)
+        flash("Gespeichert.")
+        return redirect(url_for("document_detail", ref=ref))
+
+    fields   = get_field_profile(cat)
+    contacts = db.list_nodes("contacts") if "contacts" in db.list_collections() else {}
+    C = _doc_form(data, fields, contacts,
+                  action=f"/document/{ref}/edit",
+                  submit_label="Speichern",
+                  title=f"Bearbeiten: {data.get('title','')}")
+    T = render(f"Bearbeiten: {data.get('title','')}", C, active="documents")
+    return render_template_string(T,
+        data=data, fields=fields,
+        cats=DOC_CATEGORIES, dtypes=DOC_TYPES,
+        currencies=CURRENCIES, langs=LANGUAGES, contacts=contacts)
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
 
 
 
