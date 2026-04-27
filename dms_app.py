@@ -314,6 +314,18 @@ textarea{font-family:monospace;min-height:70px;resize:vertical}
            padding:8px 12px;margin-bottom:10px;display:flex;
            gap:8px;align-items:flex-end;flex-wrap:wrap}
 .filterbar select,.filterbar input{width:auto;min-width:120px;margin:0}
+
+@media print {
+  .sb, .topbar, .filterbar, .btn, form, .flash { display:none !important }
+  .shell { display:block }
+  .main  { overflow:visible }
+  .content { padding:0 }
+  body   { background:#fff;font-size:11pt }
+  table  { border:1px solid #ccc;font-size:10pt }
+  th     { background:#eee !important }
+  a      { color:#000;text-decoration:none }
+  .badge { border:1px solid #ccc;background:#fff !important;color:#000 !important }
+}
 </style></head><body>
 <div class="shell">
 
@@ -725,7 +737,7 @@ def documents():
 
     C = """
 <div class="filterbar">
-  <form method="get" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;width:100%">
+  <form method="get" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;flex:1">
     <div><label>Kategorie</label>
       <select name="category" style="width:130px">
         <option value="">Alle</option>
@@ -751,6 +763,10 @@ def documents():
       <a class="btn sm sec" href="/documents">Reset</a>
     </div>
   </form>
+  <div style="display:flex;gap:6px;align-items:flex-end;padding-bottom:2px">
+    <a class="btn sm sec" href="/documents/export.csv">↓ CSV</a>
+    <button class="btn sm sec" onclick="window.print()">⎙ Drucken</button>
+  </div>
 </div>
 {% if docs %}
 <table>
@@ -2220,8 +2236,34 @@ def check_expired_docs(db):
                            {"status": "ABGELAUFEN", "changed_at": now()})
 
 
+# ---------------------------------------------------------------------------
+# CSV EXPORT
+# ---------------------------------------------------------------------------
+
+@app.route("/documents/export.csv")
+def documents_export_csv():
+    db      = get_db()
+    docs    = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+    fields  = ["doc_id", "title", "category", "doc_type", "issuer",
+               "doc_date", "amount", "currency", "due_date",
+               "expires_at", "cancellable_until", "asn", "status", "notes"]
+
+    def row(nid, d):
+        return [nid] + [str(d.get(f, "")) for f in fields[1:]]
+
+    lines = [",".join(fields)]
+    for nid, d in sorted(docs.items(), key=lambda x: x[1].get("doc_date",""), reverse=True):
+        lines.append(",".join(
+            f'"{v.replace(chr(34), chr(39))}"' for v in row(nid, d)))
+
+    return Response("\n".join(lines), mimetype="text/csv",
+        headers={"Content-Disposition":
+                 f"attachment; filename=dokumente_{today()}.csv"})
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
 
 
 
