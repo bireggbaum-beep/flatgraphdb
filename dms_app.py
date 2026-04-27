@@ -583,6 +583,22 @@ a:hover { text-decoration: underline; }
 </div>
 
 <script>
+// Suche: Enter submittet, live-filter über bestehende Rows
+(function(){
+  const inp = document.getElementById('search-input');
+  if (!inp) return;
+  inp.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const params = new URLSearchParams(window.location.search);
+      params.set('q', inp.value.trim());
+      params.delete('doc');
+      window.location.href = '/?' + params.toString();
+    }
+    if (e.key === 'Escape') { inp.value = ''; inp.blur(); }
+  });
+})();
+
 document.addEventListener('keydown', function(e){
   if (e.key === '/' && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) {
     e.preventDefault();
@@ -593,9 +609,15 @@ document.addEventListener('keydown', function(e){
 (function(){
   let counter = 0;
   const ov = document.getElementById('drop-overlay');
+  const ovMsg = ov.querySelector('.drop-overlay-msg');
+
   document.addEventListener('dragenter', function(e){
     if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
-      counter++; ov.classList.add('active');
+      counter++;
+      const sel = document.getElementById('_sel_doc');
+      const nid = sel ? sel.value : '';
+      ovMsg.textContent = nid ? '📎 Datei zu ' + nid + ' hinzufügen' : '📥 In Inbox ablegen';
+      ov.classList.add('active');
     }
   });
   document.addEventListener('dragleave', function(){
@@ -607,8 +629,11 @@ document.addEventListener('keydown', function(e){
     if (!e.dataTransfer.files.length) return;
     const fd = new FormData();
     for (const f of e.dataTransfer.files) fd.append('file', f);
+    const sel = document.getElementById('_sel_doc');
+    const nid = sel ? sel.value : '';
+    if (nid) fd.append('attach_to', nid);
     fetch('/drop', {method:'POST', body:fd}).then(r => {
-      if (r.ok) location.reload();
+      if (r.ok) r.text().then(loc => { window.location.href = loc; });
       else alert('Upload fehlgeschlagen');
     });
   });
@@ -625,6 +650,7 @@ tpl("workspace", r"""{% extends "base" %}
   <a class="btn primary sm" href="/d/new">+ Neu</a>
 {% endblock %}
 {% block main %}
+<input type="hidden" id="_sel_doc" value="{{sel.nid if sel else ''}}">
 <div class="ws">
 
   <div class="ws-list">
@@ -944,9 +970,17 @@ def drop():
     f = request.files.get("file")
     if not f or not f.filename or not allowed_file(f.filename):
         return "ungültig", 400
+    attach_to = request.form.get("attach_to", "").strip()
+    db = get_db()
+    if attach_to and db.get_node(f"documents/{attach_to}"):
+        vault_file = _unique_vault_name(f.filename)
+        f.save(os.path.join(VAULT_DIR, vault_file))
+        db.update_node("documents", attach_to,
+                       {"vault_file": vault_file, "changed_at": now()})
+        return url_for("workspace", doc=attach_to), 200
     safe = os.path.basename(f.filename)
     f.save(os.path.join(INBOX_DIR, safe))
-    return "ok", 200
+    return url_for("workspace"), 200
 
 
 # ---------------------------------------------------------------------------
@@ -1058,35 +1092,32 @@ def doc_delete(nid):
 def doc_link(nid):
     db     = get_db()
     target = request.form.get("target", "").strip()
+    back   = request.referrer or url_for("workspace", doc=nid)
     src    = f"documents/{nid}"
     tgt    = f"documents/{target}"
-    if not db.get_node(src):
-        flash("Quelle nicht gefunden.", "err")
-        return redirect(url_for("workspace"))
-    if not target or not db.get_node(tgt):
-        flash("Ziel nicht gefunden.", "err")
-        return redirect(url_for("workspace", doc=nid))
+    if not db.get_node(src) or not target or not db.get_node(tgt):
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(back)
     if target == nid:
-        flash("Dokument kann nicht mit sich selbst verknüpft werden.", "err")
-        return redirect(url_for("workspace", doc=nid))
-    for _, e in db.get_connected_edges(src, direction="out", rel_type="doc_link"):
-        if e["target"] == tgt:
-            flash("Verknüpfung existiert bereits.", "err")
-            return redirect(url_for("workspace", doc=nid))
-    for _, e in db.get_connected_edges(src, direction="in", rel_type="doc_link"):
-        if e["source"] == tgt:
-            flash("Verknüpfung existiert bereits (umgekehrte Richtung).", "err")
-            return redirect(url_for("workspace", doc=nid))
+        flash("Kein Selbst-Link möglich.", "err")
+        return redirect(back)
+    existing = (
+        [e for _, e in db.get_connected_edges(src, direction="out", rel_type="doc_link") if e["target"] == tgt] +
+        [e for _, e in db.get_connected_edges(src, direction="in",  rel_type="doc_link") if e["source"] == tgt]
+    )
+    if existing:
+        flash("Verknüpfung existiert bereits.", "err")
+        return redirect(back)
     db.create_edge(src, tgt, "doc_link",
                    meta={"linked_at": now(), "linked_by": DEFAULT_USER})
     flash(f"Mit {target} verknüpft.")
-    return redirect(url_for("workspace", doc=nid))
+    return redirect(back)
 
 
 @app.route("/link/<edge_id>/delete", methods=["POST"])
 def link_delete(edge_id):
     db   = get_db()
-    back = request.args.get("back") or url_for("workspace")
+    back = request.referrer or url_for("workspace")
     db.delete_edge(edge_id)
     flash("Verknüpfung entfernt.")
     return redirect(back)
@@ -1109,16 +1140,8 @@ def vault_file(filename):
 
 
 if __name__ == "__main__":
-    PORT = 5555
-    print(f"HomeDMS laeuft auf http://127.0.0.1:{PORT}", flush=True)
-    print("(NICHT localhost verwenden — bei Windows oft IPv6-Konflikt)", flush=True)
-
-    @app.before_request
-    def _log_req():
-        from flask import request as _r
-        print(f"  >>> {_r.method} {_r.path}", flush=True)
-
-    app.run(host="127.0.0.1", port=PORT, debug=True, use_reloader=False)
+    print("HomeDMS läuft auf http://127.0.0.1:5001", flush=True)
+    app.run(host="127.0.0.1", port=5001, debug=True, use_reloader=False)
 
 
 
