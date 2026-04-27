@@ -1403,8 +1403,343 @@ def document_edit(ref):
         currencies=CURRENCIES, langs=LANGUAGES, contacts=contacts)
 
 
+# ---------------------------------------------------------------------------
+# CONTACTS
+# ---------------------------------------------------------------------------
+
+@app.route("/contacts")
+def contacts():
+    db   = get_db()
+    all_c = db.list_nodes("contacts") if "contacts" in db.list_collections() else {}
+    c_sorted = sorted(all_c.items(), key=lambda x: x[1].get("name", ""))
+    C = """
+<div class="filterbar" style="justify-content:flex-end">
+  <a class="btn sm" href="/contact/new">+ Kontakt</a>
+</div>
+{% if contacts %}
+<table>
+  <tr>
+    <th class="srt" onclick="srt(this)">Name</th>
+    <th class="srt" onclick="srt(this)">Kürzel</th>
+    <th class="srt" onclick="srt(this)">Kategorie</th>
+    <th class="srt" onclick="srt(this)">Website</th>
+    <th>Dokumente</th>
+  </tr>
+  {% for nid,c in contacts %}
+  <tr>
+    <td><a href="/contact/contacts/{{nid}}"><strong>{{c.name}}</strong></a></td>
+    <td style="color:#888;font-size:12px">{{c.get('short','')}}</td>
+    <td><span class="badge gray">{{c.get('category','—')}}</span></td>
+    <td style="font-size:12px">
+      {% if c.get('website') %}
+      <a href="{{c.website}}" target="_blank" rel="noopener">{{c.website[:35]}}</a>
+      {% else %}—{% endif %}</td>
+    <td style="font-size:12px;color:#888">{{doc_counts.get(nid,0)}}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="card"><p style="color:#aaa">Keine Kontakte.</p>
+  <a class="btn sm" href="/contact/new" style="margin-top:8px">Ersten Kontakt anlegen</a>
+</div>
+{% endif %}
+"""
+    # Count docs per contact
+    doc_counts = {}
+    if "documents" in db.list_collections():
+        for d in db.list_nodes("documents").values():
+            ref = d.get("issuer_ref", "")
+            if ref:
+                nid_c = ref.split("/")[-1]
+                doc_counts[nid_c] = doc_counts.get(nid_c, 0) + 1
+
+    T = render("Kontakte", C, active="contacts",
+               topbar_right='<a class="btn sm" href="/contact/new">+ Kontakt</a>')
+    return render_template_string(T, contacts=c_sorted, doc_counts=doc_counts)
+
+
+@app.route("/contact/new", methods=["GET", "POST"])
+def contact_new():
+    db = get_db()
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("Name ist Pflicht.", "err")
+            return redirect(url_for("contact_new"))
+        nid = db.next_id("contacts", prefix="CON-", padding=5)
+        db.create_node("contacts", nid, {
+            "name":     name,
+            "short":    request.form.get("short", "").strip(),
+            "category": request.form.get("category", CONTACT_CATEGORIES[0]),
+            "address":  request.form.get("address", "").strip(),
+            "website":  request.form.get("website", "").strip(),
+            "notes":    request.form.get("notes", "").strip(),
+        })
+        flash(f"Kontakt {nid} angelegt.")
+        return redirect(url_for("contact_detail", ref=f"contacts/{nid}"))
+
+    C = """
+<div style="max-width:600px"><div class="card">
+<form method="post">
+  <div class="form-grid">
+    <div style="grid-column:1/-1"><label>Name *</label>
+      <input type="text" name="name" required placeholder="AXA Versicherungen AG"></div>
+    <div><label>Kürzel</label>
+      <input type="text" name="short" placeholder="AXA"></div>
+    <div><label>Kategorie</label>
+      <select name="category">
+        {% for c in cats %}<option value="{{c}}">{{c}}</option>{% endfor %}
+      </select></div>
+    <div style="grid-column:1/-1"><label>Adresse</label>
+      <input type="text" name="address" placeholder="Strasse, PLZ Ort"></div>
+    <div style="grid-column:1/-1"><label>Website</label>
+      <input type="text" name="website" placeholder="https://…"></div>
+  </div>
+  <div style="margin-bottom:10px"><label>Notizen</label>
+    <textarea name="notes" style="min-height:60px"></textarea></div>
+  <div style="display:flex;gap:8px">
+    <button class="btn">Anlegen</button>
+    <a class="btn sec" href="/contacts">Abbrechen</a>
+  </div>
+</form>
+</div></div>
+"""
+    T = render("Neuer Kontakt", C, active="contacts")
+    return render_template_string(T, cats=CONTACT_CATEGORIES)
+
+
+@app.route("/contact/<path:ref>")
+def contact_detail(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Kontakt nicht gefunden.", "err")
+        return redirect(url_for("contacts"))
+    nid = ref.split("/", 1)[1]
+
+    # Documents linked to this contact
+    linked_docs = []
+    if "documents" in db.list_collections():
+        for dnid, d in db.list_nodes("documents").items():
+            if d.get("issuer_ref") == ref:
+                linked_docs.append((dnid, d))
+    linked_docs.sort(key=lambda x: x[1].get("doc_date", ""), reverse=True)
+
+    C = """
+<div style="max-width:700px">
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div>
+      <h1 style="font-size:16px;margin-bottom:4px">{{data.name}}</h1>
+      <span class="badge gray">{{data.get('category','—')}}</span>
+      {% if data.get('short') %}
+      <span style="color:#aaa;font-size:12px;margin-left:6px">{{data.short}}</span>
+      {% endif %}
+    </div>
+    <a class="btn sm sec" href="/contact/{{ref}}/edit">Bearbeiten</a>
+  </div>
+  <div class="kv" style="margin-top:10px">
+    {% if data.get('address') %}
+    <span class="k">Adresse</span><span class="v">{{data.address}}</span>
+    {% endif %}
+    {% if data.get('website') %}
+    <span class="k">Website</span>
+    <span class="v"><a href="{{data.website}}" target="_blank" rel="noopener">
+      {{data.website}}</a></span>
+    {% endif %}
+    {% if data.get('notes') %}
+    <span class="k">Notizen</span>
+    <span class="v" style="white-space:pre-wrap;color:#555">{{data.notes}}</span>
+    {% endif %}
+  </div>
+</div>
+{% if linked_docs %}
+<div class="card"><h2>Dokumente ({{linked_docs|length}})</h2>
+<table>
+  <tr><th>ID</th><th>Titel</th><th>Kategorie</th><th>Datum</th><th>Status</th></tr>
+  {% for dnid,d in linked_docs %}
+  <tr>
+    <td style="font-size:11px;color:#888">{{dnid}}</td>
+    <td><a href="/document/documents/{{dnid}}">{{d.title[:45]}}</a></td>
+    <td><span class="badge">{{d.get('category','—')}}</span></td>
+    <td style="font-size:12px;color:#888">{{d.get('doc_date','—')}}</td>
+    <td><span class="badge {% if d.get('status','AKTIV')=='AKTIV' %}green
+        {% else %}gray{% endif %}">{{d.get('status','AKTIV')}}</span></td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+</div>
+"""
+    T = render(data.get("name", "Kontakt"), C, active="contacts",
+               topbar_right='<a class="btn sm sec" href="/contacts">← Liste</a>')
+    return render_template_string(T, ref=ref, nid=nid, data=data,
+                                  linked_docs=linked_docs)
+
+
+@app.route("/contact/<path:ref>/edit", methods=["GET", "POST"])
+def contact_edit(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Kontakt nicht gefunden.", "err")
+        return redirect(url_for("contacts"))
+    col, nid = ref.split("/", 1)
+
+    if request.method == "POST":
+        db.update_node(col, nid, {
+            "name":     request.form.get("name", "").strip(),
+            "short":    request.form.get("short", "").strip(),
+            "category": request.form.get("category", ""),
+            "address":  request.form.get("address", "").strip(),
+            "website":  request.form.get("website", "").strip(),
+            "notes":    request.form.get("notes", "").strip(),
+        })
+        flash("Gespeichert.")
+        return redirect(url_for("contact_detail", ref=ref))
+
+    C = """
+<div style="max-width:600px"><div class="card">
+<form method="post">
+  <div class="form-grid">
+    <div style="grid-column:1/-1"><label>Name *</label>
+      <input type="text" name="name" value="{{data.name}}" required></div>
+    <div><label>Kürzel</label>
+      <input type="text" name="short" value="{{data.get('short','')}}"></div>
+    <div><label>Kategorie</label>
+      <select name="category">
+        {% for c in cats %}
+        <option value="{{c}}" {% if c==data.get('category') %}selected{% endif %}>
+          {{c}}</option>
+        {% endfor %}
+      </select></div>
+    <div style="grid-column:1/-1"><label>Adresse</label>
+      <input type="text" name="address" value="{{data.get('address','')}}"></div>
+    <div style="grid-column:1/-1"><label>Website</label>
+      <input type="text" name="website" value="{{data.get('website','')}}"></div>
+  </div>
+  <div style="margin-bottom:10px"><label>Notizen</label>
+    <textarea name="notes">{{data.get('notes','')}}</textarea></div>
+  <div style="display:flex;gap:8px">
+    <button class="btn">Speichern</button>
+    <a class="btn sec" href="/contact/{{ref}}">Abbrechen</a>
+  </div>
+</form>
+</div></div>
+"""
+    T = render(f"Bearbeiten: {data.get('name','')}", C, active="contacts")
+    return render_template_string(T, ref=ref, data=data, cats=CONTACT_CATEGORIES)
+
+
+# ---------------------------------------------------------------------------
+# REMINDERS
+# ---------------------------------------------------------------------------
+
+@app.route("/reminders")
+def reminders():
+    db   = get_db()
+    t    = today()
+    rems = db.list_nodes("reminders") if "reminders" in db.list_collections() else {}
+
+    open_r = sorted(
+        [(nid, r) for nid, r in rems.items() if not r.get("fired")],
+        key=lambda x: x[1].get("remind_at", "9999"))
+    done_r = sorted(
+        [(nid, r) for nid, r in rems.items() if r.get("fired")],
+        key=lambda x: x[1].get("remind_at", ""), reverse=True)[:20]
+
+    C = """
+{% if open_r %}
+<div class="card"><h2>Offen ({{open_r|length}})</h2>
+<table>
+  <tr><th class="srt" onclick="srt(this)">Datum</th>
+      <th class="srt" onclick="srt(this)">Typ</th>
+      <th>Dokument</th>
+      <th class="srt" onclick="srt(this)">Nachricht</th>
+      <th></th></tr>
+  {% for nid,r in open_r %}
+  <tr>
+    <td style="white-space:nowrap;font-weight:600;
+        color:{% if r.remind_at <= today %}#e74c3c{% else %}#1a1d23{% endif %}">
+      {{r.remind_at}}</td>
+    <td><span class="badge {% if r.remind_at <= today %}red{% endif %}">
+      {{rtypes.get(r.get('type',''),r.get('type',''))}}</span></td>
+    <td style="font-size:12px">
+      <a href="/document/{{r.get('doc_ref','')}}">
+        {{r.get('doc_title','—')[:40]}}</a></td>
+    <td style="font-size:12px;color:#555">{{r.get('message','—')}}</td>
+    <td>
+      <form class="il" method="post" action="/reminder/{{nid}}/dismiss">
+        <button class="btn sm sec">✓ Erledigt</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% else %}
+<div class="card"><p style="color:#aaa">Keine offenen Reminder.</p></div>
+{% endif %}
+
+{% if done_r %}
+<div class="card"><h2>Erledigt (letzte 20)</h2>
+<table>
+  <tr><th>Datum</th><th>Typ</th><th>Dokument</th><th>Nachricht</th></tr>
+  {% for nid,r in done_r %}
+  <tr style="opacity:.55">
+    <td style="font-size:12px;white-space:nowrap">{{r.remind_at}}</td>
+    <td><span class="badge gray">
+      {{rtypes.get(r.get('type',''),r.get('type',''))}}</span></td>
+    <td style="font-size:12px">{{r.get('doc_title','—')[:40]}}</td>
+    <td style="font-size:12px;color:#888">{{r.get('message','—')}}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+"""
+    T = render("Reminder", C, active="reminders")
+    return render_template_string(T, open_r=open_r, done_r=done_r,
+                                  rtypes=REMINDER_TYPES, today=t)
+
+
+@app.route("/document/<path:ref>/reminder/new", methods=["POST"])
+def reminder_new(ref):
+    db        = get_db()
+    remind_at = request.form.get("remind_at", "").strip()
+    rtype     = request.form.get("type", "CUSTOM")
+    message   = request.form.get("message", "").strip()
+    if not remind_at:
+        flash("Datum ist Pflicht.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    doc  = db.get_node(ref)
+    nid  = db.next_id("reminders", prefix="REM-", padding=5)
+    db.create_node("reminders", nid, {
+        "doc_ref":   ref,
+        "doc_title": (doc or {}).get("title", ""),
+        "remind_at": remind_at,
+        "type":      rtype,
+        "message":   message,
+        "fired":     False,
+    })
+    fire_webhooks("reminder_created", {
+        "ref": f"reminders/{nid}", "doc_ref": ref,
+        "remind_at": remind_at, "type": rtype,
+    })
+    flash("Reminder gesetzt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/reminder/<nid>/dismiss", methods=["POST"])
+def reminder_dismiss(nid):
+    db = get_db()
+    db.update_node("reminders", nid, {"fired": True, "fired_at": now()})
+    flash("Reminder erledigt.")
+    return redirect(request.referrer or url_for("reminders"))
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
+
 
 
 
