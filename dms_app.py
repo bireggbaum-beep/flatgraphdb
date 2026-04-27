@@ -426,6 +426,385 @@ def render(title, content, active="", topbar_right=""):
     return render_template_string(T)
 
 
+# ---------------------------------------------------------------------------
+# DASHBOARD
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def dashboard():
+    db    = get_db()
+    t     = today()
+    docs  = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+    rems  = db.list_nodes("reminders") if "reminders" in db.list_collections() else {}
+
+    total   = len(docs)
+    active  = sum(1 for d in docs.values() if d.get("status","AKTIV") == "AKTIV")
+    expired = sum(1 for d in docs.values()
+                  if d.get("expires_at") and d["expires_at"] < t
+                  and d.get("status") != "ARCHIVIERT")
+
+    due_soon = sorted(
+        [(nid, d) for nid, d in docs.items()
+         if d.get("due_date") and d["due_date"] >= t
+         and d.get("status","AKTIV") == "AKTIV"],
+        key=lambda x: x[1]["due_date"]
+    )[:8]
+
+    expiring = sorted(
+        [(nid, d) for nid, d in docs.items()
+         if d.get("expires_at") and d["expires_at"] >= t
+         and d.get("status","AKTIV") == "AKTIV"],
+        key=lambda x: x[1]["expires_at"]
+    )[:8]
+
+    open_rems = sorted(
+        [(nid, r) for nid, r in rems.items()
+         if not r.get("fired") and r.get("remind_at","9999") <= t],
+        key=lambda x: x[1].get("remind_at","")
+    )
+
+    by_cat = {}
+    for d in docs.values():
+        c = d.get("category","—")
+        by_cat[c] = by_cat.get(c, 0) + 1
+
+    inbox_c = len(inbox_files())
+
+    CONTENT = """
+<div class="tiles">
+  <div class="tile"><div class="num">{{total}}</div><div class="lbl">Dokumente</div></div>
+  <div class="tile"><div class="num" style="color:#2a9d60">{{active}}</div>
+    <div class="lbl">Aktiv</div></div>
+  <div class="tile"><div class="num" style="color:#e74c3c">{{expired}}</div>
+    <div class="lbl">Abgelaufen</div></div>
+  <div class="tile"><div class="num" style="color:#f59e0b">{{inbox_c}}</div>
+    <div class="lbl">Inbox</div></div>
+  <div class="tile"><div class="num" style="color:#e74c3c">{{open_rems|length}}</div>
+    <div class="lbl">Offene Reminder</div></div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+
+<div>
+{% if open_rems %}
+<div class="card">
+  <h2>&#9675; Offene Reminder</h2>
+  <table><tr><th>Datum</th><th>Typ</th><th>Dokument</th><th></th></tr>
+  {% for nid,r in open_rems %}
+  <tr>
+    <td style="color:#e74c3c;font-weight:600">{{r.remind_at}}</td>
+    <td><span class="badge">{{rtypes.get(r.type,r.type)}}</span></td>
+    <td><a href="/document/{{r.doc_ref}}">{{r.get('doc_title','—')}}</a></td>
+    <td><form class="il" method="post" action="/reminder/{{nid}}/dismiss">
+      <button class="btn sm sec">✓</button></form></td>
+  </tr>
+  {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if due_soon %}
+<div class="card">
+  <h2>&#9201; Fällig demnächst</h2>
+  <table><tr><th>Fälligkeit</th><th>Titel</th><th>Aussteller</th></tr>
+  {% for nid,d in due_soon %}
+  <tr>
+    <td style="white-space:nowrap;font-weight:600;color:#f59e0b">{{d.due_date}}</td>
+    <td><a href="/document/documents/{{nid}}">{{d.title[:40]}}</a></td>
+    <td style="color:#888">{{d.get('issuer','—')}}</td>
+  </tr>
+  {% endfor %}
+  </table>
+</div>
+{% endif %}
+</div>
+
+<div>
+{% if expiring %}
+<div class="card">
+  <h2>&#9888; Läuft bald ab</h2>
+  <table><tr><th>Ablauf</th><th>Titel</th><th>Aussteller</th></tr>
+  {% for nid,d in expiring %}
+  <tr>
+    <td style="white-space:nowrap;font-weight:600;
+        color:{% if d.expires_at < t_30 %}#e74c3c{% else %}#f59e0b{% endif %}">
+      {{d.expires_at}}</td>
+    <td><a href="/document/documents/{{nid}}">{{d.title[:40]}}</a></td>
+    <td style="color:#888">{{d.get('issuer','—')}}</td>
+  </tr>
+  {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{% if by_cat %}
+<div class="card">
+  <h2>&#9723; Nach Kategorie</h2>
+  <table><tr><th>Kategorie</th><th>Anzahl</th></tr>
+  {% for cat,cnt in by_cat_sorted %}
+  <tr>
+    <td><a href="/documents?category={{cat}}">{{cat}}</a></td>
+    <td>{{cnt}}</td>
+  </tr>
+  {% endfor %}
+  </table>
+</div>
+{% endif %}
+</div>
+
+</div>
+"""
+    from datetime import timedelta
+    t_30 = (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat()
+    by_cat_sorted = sorted(by_cat.items(), key=lambda x: -x[1])
+
+    return render("Dashboard", CONTENT, active="dashboard",
+                  topbar_right=f'<a class="btn sm" href="/document/new">+ Dokument</a>'), \
+           None  # dummy tuple trick doesn't work — use render_template_string directly
+
+
+@app.route("/")
+def _dashboard_fix():
+    pass  # placeholder — overwritten below
+
+
+# Remove the dummy above, redefine cleanly:
+app.view_functions.pop("_dashboard_fix", None)
+app.view_functions.pop("dashboard", None)
+
+
+@app.route("/")
+def dashboard():  # noqa: F811
+    db   = get_db()
+    t    = today()
+    docs = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+    rems = db.list_nodes("reminders") if "reminders" in db.list_collections() else {}
+
+    total   = len(docs)
+    active  = sum(1 for d in docs.values() if d.get("status","AKTIV") == "AKTIV")
+    expired = sum(1 for d in docs.values()
+                  if d.get("expires_at") and d["expires_at"] < t
+                  and d.get("status") not in ("ARCHIVIERT","STORNIERT"))
+    inbox_c = len(inbox_files())
+
+    due_soon = sorted(
+        [(nid, d) for nid, d in docs.items()
+         if d.get("due_date") and d["due_date"] >= t
+         and d.get("status","AKTIV") == "AKTIV"],
+        key=lambda x: x[1]["due_date"])[:8]
+
+    expiring = sorted(
+        [(nid, d) for nid, d in docs.items()
+         if d.get("expires_at") and d["expires_at"] >= t
+         and d.get("status","AKTIV") == "AKTIV"],
+        key=lambda x: x[1]["expires_at"])[:8]
+
+    open_rems = sorted(
+        [(nid, r) for nid, r in rems.items()
+         if not r.get("fired") and r.get("remind_at","9999") <= t],
+        key=lambda x: x[1].get("remind_at",""))
+
+    by_cat = {}
+    for d in docs.values():
+        c = d.get("category","—")
+        by_cat[c] = by_cat.get(c, 0) + 1
+
+    from datetime import timedelta
+    t_30 = (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat()
+
+    C = """
+<div class="tiles">
+  <div class="tile"><div class="num">{{total}}</div>
+    <div class="lbl">Dokumente gesamt</div></div>
+  <div class="tile"><div class="num" style="color:#2a9d60">{{active}}</div>
+    <div class="lbl">Aktiv</div></div>
+  <div class="tile"><div class="num" style="color:#e74c3c">{{expired}}</div>
+    <div class="lbl">Abgelaufen</div></div>
+  <div class="tile"><div class="num" style="color:#f59e0b">{{inbox_c}}</div>
+    <div class="lbl">Inbox</div></div>
+  <div class="tile"><div class="num" style="color:#e74c3c">{{open_rems|length}}</div>
+    <div class="lbl">Offene Reminder</div></div>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+<div>
+{% if open_rems %}
+<div class="card"><h2>Offene Reminder</h2>
+<table><tr><th>Datum</th><th>Typ</th><th>Dokument</th><th></th></tr>
+{% for nid,r in open_rems %}
+<tr>
+  <td style="color:#e74c3c;font-weight:600;white-space:nowrap">{{r.remind_at}}</td>
+  <td><span class="badge">{{rtypes.get(r.get('type',''),r.get('type',''))}}</span></td>
+  <td><a href="/document/documents/{{r.get('doc_ref','').split('/')[-1]}}">
+    {{r.get('doc_title','—')[:35]}}</a></td>
+  <td><form class="il" method="post" action="/reminder/{{nid}}/dismiss">
+    <button class="btn sm sec">✓</button></form></td>
+</tr>
+{% endfor %}
+</table></div>
+{% endif %}
+{% if due_soon %}
+<div class="card"><h2>Fällig demnächst</h2>
+<table><tr><th>Fälligkeit</th><th>Titel</th><th>Aussteller</th></tr>
+{% for nid,d in due_soon %}
+<tr>
+  <td style="white-space:nowrap;font-weight:600;color:#f59e0b">{{d.due_date}}</td>
+  <td><a href="/document/documents/{{nid}}">{{d.title[:38]}}</a></td>
+  <td style="color:#888">{{d.get('issuer','—')}}</td>
+</tr>
+{% endfor %}
+</table></div>
+{% endif %}
+</div>
+<div>
+{% if expiring %}
+<div class="card"><h2>Läuft bald ab</h2>
+<table><tr><th>Ablauf</th><th>Titel</th><th>Aussteller</th></tr>
+{% for nid,d in expiring %}
+<tr>
+  <td style="white-space:nowrap;font-weight:600;
+      color:{% if d.expires_at <= t_30 %}#e74c3c{% else %}#f59e0b{% endif %}">
+    {{d.expires_at}}</td>
+  <td><a href="/document/documents/{{nid}}">{{d.title[:38]}}</a></td>
+  <td style="color:#888">{{d.get('issuer','—')}}</td>
+</tr>
+{% endfor %}
+</table></div>
+{% endif %}
+{% if by_cat %}
+<div class="card"><h2>Nach Kategorie</h2>
+<table><tr><th>Kategorie</th><th>Anzahl</th></tr>
+{% for cat,cnt in by_cat_sorted %}
+<tr>
+  <td><a href="/documents?category={{cat}}">{{cat}}</a></td>
+  <td>{{cnt}}</td>
+</tr>
+{% endfor %}
+</table></div>
+{% endif %}
+</div>
+</div>
+"""
+    T = render("Dashboard", C, active="dashboard",
+               topbar_right='<a class="btn sm" href="/document/new">+ Dokument</a>')
+    return render_template_string(T,
+        total=total, active=active, expired=expired, inbox_c=inbox_c,
+        due_soon=due_soon, expiring=expiring, open_rems=open_rems,
+        by_cat_sorted=sorted(by_cat.items(), key=lambda x: -x[1]),
+        rtypes=REMINDER_TYPES, t_30=t_30)
+
+
+# ---------------------------------------------------------------------------
+# DOCUMENTS LIST
+# ---------------------------------------------------------------------------
+
+@app.route("/documents")
+def documents():
+    db       = get_db()
+    cat      = request.args.get("category", "")
+    status   = request.args.get("status", "")
+    doc_type = request.args.get("doc_type", "")
+    issuer   = request.args.get("issuer", "").strip()
+    q        = request.args.get("q", "").strip().lower()
+
+    all_docs = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+
+    if cat:      all_docs = {k:v for k,v in all_docs.items() if v.get("category")==cat}
+    if status:   all_docs = {k:v for k,v in all_docs.items() if v.get("status")==status}
+    if doc_type: all_docs = {k:v for k,v in all_docs.items() if v.get("doc_type")==doc_type}
+    if issuer:   all_docs = {k:v for k,v in all_docs.items()
+                             if issuer.lower() in v.get("issuer","").lower()}
+    if q:        all_docs = {k:v for k,v in all_docs.items()
+                             if q in v.get("title","").lower()
+                             or q in v.get("issuer","").lower()
+                             or q in v.get("notes","").lower()}
+
+    docs_sorted = sorted(all_docs.items(),
+                         key=lambda x: x[1].get("doc_date","") or x[1].get("created_at",""),
+                         reverse=True)
+
+    C = """
+<div class="filterbar">
+  <form method="get" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;width:100%">
+    <div><label>Kategorie</label>
+      <select name="category" style="width:130px">
+        <option value="">Alle</option>
+        {% for c in cats %}<option value="{{c}}"
+          {% if c==cat %}selected{% endif %}>{{c}}</option>{% endfor %}
+      </select></div>
+    <div><label>Status</label>
+      <select name="status" style="width:110px">
+        <option value="">Alle</option>
+        {% for s in statuses %}<option value="{{s}}"
+          {% if s==status %}selected{% endif %}>{{s}}</option>{% endfor %}
+      </select></div>
+    <div><label>Typ</label>
+      <select name="doc_type" style="width:120px">
+        <option value="">Alle</option>
+        {% for dt in dtypes %}<option value="{{dt}}"
+          {% if dt==doc_type %}selected{% endif %}>{{dt}}</option>{% endfor %}
+      </select></div>
+    <div><label>Aussteller</label>
+      <input type="text" name="issuer" value="{{issuer}}" style="width:130px"></div>
+    <div style="align-self:flex-end;display:flex;gap:6px">
+      <button class="btn sm" type="submit">Filtern</button>
+      <a class="btn sm sec" href="/documents">Reset</a>
+    </div>
+  </form>
+</div>
+{% if docs %}
+<table>
+  <tr>
+    <th class="srt" onclick="srt(this)">ID</th>
+    <th class="srt" onclick="srt(this)">Titel</th>
+    <th class="srt" onclick="srt(this)">Kategorie</th>
+    <th class="srt" onclick="srt(this)">Typ</th>
+    <th class="srt" onclick="srt(this)">Aussteller</th>
+    <th class="srt" onclick="srt(this)">Datum</th>
+    <th class="srt" onclick="srt(this)">Fälligkeit</th>
+    <th class="srt" onclick="srt(this)">Ablauf</th>
+    <th class="srt" onclick="srt(this)">Status</th>
+  </tr>
+  {% for nid,d in docs %}
+  <tr>
+    <td style="white-space:nowrap;font-size:11px;color:#888">
+      <a href="/document/documents/{{nid}}">{{nid}}</a></td>
+    <td><a href="/document/documents/{{nid}}"><strong>{{d.title[:48]}}</strong></a></td>
+    <td><span class="badge">{{d.get('category','—')}}</span></td>
+    <td style="color:#888;font-size:11.5px">{{d.get('doc_type','—')}}</td>
+    <td style="font-size:12px">{{d.get('issuer','—')}}</td>
+    <td style="white-space:nowrap;font-size:11.5px;color:#666">
+      {{d.get('doc_date','—')}}</td>
+    <td style="white-space:nowrap;font-size:11.5px;
+        color:{% if d.get('due_date') and d.due_date < today %}#e74c3c
+        {% else %}#666{% endif %}">
+      {{d.get('due_date','—')}}</td>
+    <td style="white-space:nowrap;font-size:11.5px;
+        color:{% if d.get('expires_at') and d.expires_at < today %}#e74c3c
+        {% else %}#666{% endif %}">
+      {{d.get('expires_at','—')}}</td>
+    <td><span class="badge {% if d.get('status')=='AKTIV' %}green
+        {% elif d.get('status') in ('ARCHIVIERT','STORNIERT') %}gray
+        {% elif d.get('status')=='ABGELAUFEN' %}red{% endif %}">
+      {{d.get('status','AKTIV')}}</span></td>
+  </tr>
+  {% endfor %}
+</table>
+<div style="margin-top:6px;font-size:11px;color:#999">{{docs|length}} Dokumente</div>
+{% else %}
+<div class="card"><p style="color:#999">Keine Dokumente gefunden.</p>
+  <a class="btn sm" href="/document/new" style="margin-top:8px">
+    Erstes Dokument anlegen</a></div>
+{% endif %}
+"""
+    T = render("Dokumente", C, active="documents",
+               topbar_right='<a class="btn sm" href="/document/new">+ Dokument</a>')
+    return render_template_string(T,
+        docs=docs_sorted, cat=cat, status=status, doc_type=doc_type,
+        issuer=issuer, cats=DOC_CATEGORIES, statuses=list(DOC_STATUS.keys()),
+        dtypes=DOC_TYPES, today=today())
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
 
