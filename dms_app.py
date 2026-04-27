@@ -423,7 +423,7 @@ def render(title, content, active="", topbar_right=""):
          f'<span class="sb-badge">{rc}</span>' if rc else ""),
     ]:
         T = T.replace(blk, val)
-    return render_template_string(T)
+    return T  # caller does render_template_string(T, **ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +804,384 @@ def documents():
         dtypes=DOC_TYPES, today=today())
 
 
+# ---------------------------------------------------------------------------
+# DOCUMENT DETAIL
+# ---------------------------------------------------------------------------
+
+@app.route("/document/<path:ref>")
+def document_detail(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    nid      = ref.split("/", 1)[1]
+    status   = data.get("status", "AKTIV")
+    next_st  = DOC_STATUS_FLOW.get(status)
+
+    # Attachments via edges
+    attachments = []
+    if "attachments" in db.list_collections():
+        for eid, e in db.get_connected_edges(ref, direction="out"):
+            if e.get("type") == "has_attachment":
+                a = db.get_node(e["target"])
+                if a:
+                    attachments.append((e["target"], a))
+
+    # Related documents
+    related = []
+    for eid, e in db.get_connected_edges(ref, direction="both"):
+        if e.get("type") == "related_to":
+            other = e["target"] if e["source"] == ref else e["source"]
+            node  = db.get_node(other)
+            if node:
+                related.append((other, node))
+
+    # Contact
+    contact = None
+    if data.get("issuer_ref"):
+        contact = db.get_node(data["issuer_ref"])
+
+    # Reminders
+    reminders = []
+    if "reminders" in db.list_collections():
+        for nid_r, r in db.list_nodes("reminders").items():
+            if r.get("doc_ref") == ref:
+                reminders.append((nid_r, r))
+
+    # Primary file for viewer
+    primary_file = None
+    for _, a in attachments:
+        if a.get("primary") or not primary_file:
+            primary_file = a
+            break
+
+    has_pdf = primary_file and primary_file.get("file_path", "").lower().endswith(".pdf")
+
+    C = """
+<div style="display:flex;gap:12px;align-items:flex-start">
+
+<!-- LEFT: metadata -->
+<div style="flex:1;min-width:0">
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;
+              margin-bottom:10px">
+    <div>
+      <span style="font-size:11px;color:#888;font-weight:600">{{nid}}</span>
+      <h1 style="font-size:15px;margin:2px 0">{{data.title}}</h1>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <span class="badge">{{data.get('category','—')}}</span>
+        <span class="badge gray">{{data.get('doc_type','—')}}</span>
+        <span class="badge {% if status=='AKTIV' %}green
+            {% elif status=='ABGELAUFEN' %}red{% else %}gray{% endif %}">
+          {{status}}</span>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <a class="btn sm sec" href="/document/{{ref}}/edit">Bearbeiten</a>
+      {% if next_st %}
+      <form class="il" method="post" action="/document/{{ref}}/status">
+        <input type="hidden" name="new_status" value="{{next_st}}">
+        <button class="btn sm warn">→ {{next_st}}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="kv">
+    {% if data.get('issuer') %}
+    <span class="k">Aussteller</span>
+    <span class="v">{% if contact %}<a href="/contact/{{data.issuer_ref}}">
+      {{data.issuer}}</a>{% else %}{{data.issuer}}{% endif %}</span>
+    {% endif %}
+    {% if data.get('doc_date') %}
+    <span class="k">Datum</span><span class="v">{{data.doc_date}}</span>
+    {% endif %}
+    {% if data.get('amount') %}
+    <span class="k">Betrag</span>
+    <span class="v"><strong>{{data.amount}} {{data.get('currency','CHF')}}</strong></span>
+    {% endif %}
+    {% if data.get('due_date') %}
+    <span class="k">Fälligkeit</span>
+    <span class="v" style="color:{% if data.due_date < today %}#e74c3c
+        {% else %}#1a1d23{% endif %}">{{data.due_date}}</span>
+    {% endif %}
+    {% if data.get('expires_at') %}
+    <span class="k">Ablaufdatum</span>
+    <span class="v" style="color:{% if data.expires_at < today %}#e74c3c
+        {% else %}#1a1d23{% endif %}">{{data.expires_at}}</span>
+    {% endif %}
+    {% if data.get('cancellable_until') %}
+    <span class="k">Kündbar bis</span><span class="v">{{data.cancellable_until}}</span>
+    {% endif %}
+    {% if data.get('asn') %}
+    <span class="k">Archivnummer</span>
+    <span class="v" style="font-family:monospace">{{data.asn}}</span>
+    {% endif %}
+    {% if data.get('language') %}
+    <span class="k">Sprache</span><span class="v">{{data.language}}</span>
+    {% endif %}
+    {% if data.get('tags') %}
+    <span class="k">Tags</span>
+    <span class="v">{% for tag in data.tags %}
+      <span class="badge gray" style="margin-right:3px">{{tag}}</span>
+    {% endfor %}</span>
+    {% endif %}
+    {% if data.get('notes') %}
+    <span class="k">Notizen</span>
+    <span class="v" style="white-space:pre-wrap;color:#555">{{data.notes}}</span>
+    {% endif %}
+    <span class="k">Erstellt</span>
+    <span class="v" style="color:#aaa;font-size:11px">
+      {{data.get('created_at','')[:10]}} · {{data.get('created_by','')}}</span>
+    {% if data.get('changed_at') and data.changed_at != data.get('created_at') %}
+    <span class="k">Geändert</span>
+    <span class="v" style="color:#aaa;font-size:11px">
+      {{data.changed_at[:10]}}</span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Attachments -->
+<div class="card">
+  <h2>Anhänge
+    {% if attachments %}<span style="font-weight:400;color:#aaa">
+      ({{attachments|length}})</span>{% endif %}
+  </h2>
+  {% if attachments %}
+  <table style="margin-bottom:8px">
+    <tr><th>Datei</th><th>Typ</th><th>Hochgeladen</th><th></th></tr>
+    {% for aref,a in attachments %}
+    <tr>
+      <td><a href="/vault/{{a.file_path.split('vault/')[-1]}}">
+        {{a.get('filename','—')}}</a></td>
+      <td style="color:#888;font-size:11px">{{a.get('file_ext','').upper()}}</td>
+      <td style="color:#aaa;font-size:11px">{{a.get('uploaded_at','')[:10]}}</td>
+      <td>
+        {% if not a.get('primary') %}
+        <form class="il" method="post"
+              action="/document/{{ref}}/attachment/{{aref.split('/')[-1]}}/primary">
+          <button class="btn sm ghost" title="Als primär setzen">★</button>
+        </form>
+        {% else %}
+        <span style="color:#f59e0b;font-size:12px" title="Primärdatei">★</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#aaa;font-size:12px;margin-bottom:8px">Noch keine Datei.</p>
+  {% endif %}
+  <form method="post" action="/document/{{ref}}/upload"
+        enctype="multipart/form-data" style="display:flex;gap:8px;align-items:flex-end">
+    <div style="flex:1"><label>Datei hochladen</label>
+      <input type="file" name="file" accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx,.txt"
+             style="padding:3px;font-size:12px"></div>
+    <button class="btn sm" type="submit">Hochladen</button>
+  </form>
+</div>
+
+<!-- Related docs -->
+{% if related %}
+<div class="card"><h2>Verknüpfte Dokumente</h2>
+<table>
+  <tr><th>ID</th><th>Titel</th><th>Kategorie</th><th></th></tr>
+  {% for rref,rd in related %}
+  <tr>
+    <td style="font-size:11px;color:#888">{{rref.split('/')[-1]}}</td>
+    <td><a href="/document/{{rref}}">{{rd.title[:45]}}</a></td>
+    <td><span class="badge">{{rd.get('category','—')}}</span></td>
+    <td>
+      <form class="il" method="post" action="/document/{{ref}}/unlink/{{rref}}">
+        <button class="btn sm ghost">×</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+
+<!-- Reminders -->
+<div class="card"><h2>Reminder</h2>
+{% if reminders %}
+<table style="margin-bottom:8px">
+  <tr><th>Datum</th><th>Typ</th><th>Nachricht</th><th></th></tr>
+  {% for rid,r in reminders %}
+  <tr>
+    <td style="white-space:nowrap;font-size:12px;
+        {% if not r.get('fired') and r.remind_at <= today %}color:#e74c3c;
+        font-weight:600{% else %}color:#666{% endif %}">
+      {{r.remind_at}}</td>
+    <td><span class="badge {% if r.get('fired') %}gray{% endif %}">
+      {{rtypes.get(r.get('type',''),r.get('type',''))}}</span></td>
+    <td style="font-size:12px;color:#555">{{r.get('message','')[:50]}}</td>
+    <td>
+      {% if not r.get('fired') %}
+      <form class="il" method="post" action="/reminder/{{rid}}/dismiss">
+        <button class="btn sm sec">✓</button>
+      </form>
+      {% else %}
+      <span style="color:#aaa;font-size:11px">erledigt</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+<form method="post" action="/document/{{ref}}/reminder/new"
+      style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+  <div><label>Datum</label>
+    <input type="date" name="remind_at" style="width:140px"></div>
+  <div><label>Typ</label>
+    <select name="type" style="width:120px">
+      {% for k,v in rtypes.items() %}
+      <option value="{{k}}">{{v}}</option>
+      {% endfor %}
+    </select></div>
+  <div style="flex:1"><label>Nachricht</label>
+    <input type="text" name="message" placeholder="Optional…"></div>
+  <div style="align-self:flex-end">
+    <button class="btn sm" type="submit">+ Reminder</button>
+  </div>
+</form>
+</div>
+
+</div><!-- /left -->
+
+<!-- RIGHT: PDF viewer -->
+{% if has_pdf %}
+<div style="width:420px;flex-shrink:0;position:sticky;top:0;height:calc(100vh - 80px)">
+  <div class="card" style="height:100%;padding:8px;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;
+                margin-bottom:6px">
+      <span style="font-size:11px;color:#888">
+        {{primary_file.get('filename','')}}</span>
+      <a class="btn sm sec"
+         href="/vault/{{primary_file.file_path.split('vault/')[-1]}}"
+         target="_blank">↗ Öffnen</a>
+    </div>
+    <iframe src="/vault/{{primary_file.file_path.split('vault/')[-1]}}"
+            style="flex:1;border:none;border-radius:4px;width:100%;
+                   min-height:0"></iframe>
+  </div>
+</div>
+{% endif %}
+
+</div><!-- /flex -->
+"""
+    T = render(data.get("title","Dokument"), C, active="documents",
+               topbar_right=f'<a class="btn sm sec" href="/documents">← Liste</a> '
+                            f'<a class="btn sm" href="/document/{ref}/edit">Bearbeiten</a>')
+    return render_template_string(T,
+        ref=ref, nid=nid, data=data, status=status, next_st=next_st,
+        attachments=attachments, related=related, contact=contact,
+        reminders=reminders, primary_file=primary_file, has_pdf=has_pdf,
+        rtypes=REMINDER_TYPES, today=today())
+
+
+# ---------------------------------------------------------------------------
+# DOCUMENT STATUS
+# ---------------------------------------------------------------------------
+
+@app.route("/document/<path:ref>/status", methods=["POST"])
+def document_status(ref):
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        return redirect(url_for("documents"))
+    col, nid   = parts
+    new_status = request.form.get("new_status", "")
+    db         = get_db()
+    data       = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    cur = data.get("status", "AKTIV")
+    if DOC_STATUS_FLOW.get(cur) != new_status:
+        flash(f"Übergang {cur}→{new_status} nicht erlaubt.", "err")
+    else:
+        db.update_node(col, nid, {"status": new_status, "changed_at": now()})
+        flash(f"Status auf {new_status} gesetzt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+# ---------------------------------------------------------------------------
+# FILE UPLOAD + SERVE
+# ---------------------------------------------------------------------------
+
+@app.route("/document/<path:ref>/upload", methods=["POST"])
+def document_upload(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    f = request.files.get("file")
+    if not f or f.filename == "":
+        flash("Keine Datei ausgewählt.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    if not allowed_file(f.filename):
+        flash(f"Dateityp nicht erlaubt.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+
+    nid_safe = ref.split("/", 1)[1].replace("/", "_")
+    ext      = f.filename.rsplit(".", 1)[1].lower()
+    import uuid as _uuid
+    vault_name = f"{nid_safe}_{_uuid.uuid4().hex[:6]}.{ext}"
+    vault_path = safe_vault_path(vault_name)
+    f.save(vault_path)
+
+    t          = now()
+    a_nid      = db.next_id("attachments", prefix="ATT-", padding=5)
+    # First attachment becomes primary
+    existing   = [e for e in db.get_connected_edges(ref, direction="out").values()
+                  if e.get("type") == "has_attachment"]
+    is_primary = len(existing) == 0
+    db.create_node("attachments", a_nid, {
+        "filename":    f.filename,
+        "file_path":   f"vault/{vault_name}",
+        "file_ext":    ext,
+        "primary":     is_primary,
+        "uploaded_at": t,
+        "uploaded_by": DEFAULT_USER,
+    })
+    db.create_edge(ref, f"attachments/{a_nid}", "has_attachment")
+    flash(f"Datei hochgeladen.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/vault/<path:filename>")
+def vault_serve(filename):
+    safe = os.path.basename(filename)
+    path = os.path.join(VAULT_DIR, safe)
+    if not os.path.isfile(path):
+        return "Datei nicht gefunden.", 404
+    ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
+    inline = ext in ("pdf", "jpg", "jpeg", "png")
+    return send_file(path, as_attachment=not inline,
+                     download_name=safe)
+
+
+@app.route("/document/<path:ref>/attachment/<att_nid>/primary", methods=["POST"])
+def attachment_set_primary(ref, att_nid):
+    db = get_db()
+    # Clear primary on all attachments of this doc
+    for eid, e in db.get_connected_edges(ref, direction="out"):
+        if e.get("type") == "has_attachment":
+            a     = db.get_node(e["target"])
+            a_col = e["target"].split("/")[0]
+            a_nid_other = e["target"].split("/")[1]
+            if a:
+                db.update_node(a_col, a_nid_other,
+                               {"primary": a_nid_other == att_nid})
+    flash("Primärdatei gesetzt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
 
 
