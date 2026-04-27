@@ -1736,8 +1736,376 @@ def reminder_dismiss(nid):
     return redirect(request.referrer or url_for("reminders"))
 
 
+# ---------------------------------------------------------------------------
+# SEARCH
+# ---------------------------------------------------------------------------
+
+@app.route("/search")
+def search():
+    db = get_db()
+    q  = request.args.get("q", "").strip()
+    results = []
+
+    if q:
+        ql = q.lower()
+        if "documents" in db.list_collections():
+            for nid, d in db.list_nodes("documents").items():
+                score = 0
+                if ql in d.get("title",    "").lower(): score += 3
+                if ql in d.get("issuer",   "").lower(): score += 2
+                if ql in d.get("notes",    "").lower(): score += 1
+                if ql in d.get("asn",      "").lower(): score += 2
+                if ql in d.get("category", "").lower(): score += 1
+                if ql in nid.lower():                   score += 2
+                if score:
+                    results.append(("document", f"documents/{nid}", nid, d, score))
+
+        if "contacts" in db.list_collections():
+            for nid, c in db.list_nodes("contacts").items():
+                score = 0
+                if ql in c.get("name",  "").lower(): score += 3
+                if ql in c.get("short", "").lower(): score += 2
+                if ql in c.get("notes", "").lower(): score += 1
+                if score:
+                    results.append(("contact", f"contacts/{nid}", nid, c, score))
+
+        results.sort(key=lambda x: -x[4])
+
+    C = """
+<div style="max-width:800px">
+{% if q %}
+<div style="margin-bottom:10px;font-size:12px;color:#888">
+  {{results|length}} Treffer für <strong>«{{q}}»</strong>
+</div>
+{% if results %}
+<table>
+  <tr><th>Typ</th><th>ID</th><th>Titel / Name</th><th>Details</th></tr>
+  {% for rtype,ref,nid,d,score in results %}
+  <tr>
+    <td><span class="badge {% if rtype=='contact' %}gray{% endif %}">
+      {{rtype|capitalize}}</span></td>
+    <td style="font-size:11px;color:#888;white-space:nowrap">{{nid}}</td>
+    <td>
+      {% if rtype=='document' %}
+      <a href="/document/{{ref}}"><strong>{{d.get('title','—')}}</strong></a>
+      {% else %}
+      <a href="/contact/{{ref}}"><strong>{{d.get('name','—')}}</strong></a>
+      {% endif %}
+    </td>
+    <td style="font-size:12px;color:#666">
+      {% if rtype=='document' %}
+        {{d.get('issuer','')}}
+        {% if d.get('doc_date') %} · {{d.doc_date}}{% endif %}
+        {% if d.get('amount') %} · {{d.amount}} {{d.get('currency','')}}{% endif %}
+        <span class="badge {% if d.get('status','AKTIV')=='AKTIV' %}green
+          {% else %}gray{% endif %}" style="margin-left:4px">
+          {{d.get('status','AKTIV')}}</span>
+      {% else %}
+        {{d.get('category','')}}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="card"><p style="color:#aaa">Keine Treffer für «{{q}}».</p></div>
+{% endif %}
+{% else %}
+<div class="card" style="color:#aaa;text-align:center;padding:32px">
+  Suchbegriff eingeben…
+</div>
+{% endif %}
+</div>
+"""
+    T = BASE
+    for blk, val in [
+        ("{% block title %}HomeDMS{% endblock %}", "Suche"),
+        ("{% block content %}{% endblock %}", C),
+        ("{% block topbar_right %}{% endblock %}", ""),
+        ("{% block search_val %}{% endblock %}", q),
+        ("{% if active=='search' %}active{% endif %}", "active"),
+        ("{% if active=='dashboard' %}active{% endif %}", ""),
+        ("{% if active=='inbox' %}active{% endif %}", ""),
+        ("{% if active=='reminders' %}active{% endif %}", ""),
+        ("{% if active=='documents' %}active{% endif %}", ""),
+        ("{% if active=='contacts' %}active{% endif %}", ""),
+        ("{% if active=='settings' %}active{% endif %}", ""),
+        ("{% if inbox_count %}<span class=\"sb-badge\">{{inbox_count}}</span>{% endif %}",
+         f'<span class="sb-badge">{len(inbox_files())}</span>' if inbox_files() else ""),
+        ("{% if reminder_count %}<span class=\"sb-badge\">{{reminder_count}}</span>{% endif %}", ""),
+    ]:
+        T = T.replace(blk, val)
+    return render_template_string(T, q=q, results=results)
+
+
+# ---------------------------------------------------------------------------
+# INBOX
+# ---------------------------------------------------------------------------
+
+@app.route("/inbox")
+def inbox():
+    files = inbox_files()
+    C = """
+<div style="margin-bottom:10px;font-size:12px;color:#888">
+  {{files|length}} Datei(en) in der Inbox
+  <span style="margin-left:8px;color:#aaa">Ordner: _dms_db/inbox/</span>
+</div>
+{% if files %}
+<table>
+  <tr><th>Dateiname</th><th>Größe</th><th>Geändert</th><th></th></tr>
+  {% for f in files %}
+  <tr>
+    <td><strong>{{f.name}}</strong></td>
+    <td style="font-size:12px;color:#888">{{f.size}}</td>
+    <td style="font-size:12px;color:#888">{{f.mtime}}</td>
+    <td style="display:flex;gap:6px">
+      <a class="btn sm"
+         href="/document/new?inbox_file={{f.name|urlencode}}">
+        DocInfoRecord anlegen</a>
+      <form class="il" method="post" action="/inbox/{{f.name|urlencode}}/discard">
+        <button class="btn sm danger">Verwerfen</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="card" style="text-align:center;padding:32px;color:#aaa">
+  Inbox ist leer.<br>
+  <span style="font-size:12px">Dateien in <code>_dms_db/inbox/</code> kopieren.</span>
+</div>
+{% endif %}
+"""
+    import os as _os
+    file_infos = []
+    for fname in files:
+        path  = _os.path.join(INBOX_DIR, fname)
+        stat  = _os.stat(path)
+        size  = f"{stat.st_size // 1024} KB" if stat.st_size > 1024 else f"{stat.st_size} B"
+        mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+        file_infos.append(type("F", (), {"name": fname, "size": size, "mtime": mtime})())
+
+    T = render("Inbox", C, active="inbox")
+    return render_template_string(T, files=file_infos)
+
+
+@app.route("/inbox/<path:filename>/discard", methods=["POST"])
+def inbox_discard(filename):
+    safe = os.path.basename(filename)
+    path = os.path.join(INBOX_DIR, safe)
+    if os.path.isfile(path):
+        os.remove(path)
+        flash(f"{safe} verworfen.")
+    return redirect(url_for("inbox"))
+
+
+# ---------------------------------------------------------------------------
+# SETTINGS
+# ---------------------------------------------------------------------------
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings():
+    db = get_db()
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+        if action == "save_profile":
+            cat    = request.form.get("category", "")
+            fields = [f.strip() for f in
+                      request.form.get("fields", "").split(",") if f.strip()]
+            if cat and fields:
+                existing = {nid: p for nid, p in
+                            db.list_nodes("field_profiles").items()
+                            if p.get("category") == cat}
+                if existing:
+                    nid_p = list(existing.keys())[0]
+                    db.update_node("field_profiles", nid_p, {"fields": fields})
+                else:
+                    nid_p = db.next_id("field_profiles", prefix="FP-", padding=3)
+                    db.create_node("field_profiles", nid_p,
+                                   {"category": cat, "fields": fields})
+                flash(f"Feldprofil für '{cat}' gespeichert.")
+        elif action == "reset_profile":
+            cat = request.form.get("category", "")
+            for nid_p, p in list(db.list_nodes("field_profiles").items()):
+                if p.get("category") == cat:
+                    db.soft_delete("field_profiles", nid_p)
+            flash(f"Feldprofil für '{cat}' zurückgesetzt.")
+        return redirect(url_for("settings"))
+
+    profiles = {}
+    if "field_profiles" in db.list_collections():
+        for p in db.list_nodes("field_profiles").values():
+            profiles[p["category"]] = p.get("fields", [])
+
+    webhooks = list(db.list_nodes("webhooks").items()) \
+        if "webhooks" in db.list_collections() else []
+
+    C = """
+<!-- Field Profiles -->
+<div class="card" style="margin-bottom:10px">
+  <h2>Feldprofile</h2>
+  <p style="font-size:12px;color:#888;margin-bottom:10px">
+    Welche Felder pro Kategorie im Formular erscheinen.
+    Verfügbare Felder: {{all_fields|join(', ')}}</p>
+  <table style="margin-bottom:10px">
+    <tr><th>Kategorie</th><th>Aktive Felder</th><th></th></tr>
+    {% for cat in cats %}
+    <tr>
+      <td style="font-weight:600;white-space:nowrap">{{cat}}</td>
+      <td style="font-size:12px;color:#555">
+        {{profiles.get(cat, defaults.get(cat, [])) | join(', ')}}</td>
+      <td>
+        <form method="post" style="display:flex;gap:6px;align-items:center">
+          <input type="hidden" name="action" value="save_profile">
+          <input type="hidden" name="category" value="{{cat}}">
+          <input type="text" name="fields"
+                 value="{{profiles.get(cat, defaults.get(cat, [])) | join(', ')}}"
+                 style="width:340px;font-size:12px">
+          <button class="btn sm">Speichern</button>
+          {% if cat in profiles %}
+          <button class="btn sm sec" formaction="/settings"
+                  onclick="this.form.action.value='reset_profile'">Reset</button>
+          {% endif %}
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<!-- Webhooks -->
+<div class="card" style="margin-bottom:10px">
+  <h2>Webhooks</h2>
+  {% if webhooks %}
+  <table style="margin-bottom:10px">
+    <tr><th>URL</th><th>Event</th><th>Beschreibung</th><th>Aktiv</th><th></th></tr>
+    {% for nid,wh in webhooks %}
+    <tr>
+      <td style="font-size:12px;max-width:200px;overflow:hidden;
+                 text-overflow:ellipsis">{{wh.url}}</td>
+      <td><span class="badge gray">{{wh.get('event','—')}}</span></td>
+      <td style="font-size:12px;color:#888">{{wh.get('description','')}}</td>
+      <td>
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/toggle">
+          <button class="btn sm {% if wh.get('active') %}warn{% else %}sec{% endif %}">
+            {% if wh.get('active') %}AN{% else %}AUS{% endif %}</button>
+        </form>
+      </td>
+      <td style="display:flex;gap:4px">
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/test">
+          <button class="btn sm ghost">Test</button>
+        </form>
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/delete">
+          <button class="btn sm danger">×</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <form method="post" action="/settings/webhook/new"
+        style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+    <div style="flex:2"><label>URL</label>
+      <input type="text" name="url" placeholder="https://…"></div>
+    <div><label>Event</label>
+      <select name="event" style="width:160px">
+        <option value="all">Alle</option>
+        <option value="document_created">document_created</option>
+        <option value="reminder_created">reminder_created</option>
+      </select></div>
+    <div style="flex:1"><label>Beschreibung</label>
+      <input type="text" name="description" placeholder="z.B. Teams Kanal"></div>
+    <div style="align-self:flex-end">
+      <button class="btn sm">+ Webhook</button>
+    </div>
+  </form>
+</div>
+
+<!-- GC -->
+<div class="card">
+  <h2>Wartung</h2>
+  <form method="post" action="/gc" style="display:inline">
+    <button class="btn sm warn">Garbage Collection starten</button>
+  </form>
+  <span style="font-size:12px;color:#aaa;margin-left:10px">
+    Bereinigt soft-deleted Nodes und kompaktiert _temp.json Dateien.</span>
+</div>
+"""
+    T = render("Einstellungen", C, active="settings")
+    return render_template_string(T,
+        cats=DOC_CATEGORIES, profiles=profiles,
+        defaults=DEFAULT_FIELD_PROFILES,
+        all_fields=list(ALL_DOC_FIELDS.keys()),
+        webhooks=webhooks)
+
+
+@app.route("/settings/webhook/new", methods=["POST"])
+def webhook_new():
+    db  = get_db()
+    url = request.form.get("url", "").strip()
+    if not url:
+        flash("URL ist Pflicht.", "err")
+        return redirect(url_for("settings"))
+    nid = db.next_id("webhooks", prefix="WHK-", padding=4)
+    db.create_node("webhooks", nid, {
+        "url":         url,
+        "event":       request.form.get("event", "all"),
+        "description": request.form.get("description", "").strip(),
+        "active":      True,
+    })
+    flash("Webhook angelegt.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/toggle", methods=["POST"])
+def webhook_toggle(nid):
+    db   = get_db()
+    node = db.get_node(f"webhooks/{nid}")
+    if node:
+        db.update_node("webhooks", nid, {"active": not node.get("active", True)})
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/delete", methods=["POST"])
+def webhook_delete(nid):
+    db = get_db()
+    db.soft_delete("webhooks", nid)
+    flash("Webhook gelöscht.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/test", methods=["POST"])
+def webhook_test(nid):
+    db = get_db()
+    wh = db.get_node(f"webhooks/{nid}")
+    if not wh:
+        flash("Webhook nicht gefunden.", "err")
+        return redirect(url_for("settings"))
+    try:
+        payload = json.dumps({"event": "test", "source": "HomeDMS",
+                              "timestamp": now()}).encode()
+        req = _urllib.Request(wh["url"], data=payload,
+                  headers={"Content-Type": "application/json"}, method="POST")
+        _urllib.urlopen(req, timeout=3)
+        flash(f"Test gesendet an {wh['url']}.")
+    except Exception as e:
+        flash(f"Fehler: {e}", "err")
+    return redirect(url_for("settings"))
+
+
+@app.route("/gc", methods=["POST"])
+def gc():
+    gc_engine = MaintenanceEngine(DB_ROOT)
+    stats     = gc_engine.run_garbage_collection(verbose=False)
+    flash(f"GC abgeschlossen: {stats}")
+    return redirect(request.referrer or url_for("settings"))
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
+
 
 
 
