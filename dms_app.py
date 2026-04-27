@@ -460,6 +460,50 @@ a:hover { text-decoration: underline; }
   border-top: 1px solid var(--c-border-sub); padding-top: var(--sp-3);
 }
 
+/* FORM */
+.form-page {
+  flex: 1; overflow-y: auto;
+  padding: var(--sp-5) var(--sp-6);
+  background: var(--c-surface);
+}
+.form-inner { max-width: 720px; margin: 0 auto; }
+.form-row { margin-bottom: var(--sp-3); }
+.form-row > label {
+  display: block; font-size: var(--fz-xs); color: var(--c-ink-mute);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 3px;
+}
+.form-row input[type=text], .form-row input[type=date],
+.form-row input:not([type]), .form-row select, .form-row textarea {
+  width: 100%; padding: 6px 9px;
+  border: 1px solid var(--c-border); border-radius: var(--radius-sm);
+  font-size: var(--fz-sm); font-family: inherit;
+  background: var(--c-surface); color: var(--c-ink);
+}
+.form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+  outline: none; border-color: var(--c-acc);
+}
+.form-row textarea { min-height: 80px; resize: vertical; }
+.form-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3);
+}
+.form-actions {
+  display: flex; gap: var(--sp-2); margin-top: var(--sp-5);
+  padding-top: var(--sp-4); border-top: 1px solid var(--c-border);
+}
+.form-section {
+  margin-top: var(--sp-5); padding-top: var(--sp-4);
+  border-top: 1px solid var(--c-border-sub);
+}
+.form-section h3 {
+  font-size: var(--fz-xs); color: var(--c-ink-mute); font-weight: 600;
+  text-transform: uppercase; letter-spacing: .5px; margin-bottom: var(--sp-3);
+}
+.attached-file {
+  background: var(--c-acc-bg); padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm); font-size: var(--fz-sm);
+  color: var(--c-acc); margin-bottom: var(--sp-3);
+}
+
 @media print {
   .sb, .topbar, .ws-list, .btn, form { display: none !important; }
   .ws { display: block; }
@@ -657,6 +701,106 @@ tpl("workspace", r"""{% extends "base" %}
 """)
 
 
+tpl("doc_form", r"""{% extends "base" %}
+{% block topbar_title %}{% if doc %}Bearbeiten — {{doc.title or doc.nid}}{% else %}Neues Dokument{% endif %}{% endblock %}
+{% block topbar_actions %}
+  <a class="btn sm" href="{% if doc %}/?doc={{doc.nid}}{% else %}/{% endif %}">Abbrechen</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner">
+<form method="post" enctype="multipart/form-data">
+  {% if attached_file %}
+  <div class="attached-file">📎 Datei aus Inbox: <b>{{attached_file}}</b></div>
+  <input type="hidden" name="from_inbox" value="{{attached_file}}">
+  {% endif %}
+  {% if doc and doc.vault_file %}
+  <div class="attached-file">📎 Datei: <b>{{doc.vault_file}}</b>
+    <a href="/vault/{{doc.vault_file}}" target="_blank" style="margin-left:8px">öffnen</a>
+  </div>
+  {% endif %}
+
+  <div class="form-row">
+    <label>Titel *</label>
+    <input name="title" value="{{ (doc.title if doc else '') or '' }}" required autofocus>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row"><label>Kategorie</label>
+      <select name="category"><option value="">—</option>
+      {% for c in categories %}<option value="{{c}}" {% if doc and doc.category==c %}selected{% endif %}>{{c}}</option>{% endfor %}
+      </select></div>
+    <div class="form-row"><label>Typ</label>
+      <select name="doc_type"><option value="">—</option>
+      {% for t in types %}<option value="{{t}}" {% if doc and doc.doc_type==t %}selected{% endif %}>{{t}}</option>{% endfor %}
+      </select></div>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row"><label>Aussteller</label>
+      <input name="issuer" value="{{ (doc.issuer if doc else '') or '' }}"></div>
+    <div class="form-row"><label>Dokumentdatum</label>
+      <input type="date" name="doc_date" value="{{ (doc.doc_date if doc else '') or '' }}"></div>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row"><label>Betrag</label>
+      <input name="amount" value="{{ (doc.amount if doc else '') or '' }}"></div>
+    <div class="form-row"><label>Währung</label>
+      <select name="currency"><option value="">—</option>
+      {% for c in currencies %}<option value="{{c}}" {% if doc and doc.currency==c %}selected{% endif %}>{{c}}</option>{% endfor %}
+      </select></div>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row"><label>Fälligkeit</label>
+      <input type="date" name="due_date" value="{{ (doc.due_date if doc else '') or '' }}"></div>
+    <div class="form-row"><label>Ablaufdatum</label>
+      <input type="date" name="expires_at" value="{{ (doc.expires_at if doc else '') or '' }}"></div>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row"><label>Kündbar bis</label>
+      <input type="date" name="cancellable_until" value="{{ (doc.cancellable_until if doc else '') or '' }}"></div>
+    <div class="form-row"><label>Sprache</label>
+      <select name="language"><option value="">—</option>
+      {% for l in languages %}<option value="{{l}}" {% if doc and doc.language==l %}selected{% endif %}>{{l}}</option>{% endfor %}
+      </select></div>
+  </div>
+
+  <div class="form-grid">
+    <div class="form-row"><label>Archivnummer</label>
+      <input name="asn" value="{{ (doc.asn if doc else '') or '' }}"></div>
+    <div class="form-row"><label>Tags (komma-getrennt)</label>
+      <input name="tags" value="{{ (doc.tags if doc else '') or '' }}"></div>
+  </div>
+
+  <div class="form-row"><label>Notizen</label>
+    <textarea name="notes">{{ (doc.notes if doc else '') or '' }}</textarea></div>
+
+  {% if doc %}
+  <div class="form-row"><label>Status</label>
+    <select name="status">
+    {% for s in doc_statuses %}<option value="{{s}}" {% if doc.status==s %}selected{% endif %}>{{s}}</option>{% endfor %}
+    </select></div>
+  {% endif %}
+
+  {% if not doc and not attached_file %}
+  <div class="form-section">
+    <h3>Datei (optional)</h3>
+    <input type="file" name="file">
+  </div>
+  {% endif %}
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">{% if doc %}Speichern{% else %}Anlegen{% endif %}</button>
+    <a class="btn" href="{% if doc %}/?doc={{doc.nid}}{% else %}/{% endif %}">Abbrechen</a>
+  </div>
+</form>
+</div></div>
+{% endblock %}
+""")
+
+
 def nav_counts():
     db = get_db()
     ic = len(inbox_files())
@@ -729,6 +873,127 @@ def drop():
     safe = os.path.basename(f.filename)
     f.save(os.path.join(INBOX_DIR, safe))
     return "ok", 200
+
+
+# ---------------------------------------------------------------------------
+# DOCUMENT CRUD
+# ---------------------------------------------------------------------------
+
+DOC_FORM_FIELDS = (
+    "title", "issuer", "category", "doc_type", "doc_date",
+    "amount", "currency", "due_date", "expires_at", "cancellable_until",
+    "language", "asn", "tags", "notes",
+)
+
+
+def _unique_vault_name(filename):
+    base = os.path.basename(filename)
+    if not os.path.exists(os.path.join(VAULT_DIR, base)):
+        return base
+    name, ext = os.path.splitext(base)
+    i = 1
+    while os.path.exists(os.path.join(VAULT_DIR, f"{name}_{i}{ext}")):
+        i += 1
+    return f"{name}_{i}{ext}"
+
+
+def _form_context(doc=None, attached_file=""):
+    return dict(
+        nav="workspace", q="", doc=doc, attached_file=attached_file,
+        categories=DOC_CATEGORIES, types=DOC_TYPES,
+        currencies=CURRENCIES, languages=LANGUAGES,
+        doc_statuses=list(DOC_STATUS.keys()),
+        **nav_counts(),
+    )
+
+
+@app.route("/d/new", methods=["GET", "POST"])
+def doc_new():
+    db = get_db()
+    if request.method == "POST":
+        data = {}
+        for k in DOC_FORM_FIELDS:
+            v = request.form.get(k, "").strip()
+            if v:
+                data[k] = v
+        if not data.get("title"):
+            flash("Titel ist erforderlich.", "err")
+            return redirect(url_for("doc_new"))
+        data["status"]     = "AKTIV"
+        data["created_by"] = DEFAULT_USER
+        data["created_at"] = now()
+        data["changed_at"] = now()
+
+        vault_file = None
+        from_inbox = request.form.get("from_inbox", "").strip()
+        if from_inbox:
+            src = os.path.join(INBOX_DIR, os.path.basename(from_inbox))
+            if os.path.exists(src):
+                vault_file = _unique_vault_name(from_inbox)
+                shutil.move(src, os.path.join(VAULT_DIR, vault_file))
+        else:
+            f = request.files.get("file")
+            if f and f.filename and allowed_file(f.filename):
+                vault_file = _unique_vault_name(f.filename)
+                f.save(os.path.join(VAULT_DIR, vault_file))
+        if vault_file:
+            data["vault_file"] = vault_file
+
+        nid = db.next_id("documents", prefix="DOC-", padding=5)
+        db.create_node("documents", nid, data)
+        flash(f"{nid} angelegt.")
+        return redirect(url_for("workspace", doc=nid))
+
+    return render_template("doc_form",
+        **_form_context(attached_file=request.args.get("file", "")))
+
+
+@app.route("/d/<nid>/edit", methods=["GET", "POST"])
+def doc_edit(nid):
+    db = get_db()
+    doc = db.get_node(f"documents/{nid}")
+    if not doc:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("workspace"))
+    if request.method == "POST":
+        upd = {}
+        for k in DOC_FORM_FIELDS:
+            upd[k] = request.form.get(k, "").strip()
+        st = request.form.get("status", "").strip()
+        if st in DOC_STATUS:
+            upd["status"] = st
+        upd["changed_at"] = now()
+        db.update_node("documents", nid, upd)
+        flash(f"{nid} gespeichert.")
+        return redirect(url_for("workspace", doc=nid))
+    doc["nid"] = nid
+    return render_template("doc_form", **_form_context(doc=doc))
+
+
+@app.route("/d/<nid>/delete", methods=["POST"])
+def doc_delete(nid):
+    db = get_db()
+    doc = db.get_node(f"documents/{nid}")
+    if doc:
+        db.soft_delete("documents", nid, keep_asset=False)
+        flash(f"{nid} gelöscht.")
+    return redirect(url_for("workspace"))
+
+
+@app.route("/inbox/create")
+def inbox_create():
+    fn = request.args.get("file", "").strip()
+    return redirect(url_for("doc_new", file=fn))
+
+
+@app.route("/vault/<path:filename>")
+def vault_file(filename):
+    if "/" in filename or ".." in filename:
+        return "ungültig", 400
+    path = os.path.join(VAULT_DIR, os.path.basename(filename))
+    if not os.path.isfile(path):
+        return "nicht gefunden", 404
+    return send_file(path)
 
 
 if __name__ == "__main__":
