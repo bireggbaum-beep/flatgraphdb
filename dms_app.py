@@ -1109,8 +1109,16 @@ def vault_file(filename):
 
 
 if __name__ == "__main__":
-    print("HomeDMS läuft auf http://127.0.0.1:5002", flush=True)
-    app.run(host="127.0.0.1", port=5002, debug=True, use_reloader=False)
+    PORT = 5555
+    print(f"HomeDMS laeuft auf http://127.0.0.1:{PORT}", flush=True)
+    print("(NICHT localhost verwenden — bei Windows oft IPv6-Konflikt)", flush=True)
+
+    @app.before_request
+    def _log_req():
+        from flask import request as _r
+        print(f"  >>> {_r.method} {_r.path}", flush=True)
+
+    app.run(host="127.0.0.1", port=PORT, debug=True, use_reloader=False)
 
 
 
