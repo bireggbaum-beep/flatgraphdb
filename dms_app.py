@@ -984,25 +984,49 @@ def document_detail(ref):
 </div>
 
 <!-- Related docs -->
-{% if related %}
-<div class="card"><h2>Verknüpfte Dokumente</h2>
-<table>
-  <tr><th>ID</th><th>Titel</th><th>Kategorie</th><th></th></tr>
-  {% for rref,rd in related %}
-  <tr>
-    <td style="font-size:11px;color:#888">{{rref.split('/')[-1]}}</td>
-    <td><a href="/document/{{rref}}">{{rd.title[:45]}}</a></td>
-    <td><span class="badge">{{rd.get('category','—')}}</span></td>
-    <td>
-      <form class="il" method="post" action="/document/{{ref}}/unlink/{{rref}}">
-        <button class="btn sm ghost">×</button>
-      </form>
-    </td>
-  </tr>
-  {% endfor %}
-</table>
+<div class="card">
+  <h2>Verknüpfte Dokumente
+    {% if related %}<span style="font-weight:400;color:#aaa">({{related|length}})</span>{% endif %}
+  </h2>
+  {% if related %}
+  <table style="margin-bottom:10px">
+    <tr><th>ID</th><th>Titel</th><th>Kategorie</th><th>Datum</th><th></th></tr>
+    {% for rref,rd in related %}
+    <tr>
+      <td style="font-size:11px;color:#888;white-space:nowrap">
+        {{rref.split('/')[-1]}}</td>
+      <td><a href="/document/{{rref}}">{{rd.get('title','—')[:42]}}</a></td>
+      <td><span class="badge">{{rd.get('category','—')}}</span></td>
+      <td style="font-size:12px;color:#888">{{rd.get('doc_date','—')}}</td>
+      <td>
+        <form class="il" method="post"
+              action="/document/{{ref}}/unlink/{{rref}}">
+          <button class="btn sm ghost" title="Verknüpfung entfernen">×</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <form method="post" action="/document/{{ref}}/link"
+        style="display:flex;gap:8px;align-items:flex-end">
+    <div style="flex:1"><label>Dokument verknüpfen</label>
+      <select name="target_ref" style="width:100%">
+        <option value="">— Dokument auswählen —</option>
+        {% for dnid,d in all_docs %}
+        {% if 'documents/'+dnid != ref %}
+        <option value="documents/{{dnid}}">
+          {{dnid}} — {{d.get('title','')[:45]}}
+          {% if d.get('issuer') %} ({{d.issuer}}){% endif %}
+        </option>
+        {% endif %}
+        {% endfor %}
+      </select></div>
+    <div style="align-self:flex-end">
+      <button class="btn sm">Verknüpfen</button>
+    </div>
+  </form>
 </div>
-{% endif %}
 
 <!-- Reminders -->
 <div class="card"><h2>Reminder</h2>
@@ -1072,6 +1096,11 @@ def document_detail(ref):
 
 </div><!-- /flex -->
 """
+    all_docs = sorted(
+        db.list_nodes("documents").items(),
+        key=lambda x: x[1].get("title", "")
+    ) if "documents" in db.list_collections() else []
+
     T = render(data.get("title","Dokument"), C, active="documents",
                topbar_right=f'<a class="btn sm sec" href="/documents">← Liste</a> '
                             f'<a class="btn sm" href="/document/{ref}/edit">Bearbeiten</a>')
@@ -1079,7 +1108,7 @@ def document_detail(ref):
         ref=ref, nid=nid, data=data, status=status, next_st=next_st,
         attachments=attachments, related=related, contact=contact,
         reminders=reminders, primary_file=primary_file, has_pdf=has_pdf,
-        rtypes=REMINDER_TYPES, today=today())
+        all_docs=all_docs, rtypes=REMINDER_TYPES, today=today())
 
 
 # ---------------------------------------------------------------------------
@@ -2102,8 +2131,50 @@ def gc():
     return redirect(request.referrer or url_for("settings"))
 
 
+# ---------------------------------------------------------------------------
+# DOK-ZU-DOK VERKNÜPFUNG
+# ---------------------------------------------------------------------------
+
+@app.route("/document/<path:ref>/link", methods=["POST"])
+def document_link(ref):
+    target = request.form.get("target_ref", "").strip()
+    if not target or target == ref:
+        flash("Ungültiges Zieldokument.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    db = get_db()
+    if not db.get_node(ref) or not db.get_node(target):
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    # Check if edge already exists in either direction
+    existing = [e for e in db.get_connected_edges(ref, direction="both")
+                if e.get("type") == "related_to"
+                and target in (e.get("source"), e.get("target"))]
+    if existing:
+        flash("Verknüpfung besteht bereits.")
+        return redirect(url_for("document_detail", ref=ref))
+    db.create_edge(ref, target, "related_to")
+    flash("Verknüpfung angelegt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/document/<path:ref>/unlink/<path:target>", methods=["POST"])
+def document_unlink(ref, target):
+    db = get_db()
+    # Find and delete edge in both directions
+    deleted = 0
+    for eid, e in db.get_connected_edges(ref, direction="both"):
+        if e.get("type") == "related_to" and \
+           target in (e.get("source"), e.get("target")):
+            db.delete_edge(eid)
+            deleted += 1
+    if deleted:
+        flash("Verknüpfung entfernt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5002)
+
 
 
 
