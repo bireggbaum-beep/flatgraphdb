@@ -1601,6 +1601,10 @@ def doc_new():
 
         nid = db.next_id("documents", prefix="DOC-", padding=5)
         db.create_node("documents", nid, data)
+        fire_webhooks("doc_created", {
+            "nid": nid, "title": data.get("title", ""),
+            "category": data.get("category", ""), "issuer": data.get("issuer", ""),
+        })
         flash(f"{nid} angelegt.")
         return redirect(url_for("workspace", doc=nid))
 
@@ -1620,10 +1624,16 @@ def doc_edit(nid):
         for k in DOC_FORM_FIELDS:
             upd[k] = request.form.get(k, "").strip()
         st = request.form.get("status", "").strip()
+        old_status = doc.get("status", "")
         if st in DOC_STATUS:
             upd["status"] = st
         upd["changed_at"] = now()
         db.update_node("documents", nid, upd)
+        if st and st != old_status:
+            fire_webhooks("doc_status_changed", {
+                "nid": nid, "title": doc.get("title", ""),
+                "old_status": old_status, "new_status": st,
+            })
         flash(f"{nid} gespeichert.")
         return redirect(url_for("workspace", doc=nid))
     doc["nid"] = nid
