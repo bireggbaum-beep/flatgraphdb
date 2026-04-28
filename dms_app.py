@@ -663,6 +663,7 @@ tpl("workspace", r"""{% extends "base" %}
       {% for fn in ifiles %}
       <div class="inbox-row">
         <span>📥</span><span class="fn">{{fn}}</span>
+        <a class="btn sm" href="/inbox/attach?file={{fn|urlencode}}">Anhängen</a>
         <a class="btn sm" href="/inbox/create?file={{fn|urlencode}}">Erfassen</a>
       </div>
       {% endfor %}
@@ -875,6 +876,69 @@ tpl("doc_form", r"""{% extends "base" %}
   </div>
 </form>
 </div></div>
+{% endblock %}
+""")
+
+
+tpl("inbox_attach", r"""{% extends "base" %}
+{% block topbar_title %}Inbox anhängen{% endblock %}
+{% block topbar_actions %}
+  <a class="btn sm" href="/">Abbrechen</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner">
+  <p style="font-size:var(--fz-md);margin-bottom:var(--sp-4)">
+    📎 <b>{{fname}}</b> an bestehendes Dokument anhängen
+  </p>
+  <form method="post" action="/inbox/attach">
+    <input type="hidden" name="file" value="{{fname}}">
+    <div class="form-row">
+      <label>Dokument suchen</label>
+      <input type="text" id="attach-search" placeholder="Titel, ID, Aussteller…" autocomplete="off">
+    </div>
+    <div id="attach-list" style="margin-top:var(--sp-3);max-height:420px;overflow-y:auto">
+      {% for d in all_docs %}
+      <label class="att-row" data-s="{{(d.nid ~ ' ' ~ d.title ~ ' ' ~ d.issuer)|lower}}">
+        <input type="radio" name="target_nid" value="{{d.nid}}" required>
+        <span class="att-nid">{{d.nid}}</span>
+        <span class="att-title">{{d.title or '(kein Titel)'}}</span>
+        {% if d.issuer %}<span class="att-issuer">{{d.issuer}}</span>{% endif %}
+      </label>
+      {% else %}
+      <p style="color:var(--c-ink-mute);font-size:var(--fz-sm)">Keine Dokumente vorhanden.</p>
+      {% endfor %}
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Anhängen</button>
+      <a class="btn" href="/">Abbrechen</a>
+    </div>
+  </form>
+</div></div>
+<style>
+.att-row {
+  display:flex; align-items:center; gap:var(--sp-3);
+  padding:var(--sp-2) var(--sp-3);
+  border:1px solid var(--c-border); border-radius:var(--radius-sm);
+  margin-bottom:3px; cursor:pointer;
+}
+.att-row:hover { background:var(--c-acc-bg); }
+.att-row input[type=radio] { flex-shrink:0; }
+.att-nid { font-family:ui-monospace,monospace; font-size:var(--fz-xs); color:var(--c-ink-mute); min-width:90px; }
+.att-title { font-size:var(--fz-sm); flex:1; }
+.att-issuer { font-size:var(--fz-xs); color:var(--c-ink-soft); }
+.att-row.hidden { display:none; }
+</style>
+<script>
+(function(){
+  var inp = document.getElementById('attach-search');
+  var rows = document.querySelectorAll('.att-row');
+  inp.addEventListener('input', function(){
+    var q = inp.value.toLowerCase();
+    rows.forEach(function(r){ r.classList.toggle('hidden', q !== '' && r.dataset.s.indexOf(q) === -1); });
+  });
+  inp.focus();
+})();
+</script>
 {% endblock %}
 """)
 
@@ -1127,6 +1191,45 @@ def link_delete(edge_id):
 def inbox_create():
     fn = request.args.get("file", "").strip()
     return redirect(url_for("doc_new", file=fn))
+
+
+@app.route("/inbox/attach", methods=["GET"])
+def inbox_attach_get():
+    fname = request.args.get("file", "").strip()
+    if not fname or "/" in fname or ".." in fname:
+        flash("Ungültige Datei.", "err")
+        return redirect(url_for("workspace"))
+    db = get_db()
+    raw = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+    all_docs = [
+        {"nid": nid, "title": d.get("title", ""), "issuer": d.get("issuer", "")}
+        for nid, d in sorted(raw.items(), key=lambda x: x[1].get("title", "").lower())
+    ]
+    return render_template("inbox_attach",
+        nav="workspace", fname=fname, all_docs=all_docs,
+        **nav_counts())
+
+
+@app.route("/inbox/attach", methods=["POST"])
+def inbox_attach_post():
+    fname = request.form.get("file", "").strip()
+    target_nid = request.form.get("target_nid", "").strip()
+    if not fname or "/" in fname or ".." in fname:
+        flash("Ungültige Datei.", "err")
+        return redirect(url_for("workspace"))
+    db = get_db()
+    if not target_nid or not db.get_node(f"documents/{target_nid}"):
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("inbox_attach_get", file=fname))
+    src = os.path.join(INBOX_DIR, os.path.basename(fname))
+    if not os.path.exists(src):
+        flash("Datei nicht mehr in Inbox.", "err")
+        return redirect(url_for("workspace"))
+    vault_file = _unique_vault_name(fname)
+    shutil.move(src, os.path.join(VAULT_DIR, vault_file))
+    db.update_node("documents", target_nid, {"vault_file": vault_file, "changed_at": now()})
+    flash(f"Datei an {target_nid} angehängt.")
+    return redirect(url_for("workspace", doc=target_nid))
 
 
 @app.route("/vault/<path:filename>")
