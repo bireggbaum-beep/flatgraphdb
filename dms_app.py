@@ -1271,6 +1271,144 @@ tpl("reminder_form", r"""{% extends "base" %}
 """)
 
 
+tpl("settings_page", r"""{% extends "base" %}
+{% block topbar_title %}Einstellungen{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner" style="max-width:900px">
+
+  <!-- WEBHOOKS -->
+  <h2 style="font-size:var(--fz-md);font-weight:700;margin-bottom:var(--sp-3)">Webhooks</h2>
+  {% if webhooks %}
+  <table style="width:100%;border-collapse:collapse;font-size:var(--fz-sm);margin-bottom:var(--sp-4)">
+    <thead>
+      <tr style="border-bottom:2px solid var(--c-border)">
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">URL</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Event</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Aktiv</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Beschreibung</th>
+        <th style="padding:4px 8px"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for wh in webhooks %}
+    <tr style="border-bottom:1px solid var(--c-border-sub)">
+      <td style="padding:6px 8px;font-family:monospace;font-size:var(--fz-xs)">{{wh.url}}</td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{wh.event or '—'}}</td>
+      <td style="padding:6px 8px">{% if wh.active %}✓{% else %}—{% endif %}</td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{wh.description or ''}}</td>
+      <td style="padding:6px 8px;text-align:right;white-space:nowrap">
+        <form class="il" method="post" action="/settings/webhooks/{{wh.nid}}/test">
+          <button class="btn sm">Test</button>
+        </form>
+        <a class="btn sm" href="/settings/webhooks/{{wh.nid}}/edit">✏</a>
+        <form class="il" method="post" action="/settings/webhooks/{{wh.nid}}/delete"
+              onsubmit="return confirm('Webhook löschen?')">
+          <button class="btn sm danger">✕</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="font-size:var(--fz-sm);color:var(--c-ink-mute);margin-bottom:var(--sp-4)">Noch keine Webhooks konfiguriert.</p>
+  {% endif %}
+
+  <!-- Webhook-Formular -->
+  <details style="margin-bottom:var(--sp-6)">
+    <summary class="btn sm" style="cursor:pointer;display:inline-flex">+ Webhook hinzufügen</summary>
+    <div style="margin-top:var(--sp-3);padding:var(--sp-4);background:var(--c-surface-2);border-radius:var(--radius)">
+      <form method="post" action="/settings/webhooks/new">
+        <div class="form-grid">
+          <div class="form-row"><label>URL *</label>
+            <input name="url" placeholder="https://…" required></div>
+          <div class="form-row"><label>Event</label>
+            <select name="event">
+              <option value="all">Alle</option>
+              <option value="doc_created">doc_created</option>
+              <option value="doc_status_changed">doc_status_changed</option>
+              <option value="reminder_due">reminder_due</option>
+            </select></div>
+        </div>
+        <div class="form-grid">
+          <div class="form-row"><label>Beschreibung</label>
+            <input name="description"></div>
+          <div class="form-row"><label>Aktiv</label>
+            <select name="active">
+              <option value="1">Ja</option>
+              <option value="0">Nein</option>
+            </select></div>
+        </div>
+        <button class="btn primary sm" type="submit">Speichern</button>
+      </form>
+    </div>
+  </details>
+
+  <!-- FIELD PROFILES -->
+  <h2 style="font-size:var(--fz-md);font-weight:700;margin-bottom:var(--sp-3)">Feldprofile</h2>
+  <p style="font-size:var(--fz-sm);color:var(--c-ink-mute);margin-bottom:var(--sp-4)">
+    Welche Felder sollen im Dokument-Formular für jede Kategorie angezeigt werden?
+  </p>
+  <form method="post" action="/settings/field_profiles">
+    {% for cat in categories %}
+    <div style="margin-bottom:var(--sp-4);padding:var(--sp-3);border:1px solid var(--c-border);border-radius:var(--radius)">
+      <div style="font-weight:600;font-size:var(--fz-sm);margin-bottom:var(--sp-2)">{{cat}}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">
+        {% for fkey, flabel in all_fields.items() %}
+        <label style="display:flex;align-items:center;gap:4px;font-size:var(--fz-sm);cursor:pointer">
+          <input type="checkbox" name="fp_{{cat}}" value="{{fkey}}"
+            {% if fkey in (profiles.get(cat) or []) %}checked{% endif %}>
+          {{flabel}}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    <button class="btn primary" type="submit">Feldprofile speichern</button>
+  </form>
+
+</div></div>
+{% endblock %}
+""")
+
+
+tpl("webhook_form", r"""{% extends "base" %}
+{% block topbar_title %}Webhook bearbeiten{% endblock %}
+{% block topbar_actions %}
+  <a class="btn sm" href="/settings">Abbrechen</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner">
+<form method="post">
+  <div class="form-grid">
+    <div class="form-row"><label>URL *</label>
+      <input name="url" value="{{ wh.url or '' }}" required autofocus></div>
+    <div class="form-row"><label>Event</label>
+      <select name="event">
+        {% for ev in ['all','doc_created','doc_status_changed','reminder_due'] %}
+        <option value="{{ev}}" {% if wh.event==ev %}selected{% endif %}>{{ev}}</option>
+        {% endfor %}
+      </select></div>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Beschreibung</label>
+      <input name="description" value="{{ wh.description or '' }}"></div>
+    <div class="form-row"><label>Aktiv</label>
+      <select name="active">
+        <option value="1" {% if wh.active %}selected{% endif %}>Ja</option>
+        <option value="0" {% if not wh.active %}selected{% endif %}>Nein</option>
+      </select></div>
+  </div>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Speichern</button>
+    <a class="btn" href="/settings">Abbrechen</a>
+  </div>
+</form>
+</div></div>
+{% endblock %}
+""")
+
+
 def nav_counts():
     db = get_db()
     ic = len(inbox_files())
@@ -1854,6 +1992,113 @@ def vault_file(filename):
     if not os.path.isfile(path):
         return "nicht gefunden", 404
     return send_file(path)
+
+
+# ---------------------------------------------------------------------------
+# SETTINGS
+# ---------------------------------------------------------------------------
+
+WH_FIELDS = ("url", "event", "description")
+
+
+def _settings_ctx():
+    db = get_db()
+    webhooks = []
+    if "webhooks" in db.list_collections():
+        for nid, wh in sorted(db.list_nodes("webhooks").items()):
+            row = dict(wh); row["nid"] = nid
+            webhooks.append(row)
+    profiles = {}
+    if "field_profiles" in db.list_collections():
+        for _, fp in db.list_nodes("field_profiles").items():
+            profiles[fp.get("category", "")] = fp.get("fields", [])
+    else:
+        profiles = dict(DEFAULT_FIELD_PROFILES)
+    return dict(nav="settings", webhooks=webhooks, profiles=profiles,
+                categories=DOC_CATEGORIES, all_fields=ALL_DOC_FIELDS,
+                **nav_counts())
+
+
+@app.route("/settings")
+def settings():
+    return render_template("settings_page", **_settings_ctx())
+
+
+@app.route("/settings/webhooks/new", methods=["POST"])
+def webhook_new():
+    db = get_db()
+    data = {k: request.form.get(k, "").strip() for k in WH_FIELDS}
+    data["active"] = request.form.get("active", "1") == "1"
+    if not data.get("url"):
+        flash("URL ist erforderlich.", "err")
+        return redirect(url_for("settings"))
+    nid = db.next_id("webhooks", prefix="WH-", padding=3)
+    db.create_node("webhooks", nid, data)
+    flash(f"{nid} angelegt.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhooks/<nid>/edit", methods=["GET", "POST"])
+def webhook_edit(nid):
+    db = get_db()
+    wh = db.get_node(f"webhooks/{nid}")
+    if not wh:
+        flash("Webhook nicht gefunden.", "err")
+        return redirect(url_for("settings"))
+    if request.method == "POST":
+        upd = {k: request.form.get(k, "").strip() for k in WH_FIELDS}
+        upd["active"] = request.form.get("active", "1") == "1"
+        db.update_node("webhooks", nid, upd)
+        flash(f"{nid} gespeichert.")
+        return redirect(url_for("settings"))
+    wh["nid"] = nid
+    return render_template("webhook_form", nav="settings", wh=wh, **nav_counts())
+
+
+@app.route("/settings/webhooks/<nid>/delete", methods=["POST"])
+def webhook_delete(nid):
+    db = get_db()
+    if db.get_node(f"webhooks/{nid}"):
+        db.soft_delete("webhooks", nid)
+        flash(f"{nid} gelöscht.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhooks/<nid>/test", methods=["POST"])
+def webhook_test(nid):
+    db = get_db()
+    wh = db.get_node(f"webhooks/{nid}")
+    if not wh:
+        flash("Webhook nicht gefunden.", "err")
+        return redirect(url_for("settings"))
+    try:
+        payload = json.dumps({"event": "test", "source": "HomeDMS"}).encode()
+        req = _urllib.Request(wh["url"], data=payload,
+              headers={"Content-Type": "application/json"}, method="POST")
+        _urllib.urlopen(req, timeout=3)
+        flash(f"Test-Request an {wh['url']} gesendet.")
+    except Exception as e:
+        flash(f"Test fehlgeschlagen: {e}", "err")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/field_profiles", methods=["POST"])
+def settings_field_profiles():
+    db = get_db()
+    existing = {}
+    if "field_profiles" in db.list_collections():
+        for nid, fp in db.list_nodes("field_profiles").items():
+            existing[fp.get("category", "")] = nid
+    for cat in DOC_CATEGORIES:
+        fields = request.form.getlist(f"fp_{cat}")
+        data = {"category": cat, "fields": fields}
+        if cat in existing:
+            db.update_node("field_profiles", existing[cat], data)
+        else:
+            nid = db.next_id("field_profiles", prefix="FP-", padding=2)
+            db.create_node("field_profiles", nid, data)
+    flash("Feldprofile gespeichert.")
+    return redirect(url_for("settings"))
 
 
 if __name__ == "__main__":
