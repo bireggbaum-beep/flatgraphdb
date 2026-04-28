@@ -762,6 +762,31 @@ tpl("workspace", r"""{% extends "base" %}
         {% endif %}
       </div>
 
+      <div class="det-section">
+        <div class="det-sec-title">Erinnerungen ({{doc_reminders|length}})</div>
+        {% if doc_reminders %}
+        <table class="det-table" style="margin-bottom:var(--sp-2)">
+          {% for r in doc_reminders %}
+          <tr>
+            <td style="color:var(--c-ink-mute);font-size:var(--fz-xs);width:1%;white-space:nowrap">{{r.remind_at or '—'}}</td>
+            <td>{{r.title or '(kein Titel)'}}</td>
+            <td style="color:var(--c-ink-soft);font-size:var(--fz-xs);width:1%;white-space:nowrap">{{r.reminder_type or ''}}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+        <form method="post" action="/r/new" style="display:flex;gap:var(--sp-2);align-items:flex-end;flex-wrap:wrap">
+          <input type="hidden" name="linked_doc" value="{{sel.nid}}">
+          <div style="flex:1;min-width:140px">
+            <input name="title" placeholder="Neue Erinnerung…"
+                   style="width:100%;padding:5px 8px;border:1px solid var(--c-border);border-radius:var(--radius-sm);font-size:var(--fz-sm)">
+          </div>
+          <input type="date" name="remind_at"
+                 style="padding:5px 8px;border:1px solid var(--c-border);border-radius:var(--radius-sm);font-size:var(--fz-sm)">
+          <button class="btn sm primary" type="submit">+</button>
+        </form>
+      </div>
+
       <div class="det-footer">
         {{sel.nid}} · Erstellt {{(sel.created_at or '')[:10]}} · Geändert {{(sel.changed_at or '')[:10]}}
       </div>
@@ -1148,6 +1173,104 @@ tpl("contact_form", r"""{% extends "base" %}
 """)
 
 
+tpl("reminders_list", r"""{% extends "base" %}
+{% block topbar_title %}Erinnerungen{% endblock %}
+{% block topbar_actions %}
+  <a class="btn primary sm" href="/r/new">+ Neu</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner" style="max-width:860px">
+  <div style="display:flex;gap:var(--sp-2);margin-bottom:var(--sp-4)">
+    <a class="btn sm {% if not fired_f %}primary{% endif %}" href="/reminders">Offen</a>
+    <a class="btn sm {% if fired_f %}primary{% endif %}" href="/reminders?fired=1">Erledigt</a>
+  </div>
+  {% if reminders %}
+  <table style="width:100%;border-collapse:collapse;font-size:var(--fz-sm)">
+    <thead>
+      <tr style="border-bottom:2px solid var(--c-border)">
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Titel</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Datum</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Typ</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Dokument</th>
+        <th style="padding:4px 8px"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in reminders %}
+    <tr style="border-bottom:1px solid var(--c-border-sub){% if r.overdue %};background:var(--c-bad-bg){% endif %}">
+      <td style="padding:6px 8px">{{r.title or '(kein Titel)'}}</td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{r.remind_at or '—'}}</td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{r.reminder_type or '—'}}</td>
+      <td style="padding:6px 8px">
+        {% if r.linked_doc %}<a href="/?doc={{r.linked_doc}}">{{r.linked_doc}}</a>{% else %}—{% endif %}
+      </td>
+      <td style="padding:6px 8px;text-align:right;white-space:nowrap">
+        {% if not r.fired %}
+        <form class="il" method="post" action="/r/{{r.nid}}/fire">
+          <button class="btn sm">✓ Erledigt</button>
+        </form>
+        {% endif %}
+        <a class="btn sm" href="/r/{{r.nid}}/edit">✏</a>
+        <form class="il" method="post" action="/r/{{r.nid}}/delete"
+              onsubmit="return confirm('Löschen?')">
+          <button class="btn sm danger">✕</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty" style="padding:var(--sp-8)">
+    <div class="icon">🔔</div>
+    <div class="title">Keine Erinnerungen</div>
+    <div class="hint">Klicke „+ Neu" um eine Erinnerung anzulegen.</div>
+  </div>
+  {% endif %}
+</div></div>
+{% endblock %}
+""")
+
+
+tpl("reminder_form", r"""{% extends "base" %}
+{% block topbar_title %}{% if rem %}Erinnerung bearbeiten{% else %}Neue Erinnerung{% endif %}{% endblock %}
+{% block topbar_actions %}
+  <a class="btn sm" href="/reminders">Abbrechen</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner">
+<form method="post">
+  <div class="form-row">
+    <label>Titel *</label>
+    <input name="title" value="{{ (rem.title if rem else '') or '' }}" required autofocus>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Datum</label>
+      <input type="date" name="remind_at" value="{{ (rem.remind_at if rem else '') or '' }}"></div>
+    <div class="form-row"><label>Typ</label>
+      <select name="reminder_type"><option value="">—</option>
+      {% for k, v in rem_types.items() %}<option value="{{k}}" {% if rem and rem.reminder_type==k %}selected{% endif %}>{{v}}</option>{% endfor %}
+      </select></div>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Verknüpftes Dokument</label>
+      <select name="linked_doc"><option value="">—</option>
+      {% for d in all_docs %}<option value="{{d.nid}}" {% if rem and rem.linked_doc==d.nid %}selected{% endif %}>{{d.nid}} — {{d.title}}</option>{% endfor %}
+      </select></div>
+    <div class="form-row"></div>
+  </div>
+  <div class="form-row"><label>Notizen</label>
+    <textarea name="notes">{{ (rem.notes if rem else '') or '' }}</textarea></div>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">{% if rem %}Speichern{% else %}Anlegen{% endif %}</button>
+    <a class="btn" href="/reminders">Abbrechen</a>
+  </div>
+</form>
+</div></div>
+{% endblock %}
+""")
+
+
 def nav_counts():
     db = get_db()
     ic = len(inbox_files())
@@ -1164,6 +1287,7 @@ def nav_counts():
 
 @app.route("/")
 def workspace():
+    _auto_fire_reminders()
     db  = get_db()
     sf  = request.args.get("status", "")
     q   = request.args.get("q", "").lower().strip()
@@ -1224,6 +1348,14 @@ def workspace():
 
     ifiles = inbox_files() if not sf else []
 
+    doc_reminders = []
+    if sel and "reminders" in db.list_collections():
+        for rnid, r in db.list_nodes("reminders").items():
+            if r.get("linked_doc") == sel["nid"] and not r.get("fired"):
+                row = dict(r); row["nid"] = rnid
+                doc_reminders.append(row)
+        doc_reminders.sort(key=lambda x: x.get("remind_at", "9999"))
+
     return render_template("workspace",
         nav="workspace", q=q, sf=sf,
         doc_list=doc_list, tc=tc,
@@ -1231,6 +1363,7 @@ def workspace():
         links=links, link_targets=link_targets,
         ifiles=ifiles,
         sc=DOC_STATUS,
+        doc_reminders=doc_reminders,
         **nav_counts())
 
 
@@ -1594,6 +1727,123 @@ def contact_delete(nid):
         db.soft_delete("contacts", nid)
         flash(f"{nid} gelöscht.")
     return redirect(url_for("contacts_list"))
+
+
+# ---------------------------------------------------------------------------
+# REMINDERS
+# ---------------------------------------------------------------------------
+
+REM_FORM_FIELDS = ("title", "remind_at", "reminder_type", "linked_doc", "notes")
+
+
+def _auto_fire_reminders():
+    """Feuert alle fälligen, noch nicht gefeuerten Reminders."""
+    db = get_db()
+    if "reminders" not in db.list_collections():
+        return
+    today_s = today()
+    for nid, r in db.list_nodes("reminders").items():
+        if r.get("fired"):
+            continue
+        if r.get("remind_at", "9999") <= today_s:
+            fire_webhooks("reminder_due", {
+                "nid": nid, "title": r.get("title", ""),
+                "remind_at": r.get("remind_at", ""),
+                "linked_doc": r.get("linked_doc", ""),
+            })
+            db.update_node("reminders", nid, {"fired": True, "fired_at": now()})
+
+
+def _rem_form_ctx(rem=None):
+    db = get_db()
+    raw = db.list_nodes("documents") if "documents" in db.list_collections() else {}
+    all_docs = [
+        {"nid": nid, "title": d.get("title", "")}
+        for nid, d in sorted(raw.items(), key=lambda x: x[1].get("title", "").lower())
+    ]
+    return dict(nav="reminders", rem=rem,
+                rem_types=REMINDER_TYPES, all_docs=all_docs, **nav_counts())
+
+
+@app.route("/reminders")
+def reminders_list():
+    _auto_fire_reminders()
+    db = get_db()
+    fired_f = bool(request.args.get("fired"))
+    raw = db.list_nodes("reminders") if "reminders" in db.list_collections() else {}
+    today_s = today()
+    reminders = []
+    for nid, r in sorted(raw.items(), key=lambda x: x[1].get("remind_at", "9999")):
+        if fired_f != bool(r.get("fired")):
+            continue
+        row = dict(r); row["nid"] = nid
+        row["overdue"] = not r.get("fired") and r.get("remind_at", "9999") <= today_s
+        reminders.append(row)
+    return render_template("reminders_list",
+        nav="reminders", reminders=reminders, fired_f=fired_f, **nav_counts())
+
+
+@app.route("/r/new", methods=["GET", "POST"])
+def reminder_new():
+    db = get_db()
+    if request.method == "POST":
+        data = {}
+        for k in REM_FORM_FIELDS:
+            v = request.form.get(k, "").strip()
+            if v:
+                data[k] = v
+        if not data.get("title"):
+            flash("Titel ist erforderlich.", "err")
+            return redirect(url_for("reminder_new"))
+        data["fired"] = False
+        data["created_at"] = now()
+        nid = db.next_id("reminders", prefix="REM-", padding=5)
+        db.create_node("reminders", nid, data)
+        flash(f"{nid} angelegt.")
+        return redirect(url_for("reminders_list"))
+    return render_template("reminder_form", **_rem_form_ctx())
+
+
+@app.route("/r/<nid>/edit", methods=["GET", "POST"])
+def reminder_edit(nid):
+    db = get_db()
+    rem = db.get_node(f"reminders/{nid}")
+    if not rem:
+        flash("Erinnerung nicht gefunden.", "err")
+        return redirect(url_for("reminders_list"))
+    if request.method == "POST":
+        upd = {}
+        for k in REM_FORM_FIELDS:
+            upd[k] = request.form.get(k, "").strip()
+        db.update_node("reminders", nid, upd)
+        flash(f"{nid} gespeichert.")
+        return redirect(url_for("reminders_list"))
+    rem["nid"] = nid
+    return render_template("reminder_form", **_rem_form_ctx(rem=rem))
+
+
+@app.route("/r/<nid>/delete", methods=["POST"])
+def reminder_delete(nid):
+    db = get_db()
+    if db.get_node(f"reminders/{nid}"):
+        db.soft_delete("reminders", nid)
+        flash(f"{nid} gelöscht.")
+    return redirect(url_for("reminders_list"))
+
+
+@app.route("/r/<nid>/fire", methods=["POST"])
+def reminder_fire(nid):
+    db = get_db()
+    rem = db.get_node(f"reminders/{nid}")
+    if rem and not rem.get("fired"):
+        fire_webhooks("reminder_due", {
+            "nid": nid, "title": rem.get("title", ""),
+            "remind_at": rem.get("remind_at", ""),
+            "linked_doc": rem.get("linked_doc", ""),
+        })
+        db.update_node("reminders", nid, {"fired": True, "fired_at": now()})
+        flash(f"{nid} als erledigt markiert.")
+    return redirect(url_for("reminders_list"))
 
 
 @app.route("/vault/<path:filename>")
