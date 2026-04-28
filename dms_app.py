@@ -820,6 +820,10 @@ tpl("doc_form", r"""{% extends "base" %}
     <div class="form-row"><label>Dokumentdatum</label>
       <input type="date" name="doc_date" value="{{ (doc.doc_date if doc else '') or '' }}"></div>
   </div>
+  <div class="form-row"><label>Aussteller (Kontakt-Referenz)</label>
+    <select name="issuer_ref"><option value="">—</option>
+    {% for k in contacts %}<option value="{{k.nid}}" {% if doc and doc.issuer_ref==k.nid %}selected{% endif %}>{{k.name}}</option>{% endfor %}
+    </select></div>
 
   <div class="form-grid">
     <div class="form-row"><label>Betrag</label>
@@ -996,6 +1000,154 @@ tpl("inbox_attach", r"""{% extends "base" %}
 """)
 
 
+tpl("contacts_list", r"""{% extends "base" %}
+{% block topbar_title %}Kontakte{% endblock %}
+{% block topbar_actions %}
+  <a class="btn primary sm" href="/k/new">+ Neu</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner" style="max-width:860px">
+  <div style="display:flex;gap:var(--sp-2);margin-bottom:var(--sp-4);flex-wrap:wrap">
+    <a class="btn sm {% if not cat_f %}primary{% endif %}" href="/contacts">Alle <span style="opacity:.6">({{contacts|length}})</span></a>
+    {% for c in categories %}
+    <a class="btn sm {% if cat_f==c %}primary{% endif %}" href="/contacts?cat={{c|urlencode}}">{{c}}</a>
+    {% endfor %}
+  </div>
+  {% if contacts %}
+  <table style="width:100%;border-collapse:collapse;font-size:var(--fz-sm)">
+    <thead>
+      <tr style="border-bottom:2px solid var(--c-border)">
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Name</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Kategorie</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">E-Mail</th>
+        <th style="text-align:left;padding:4px 8px;font-size:var(--fz-xs);color:var(--c-ink-mute)">Telefon</th>
+        <th style="padding:4px 8px"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for k in contacts %}
+    <tr style="border-bottom:1px solid var(--c-border-sub)">
+      <td style="padding:6px 8px"><a href="/k/{{k.nid}}">{{k.name or '(kein Name)'}}</a></td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{k.category or '—'}}</td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{k.email or '—'}}</td>
+      <td style="padding:6px 8px;color:var(--c-ink-mute)">{{k.phone or '—'}}</td>
+      <td style="padding:6px 8px;text-align:right">
+        <a class="btn sm" href="/k/{{k.nid}}/edit">✏</a>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty" style="padding:var(--sp-8)">
+    <div class="icon">👤</div>
+    <div class="title">Keine Kontakte</div>
+    <div class="hint">Klicke „+ Neu" um einen Kontakt anzulegen.</div>
+  </div>
+  {% endif %}
+</div></div>
+{% endblock %}
+""")
+
+
+tpl("contact_detail", r"""{% extends "base" %}
+{% block topbar_title %}{{contact.name or contact.nid}}{% endblock %}
+{% block topbar_actions %}
+  <a class="btn sm" href="/k/{{contact.nid}}/edit">✏ Bearbeiten</a>
+  <a class="btn sm" href="/contacts">← Liste</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner">
+  <div class="det-header" style="margin-bottom:var(--sp-4)">
+    <div class="det-title">{{contact.name or '(kein Name)'}}</div>
+    <div class="det-actions">
+      <a class="btn sm" href="/k/{{contact.nid}}/edit">✏ Bearbeiten</a>
+      <form class="il" method="post" action="/k/{{contact.nid}}/delete"
+            onsubmit="return confirm('Kontakt löschen?')">
+        <button class="btn sm danger">Löschen</button>
+      </form>
+    </div>
+  </div>
+  <div class="det-grid">
+    {% for label, val in [
+      ('Kategorie', contact.category), ('E-Mail', contact.email),
+      ('Telefon', contact.phone), ('Website', contact.website),
+      ('Adresse', contact.address),
+    ] %}
+    {% if val %}
+    <div class="det-field">
+      <div class="det-label">{{label}}</div>
+      <div class="det-value">{{val}}</div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% if contact.notes %}
+  <div class="det-section">
+    <div class="det-sec-title">Notizen</div>
+    <div style="font-size:var(--fz-sm);white-space:pre-wrap">{{contact.notes}}</div>
+  </div>
+  {% endif %}
+  {% if docs %}
+  <div class="det-section">
+    <div class="det-sec-title">Dokumente ({{docs|length}})</div>
+    <table class="det-table">
+      {% for d in docs %}
+      <tr>
+        <td class="nid">{{d.nid}}</td>
+        <td><a href="/?doc={{d.nid}}">{{d.title or '(kein Titel)'}}</a></td>
+        <td style="color:var(--c-ink-mute);font-size:var(--fz-xs)">{{d.doc_date or ''}}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+  <div class="det-footer">{{contact.nid}} · Erstellt {{(contact.created_at or '')[:10]}}</div>
+</div></div>
+{% endblock %}
+""")
+
+
+tpl("contact_form", r"""{% extends "base" %}
+{% block topbar_title %}{% if contact %}Kontakt bearbeiten{% else %}Neuer Kontakt{% endif %}{% endblock %}
+{% block topbar_actions %}
+  <a class="btn sm" href="{% if contact %}/k/{{contact.nid}}{% else %}/contacts{% endif %}">Abbrechen</a>
+{% endblock %}
+{% block main %}
+<div class="form-page"><div class="form-inner">
+<form method="post">
+  <div class="form-row">
+    <label>Name *</label>
+    <input name="name" value="{{ (contact.name if contact else '') or '' }}" required autofocus>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Kategorie</label>
+      <select name="category"><option value="">—</option>
+      {% for c in categories %}<option value="{{c}}" {% if contact and contact.category==c %}selected{% endif %}>{{c}}</option>{% endfor %}
+      </select></div>
+    <div class="form-row"><label>E-Mail</label>
+      <input name="email" value="{{ (contact.email if contact else '') or '' }}"></div>
+  </div>
+  <div class="form-grid">
+    <div class="form-row"><label>Telefon</label>
+      <input name="phone" value="{{ (contact.phone if contact else '') or '' }}"></div>
+    <div class="form-row"><label>Website</label>
+      <input name="website" value="{{ (contact.website if contact else '') or '' }}"></div>
+  </div>
+  <div class="form-row"><label>Adresse</label>
+    <textarea name="address" style="min-height:60px">{{ (contact.address if contact else '') or '' }}</textarea></div>
+  <div class="form-row"><label>Notizen</label>
+    <textarea name="notes">{{ (contact.notes if contact else '') or '' }}</textarea></div>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">{% if contact %}Speichern{% else %}Anlegen{% endif %}</button>
+    <a class="btn" href="{% if contact %}/k/{{contact.nid}}{% else %}/contacts{% endif %}">Abbrechen</a>
+  </div>
+</form>
+</div></div>
+{% endblock %}
+""")
+
+
 def nav_counts():
     db = get_db()
     ic = len(inbox_files())
@@ -1105,7 +1257,7 @@ def drop():
 # ---------------------------------------------------------------------------
 
 DOC_FORM_FIELDS = (
-    "title", "issuer", "category", "doc_type", "doc_date",
+    "title", "issuer", "issuer_ref", "category", "doc_type", "doc_date",
     "amount", "currency", "due_date", "expires_at", "cancellable_until",
     "language", "asn", "tags", "notes",
 )
@@ -1122,12 +1274,24 @@ def _unique_vault_name(filename):
     return f"{name}_{i}{ext}"
 
 
+def _all_contacts():
+    db = get_db()
+    if "contacts" not in db.list_collections():
+        return []
+    return [
+        {"nid": nid, "name": d.get("name", nid)}
+        for nid, d in sorted(db.list_nodes("contacts").items(),
+                             key=lambda x: x[1].get("name", "").lower())
+    ]
+
+
 def _form_context(doc=None, attached_file=""):
     return dict(
         nav="workspace", q="", doc=doc, attached_file=attached_file,
         categories=DOC_CATEGORIES, types=DOC_TYPES,
         currencies=CURRENCIES, languages=LANGUAGES,
         doc_statuses=list(DOC_STATUS.keys()),
+        contacts=_all_contacts(),
         **nav_counts(),
     )
 
@@ -1335,6 +1499,101 @@ def inbox_attach_post():
     db.update_node("documents", target_nid, {"vault_file": vault_file, "changed_at": now()})
     flash(f"Datei an {target_nid} angehängt.")
     return redirect(url_for("workspace", doc=target_nid))
+
+
+# ---------------------------------------------------------------------------
+# CONTACTS
+# ---------------------------------------------------------------------------
+
+CONTACT_FORM_FIELDS = ("name", "category", "email", "phone", "address", "website", "notes")
+
+
+def _contact_form_ctx(contact=None):
+    return dict(nav="contacts", contact=contact,
+                categories=CONTACT_CATEGORIES, **nav_counts())
+
+
+@app.route("/contacts")
+def contacts_list():
+    db = get_db()
+    cat_f = request.args.get("cat", "").strip()
+    raw = db.list_nodes("contacts") if "contacts" in db.list_collections() else {}
+    contacts = []
+    for nid, d in sorted(raw.items(), key=lambda x: x[1].get("name", "").lower()):
+        if cat_f and d.get("category") != cat_f:
+            continue
+        row = dict(d); row["nid"] = nid
+        contacts.append(row)
+    return render_template("contacts_list",
+        nav="contacts", contacts=contacts, cat_f=cat_f,
+        categories=CONTACT_CATEGORIES, **nav_counts())
+
+
+@app.route("/k/<nid>")
+def contact_detail(nid):
+    db = get_db()
+    contact = db.get_node(f"contacts/{nid}")
+    if not contact:
+        flash("Kontakt nicht gefunden.", "err")
+        return redirect(url_for("contacts_list"))
+    contact["nid"] = nid
+    docs = []
+    if "documents" in db.list_collections():
+        for dnid, d in db.list_nodes("documents").items():
+            if d.get("issuer_ref") == nid:
+                row = dict(d); row["nid"] = dnid
+                docs.append(row)
+    return render_template("contact_detail",
+        nav="contacts", contact=contact, docs=docs, **nav_counts())
+
+
+@app.route("/k/new", methods=["GET", "POST"])
+def contact_new():
+    db = get_db()
+    if request.method == "POST":
+        data = {}
+        for k in CONTACT_FORM_FIELDS:
+            v = request.form.get(k, "").strip()
+            if v:
+                data[k] = v
+        if not data.get("name"):
+            flash("Name ist erforderlich.", "err")
+            return redirect(url_for("contact_new"))
+        data["created_at"] = now()
+        data["changed_at"] = now()
+        nid = db.next_id("contacts", prefix="KON-", padding=5)
+        db.create_node("contacts", nid, data)
+        flash(f"{nid} angelegt.")
+        return redirect(url_for("contact_detail", nid=nid))
+    return render_template("contact_form", **_contact_form_ctx())
+
+
+@app.route("/k/<nid>/edit", methods=["GET", "POST"])
+def contact_edit(nid):
+    db = get_db()
+    contact = db.get_node(f"contacts/{nid}")
+    if not contact:
+        flash("Kontakt nicht gefunden.", "err")
+        return redirect(url_for("contacts_list"))
+    if request.method == "POST":
+        upd = {}
+        for k in CONTACT_FORM_FIELDS:
+            upd[k] = request.form.get(k, "").strip()
+        upd["changed_at"] = now()
+        db.update_node("contacts", nid, upd)
+        flash(f"{nid} gespeichert.")
+        return redirect(url_for("contact_detail", nid=nid))
+    contact["nid"] = nid
+    return render_template("contact_form", **_contact_form_ctx(contact=contact))
+
+
+@app.route("/k/<nid>/delete", methods=["POST"])
+def contact_delete(nid):
+    db = get_db()
+    if db.get_node(f"contacts/{nid}"):
+        db.soft_delete("contacts", nid)
+        flash(f"{nid} gelöscht.")
+    return redirect(url_for("contacts_list"))
 
 
 @app.route("/vault/<path:filename>")
