@@ -875,6 +875,59 @@ tpl("doc_form", r"""{% extends "base" %}
     <a class="btn" href="{% if doc %}/?doc={{doc.nid}}{% else %}/{% endif %}">Abbrechen</a>
   </div>
 </form>
+
+{% if doc %}
+<div class="form-section" style="margin-top:var(--sp-5)">
+  <h3>Verknüpfte Dokumente</h3>
+  {% if current_links %}
+  <table class="det-table" style="margin-bottom:var(--sp-3)">
+    {% for l in current_links %}
+    <tr>
+      <td class="nid">{{l.nid}}{% if l.dir=='in' %} <span class="dir-in">←</span>{% endif %}</td>
+      <td>{{l.title or '(kein Titel)'}}</td>
+      <td class="act">
+        <form class="il" method="post" action="/link/{{l.eid}}/delete?back=/d/{{doc.nid}}/edit"
+              onsubmit="return confirm('Verknüpfung entfernen?')">
+          <button class="btn sm danger">✕</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if link_targets %}
+  <form method="post" action="/d/{{doc.nid}}/links/bulk">
+    <div class="form-row">
+      <label>Dokument suchen und hinzufügen</label>
+      <input type="text" id="link-search" placeholder="Titel, ID, Aussteller…" autocomplete="off">
+    </div>
+    <div id="link-list" style="max-height:260px;overflow-y:auto;margin-bottom:var(--sp-3)">
+      {% for t in link_targets %}
+      <label class="att-row" data-s="{{(t.nid ~ ' ' ~ t.title)|lower}}">
+        <input type="checkbox" name="link_target" value="{{t.nid}}">
+        <span class="att-nid">{{t.nid}}</span>
+        <span class="att-title">{{t.title or '(kein Titel)'}}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <button class="btn sm primary" type="submit">Ausgewählte verknüpfen</button>
+  </form>
+  {% else %}
+  <p style="font-size:var(--fz-sm);color:var(--c-ink-mute)">Keine weiteren Dokumente verfügbar.</p>
+  {% endif %}
+</div>
+<script>
+(function(){
+  var inp = document.getElementById('link-search');
+  if (!inp) return;
+  var rows = document.querySelectorAll('#link-list .att-row');
+  inp.addEventListener('input', function(){
+    var q = inp.value.toLowerCase();
+    rows.forEach(function(r){ r.classList.toggle('hidden', q !== '' && r.dataset.s.indexOf(q) === -1); });
+  });
+})();
+</script>
+{% endif %}
 </div></div>
 {% endblock %}
 """)
@@ -1139,7 +1192,31 @@ def doc_edit(nid):
         flash(f"{nid} gespeichert.")
         return redirect(url_for("workspace", doc=nid))
     doc["nid"] = nid
-    return render_template("doc_form", **_form_context(doc=doc))
+    current_links, link_targets = [], []
+    if "documents" in db.list_collections():
+        all_docs = db.list_nodes("documents")
+        ref = f"documents/{nid}"
+        linked_nids = set()
+        for eid, e in db.get_connected_edges(ref, direction="out", rel_type="doc_link"):
+            tnid = e["target"].split("/", 1)[-1]
+            t = all_docs.get(tnid)
+            if t:
+                current_links.append({"eid": eid, "nid": tnid, "title": t.get("title", ""), "dir": "out"})
+                linked_nids.add(tnid)
+        for eid, e in db.get_connected_edges(ref, direction="in", rel_type="doc_link"):
+            snid = e["source"].split("/", 1)[-1]
+            s = all_docs.get(snid)
+            if s:
+                current_links.append({"eid": eid, "nid": snid, "title": s.get("title", ""), "dir": "in"})
+                linked_nids.add(snid)
+        for dnid, d in sorted(all_docs.items()):
+            if dnid == nid or dnid in linked_nids:
+                continue
+            link_targets.append({"nid": dnid, "title": d.get("title", "")})
+    return render_template("doc_form",
+        **_form_context(doc=doc),
+        current_links=current_links,
+        link_targets=link_targets)
 
 
 @app.route("/d/<nid>/delete", methods=["POST"])
@@ -1176,6 +1253,34 @@ def doc_link(nid):
                    meta={"linked_at": now(), "linked_by": DEFAULT_USER})
     flash(f"Mit {target} verknüpft.")
     return redirect(back)
+
+
+@app.route("/d/<nid>/links/bulk", methods=["POST"])
+def doc_links_bulk(nid):
+    db = get_db()
+    src = f"documents/{nid}"
+    if not db.get_node(src):
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("workspace"))
+    targets = request.form.getlist("link_target")
+    added = 0
+    for target in targets:
+        if not target or target == nid:
+            continue
+        tgt = f"documents/{target}"
+        if not db.get_node(tgt):
+            continue
+        already = (
+            [e for _, e in db.get_connected_edges(src, direction="out", rel_type="doc_link") if e["target"] == tgt] +
+            [e for _, e in db.get_connected_edges(src, direction="in",  rel_type="doc_link") if e["source"] == tgt]
+        )
+        if already:
+            continue
+        db.create_edge(src, tgt, "doc_link", meta={"linked_at": now(), "linked_by": DEFAULT_USER})
+        added += 1
+    if added:
+        flash(f"{added} Verknüpfung(en) hinzugefügt.")
+    return redirect(url_for("doc_edit", nid=nid))
 
 
 @app.route("/link/<edge_id>/delete", methods=["POST"])
