@@ -1,56 +1,75 @@
 """
 =============================================================================
-FLATGRAPH v2 - File-based JSON Graph Database
+FlatGraphDB — Lightweight, file-based Graph Database for Python
 =============================================================================
-Eine leichtgewichtige, eingebettete Graph-Datenbank fuer Python.
+A single-module embedded graph database. No external dependencies.
 
-Architektur:
-  /root/
+Architecture:
+  root_dir/
     datenbank/
-      nodes/      -> Objekte pro Collection (z.B. dokumente.json)
-      edges/      -> Beziehungen (objektlinks.json)
-    vault/        -> Aktive Binaerdateien / Assets
-    vault_archive/-> Quarantaene fuer geloeschte Assets
+      nodes/      -> one JSON file per collection
+      edges/      -> one JSON file per edge type
+    vault/        -> binary assets (PDFs, images, etc.)
+    vault_archive/-> quarantine for deleted assets
 
 Features:
-  - Graph-Pattern: Nodes referenzieren sich nie direkt, nur ueber Edges
-  - Soft-Delete mit 2-Phasen Garbage Collector (idempotent)
-  - Cascade-Delete am Edge: abhaengige Ziel-Nodes sterben mit der Quelle
-  - Atomic Writes via temp+rename
-  - Optionales Schema pro Collection
-  - RAM-Cache fuer schnelle Reads
-  - Traversal ueber mehrere Hops
-  - Autoincrement-Helper fuer ID-Vergabe
+  - Graph model: nodes reference each other only via edges (no direct FK)
+  - Soft-delete with a two-phase, idempotent Garbage Collector
+  - Cascade-delete on edge: target node dies with source node
+  - Atomic writes via temp+rename
+  - Optional schema validation per collection
+  - RAM cache for fast reads; lazy field index for fast find_nodes()
+  - Breadth-first multi-hop traversal
+  - Auto-increment ID helper
+  - Optional transaction context manager (batch writes + rollback)
+  - Optional audit trail (audit=True)
+  - Optional webhook hooks (webhooks=[...])
 =============================================================================
 """
 
+import contextlib
 import copy
 import hashlib
-import os
 import json
+import os
 import re
 import shutil
+import sys
+import threading
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 
-_RESERVED_EDGE_FIELDS = {"quelle", "ziel", "typ", "erstellt_am", "_cascade_delete"}
+_RESERVED_EDGE_FIELDS  = {"source", "target", "type", "created_at", "_cascade_delete"}
+_INTERNAL_COLLECTIONS  = {"_audit_log"}
 
 
 # =============================================================================
-# HAUPT-ENGINE
+# MAIN ENGINE
 # =============================================================================
 
 class FlatGraphDB:
-    def __init__(self, root_dir, schemas=None):
+    def __init__(self, root_dir, schemas=None, file_lock=False, audit=False, webhooks=None):
         """
-        Initialisiert die Graph-Engine.
-        :param root_dir: Basisverzeichnis der Datenbank.
-        :param schemas: Optional. Dict {collection_name: {field: expected_type}}.
+        Initialize the graph engine.
+
+        :param root_dir:   Root directory of the database (created if it does not exist).
+        :param schemas:    Optional dict {collection_name: {field: expected_type}} for
+                           type-checked collections.
+        :param file_lock:  Enable file-level locking for multi-process safety (fcntl/msvcrt).
+        :param audit:      Automatically write audit entries to _audit_log on every write.
+        :param webhooks:   List of hook configs fired on node events (non-blocking HTTP POST):
+                           [{"url": "https://...", "events": "*", "collections": "*"}]
+                           events / collections: "*" = all, or a list e.g. ["create_node"]
         """
         self.root = root_dir
         self.schemas = schemas or {}
+        self.file_lock = file_lock
+        self.audit = audit
+        self.webhooks = webhooks or []
+        self._lock_path = os.path.join(root_dir, ".flatgraph.lock")
+        self._audit_writing = False  # prevents recursive audit entries
 
-        # Verzeichnisstruktur
         self.dirs = {
             "nodes": os.path.join(root_dir, "datenbank", "nodes"),
             "edges": os.path.join(root_dir, "datenbank", "edges"),
@@ -61,51 +80,74 @@ class FlatGraphDB:
         for path in self.dirs.values():
             os.makedirs(path, exist_ok=True)
 
-        # RAM-Cache: edges = {rel_type: {edge_id: edge_data}}
+        # RAM cache: edges = {rel_type: {edge_id: edge_data}}
         self._cache = {"nodes": {}, "edges": {}}
-        self._edge_type_index = {}  # {edge_id: rel_type} - RAM-only Reverse-Index
-        self._index_cache = {}      # {collection: {field: {value_lower: [node_ids]}}}
-        self._dirty_index = set()   # Collections die nach einem Write neu indexiert werden muessen
+        self._edge_type_index = {}   # {edge_id: rel_type} — reverse index, RAM only
+        self._index_cache = {}       # {collection: {field: {value_lower: [node_ids]}}}
+        self._dirty_index  = set()   # collections that need re-indexing after a write
+        self._dirty_nodes  = {}      # {collection: set(node_ids)} — pending temp-file writes
+        self._dirty_edges  = set()   # rel_types with pending edge writes
+        self._transaction_depth = 0  # >0 = active transaction, writes are buffered
         self._initialize_cache()
 
     # ------------------------------------------------------------------
-    # Interne Helfer
+    # Internal helpers
     # ------------------------------------------------------------------
 
     def _edges_file(self, rel_type):
-        """Pfad zur Edge-Datei fuer einen rel_type."""
         safe = rel_type.replace("/", "_").replace("\\", "_")
         return os.path.join(self.dirs["edges"], f"{safe}.json")
 
     def _persist_edge_type(self, rel_type):
-        """Schreibt einen Edge-Typ atomar auf Disk."""
-        self._save_json_atomic(
-            self._edges_file(rel_type),
-            self._cache["edges"].get(rel_type, {})
-        )
+        """Write an edge type to disk — or buffer it if inside a transaction."""
+        if self._transaction_depth > 0:
+            self._dirty_edges.add(rel_type)
+            return
+        self._dirty_edges.discard(rel_type)
+        self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+
+    @staticmethod
+    def _translate_legacy_edge(edge):
+        """Translate v0.9 German field names to English in-place. Returns the edge."""
+        if "quelle" in edge:
+            edge["source"]     = edge.pop("quelle")
+            edge["target"]     = edge.pop("ziel",  edge.get("target", ""))
+            edge["type"]       = edge.pop("typ",   edge.get("type",   "_unknown"))
+            edge["created_at"] = edge.pop("erstellt_am", edge.get("created_at", ""))
+        return edge
 
     def _migrate_legacy_edges(self):
-        """Migriert objektlinks.json -> eine Datei pro rel_type."""
+        """Migrate old single-file objektlinks.json to per-type files."""
         legacy = os.path.join(self.dirs["edges"], "objektlinks.json")
         if not os.path.exists(legacy):
             return
         all_edges = self._load_json_from_disk(legacy)
         by_type = {}
         for edge_id, edge_data in all_edges.items():
-            t = edge_data.get("typ", "_unknown")
+            self._translate_legacy_edge(edge_data)
+            t = edge_data.get("type", "_unknown")
             by_type.setdefault(t, {})[edge_id] = edge_data
         for t, edges in by_type.items():
             self._save_json_atomic(self._edges_file(t), edges)
         os.remove(legacy)
 
     def _initialize_cache(self):
-        """Laedt alle JSON-Dateien einmalig in den RAM."""
+        """Load all JSON files into RAM once. Temp-files are merged on top of the base state."""
         if os.path.exists(self.dirs["nodes"]):
             for filename in os.listdir(self.dirs["nodes"]):
-                if filename.endswith(".json"):
-                    collection_name = filename.replace(".json", "")
-                    path = os.path.join(self.dirs["nodes"], filename)
-                    self._cache["nodes"][collection_name] = self._load_json_from_disk(path)
+                if filename.endswith("_temp.json") or not filename.endswith(".json"):
+                    continue
+                collection_name = filename[:-5]
+                path = os.path.join(self.dirs["nodes"], filename)
+                self._cache["nodes"][collection_name] = self._load_json_from_disk(path)
+
+            # Merge temp-files on top (pending writes from a previous session)
+            for filename in os.listdir(self.dirs["nodes"]):
+                if not filename.endswith("_temp.json"):
+                    continue
+                collection_name = filename[: -len("_temp.json")]
+                temp_data = self._load_json_from_disk(os.path.join(self.dirs["nodes"], filename))
+                self._cache["nodes"].setdefault(collection_name, {}).update(temp_data)
 
         self._migrate_legacy_edges()
 
@@ -115,53 +157,166 @@ class FlatGraphDB:
                     rel_type = filename[:-5]
                     path = os.path.join(self.dirs["edges"], filename)
                     edges = self._load_json_from_disk(path)
+                    # Translate any leftover v0.9 German field names
+                    for edge in edges.values():
+                        self._translate_legacy_edge(edge)
                     self._cache["edges"][rel_type] = edges
                     for edge_id in edges:
                         self._edge_type_index[edge_id] = rel_type
 
     def _load_json_from_disk(self, filepath):
-        """Laedt JSON-Datei vom Disk. Fehlende Datei = leer; beschaedigte Datei = Ausnahme."""
+        """Load a JSON file from disk. Missing file → empty dict. Corrupted file → RuntimeError."""
         if not os.path.exists(filepath):
             return {}
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Datei '{filepath}' ist kein gueltiges JSON: {e}") from e
+            raise RuntimeError(f"File '{filepath}' is not valid JSON: {e}") from e
         except IOError as e:
-            raise RuntimeError(f"Datei '{filepath}' konnte nicht gelesen werden: {e}") from e
+            raise RuntimeError(f"Could not read file '{filepath}': {e}") from e
 
     def _save_json_atomic(self, filepath, data):
-        """Atomic Write: erst in .tmp schreiben, dann os.replace()."""
+        """Atomic write: write to .tmp first, then os.replace()."""
         temp_file = filepath + ".tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         os.replace(temp_file, filepath)
 
+    def _temp_file(self, collection_name):
+        return os.path.join(self.dirs["nodes"], f"{collection_name}_temp.json")
+
+    @contextlib.contextmanager
+    def _acquire_lock(self):
+        """File lock for multi-process safety (only active when file_lock=True)."""
+        if not self.file_lock:
+            yield
+            return
+        lock_fh = open(self._lock_path, "a", encoding="utf-8")
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_fh, fcntl.LOCK_EX)
+            yield
+        finally:
+            if sys.platform == "win32":
+                import msvcrt
+                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            lock_fh.close()
+
+    def _mark_node_dirty(self, collection_name, node_id):
+        self._dirty_nodes.setdefault(collection_name, set()).add(node_id)
+
     def _persist_collection(self, collection_name):
-        """Schreibt eine Node-Collection vom RAM auf Disk."""
+        """Write only changed nodes to the temp-file — or buffer when inside a transaction."""
+        dirty_ids = self._dirty_nodes.get(collection_name, set())
+        if not dirty_ids:
+            return
+        if self._transaction_depth > 0:
+            return  # buffered until commit
+        self._dirty_nodes.pop(collection_name, None)
+        temp_path = self._temp_file(collection_name)
+        temp_data = self._load_json_from_disk(temp_path)
+        col_data = self._cache["nodes"].get(collection_name, {})
+        for nid in dirty_ids:
+            if nid in col_data:
+                temp_data[nid] = col_data[nid]
+            else:
+                temp_data.pop(nid, None)
+        with self._acquire_lock():
+            self._save_json_atomic(temp_path, temp_data)
+
+    def _flush_pending_writes(self):
+        """Flush all buffered node and edge writes to disk (transaction commit)."""
+        for collection_name in list(self._dirty_nodes.keys()):
+            dirty_ids = self._dirty_nodes.pop(collection_name, set())
+            if not dirty_ids:
+                continue
+            temp_path = self._temp_file(collection_name)
+            temp_data = self._load_json_from_disk(temp_path)
+            col_data = self._cache["nodes"].get(collection_name, {})
+            for nid in dirty_ids:
+                if nid in col_data:
+                    temp_data[nid] = col_data[nid]
+                else:
+                    temp_data.pop(nid, None)
+            with self._acquire_lock():
+                self._save_json_atomic(temp_path, temp_data)
+        for rel_type in list(self._dirty_edges):
+            self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+        self._dirty_edges.clear()
+
+    def flush(self):
+        """Write all buffered writes to disk immediately. Useful outside transaction()."""
+        self._flush_pending_writes()
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """
+        Atomic transaction: all writes are buffered in RAM and flushed to disk as a
+        batch on exit. On exception: full rollback. Nested transactions join the outer one.
+        """
+        if self._transaction_depth > 0:
+            self._transaction_depth += 1
+            try:
+                yield
+            finally:
+                self._transaction_depth -= 1
+            return
+
+        # Snapshot for rollback
+        snap_nodes    = copy.deepcopy(self._cache["nodes"])
+        snap_edges    = copy.deepcopy(self._cache["edges"])
+        snap_edge_idx = copy.deepcopy(self._edge_type_index)
+
+        self._transaction_depth = 1
+        try:
+            yield
+            self._transaction_depth = 0
+            self._flush_pending_writes()
+        except Exception:
+            self._transaction_depth = 0
+            self._cache["nodes"]   = snap_nodes
+            self._cache["edges"]   = snap_edges
+            self._edge_type_index  = snap_edge_idx
+            self._dirty_nodes.clear()
+            self._dirty_edges.clear()
+            self._dirty_index.update(snap_nodes.keys())
+            raise
+
+    def _persist_collection_full(self, collection_name):
+        """Write the full collection to the base file and remove the temp-file (GC compaction)."""
         path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
         self._save_json_atomic(path, self._cache["nodes"].get(collection_name, {}))
+        temp_path = self._temp_file(collection_name)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        self._dirty_nodes.pop(collection_name, None)
 
     def _validate_node(self, collection_name, data):
-        """Prueft Daten gegen das Schema, falls eines definiert ist."""
+        """Validate data against the schema for this collection (if one is defined)."""
         if collection_name not in self.schemas:
             return
         schema = self.schemas[collection_name]
         for field, expected_type in schema.items():
             if field not in data:
-                raise ValueError(f"Pflichtfeld '{field}' fehlt in Collection '{collection_name}'.")
+                raise ValueError(f"Required field '{field}' missing in collection '{collection_name}'.")
             if not isinstance(data[field], expected_type):
                 raise TypeError(
-                    f"Feld '{field}' muss vom Typ {expected_type.__name__} sein."
+                    f"Field '{field}' must be of type {expected_type.__name__}."
                 )
 
     def _is_deleted(self, node_data):
-        """Prueft, ob ein Node soft-deleted ist."""
         return node_data is not None and "_deletion_flag" in node_data
 
     # ------------------------------------------------------------------
-    # Interne Helfer - Feldindex
+    # Internal helpers — field index
     # ------------------------------------------------------------------
 
     def _index_file(self, collection):
@@ -176,7 +331,7 @@ class FlatGraphDB:
         self._index_cache.pop(collection, None)
 
     def _load_index_from_disk(self, collection):
-        """Laedt Index vom Disk. Gibt None zurueck wenn fehlend oder veraltet."""
+        """Load field index from disk. Returns None if missing or stale (checksum mismatch)."""
         path = self._index_file(collection)
         if not os.path.exists(path):
             return None
@@ -189,7 +344,6 @@ class FlatGraphDB:
         return {k: v for k, v in data.items() if k != "_meta"}
 
     def _build_field_index(self, collection, field):
-        """Baut den Index fuer ein einzelnes Feld aus dem Cache."""
         idx = {}
         for node_id, data in self._cache["nodes"].get(collection, {}).items():
             if self._is_deleted(data):
@@ -205,7 +359,7 @@ class FlatGraphDB:
         self._save_json_atomic(self._index_file(collection), data)
 
     def _get_field_index(self, collection, field):
-        """Gibt den Index fuer ein Feld zurueck. Baut ihn bei Bedarf auf."""
+        """Return the index for a field, building and persisting it lazily if needed."""
         self._dirty_index.discard(collection)
 
         if collection in self._index_cache and field in self._index_cache[collection]:
@@ -229,9 +383,9 @@ class FlatGraphDB:
 
     def create_node(self, collection_name, node_id, data):
         """
-        Erstellt einen Knoten.
-        :return: Node-Referenz als String "collection/id"
-        :raises KeyError: wenn node_id in dieser Collection bereits existiert
+        Create a node.
+        :return: node reference as string "collection/id"
+        :raises KeyError: if node_id already exists in this collection
         """
         self._validate_node(collection_name, data)
 
@@ -240,19 +394,22 @@ class FlatGraphDB:
 
         if node_id in self._cache["nodes"][collection_name]:
             raise KeyError(
-                f"Node '{node_id}' existiert bereits in Collection '{collection_name}'. "
-                f"update_node() verwenden um Felder zu aendern."
+                f"Node '{node_id}' already exists in collection '{collection_name}'. "
+                f"Use update_node() to modify existing nodes."
             )
 
         self._cache["nodes"][collection_name][node_id] = copy.deepcopy(data)
+        self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
+        self._log_audit("create", collection_name, node_id)
+        self._fire_hooks("create_node", collection_name, node_id)
         return f"{collection_name}/{node_id}"
 
     def get_node(self, node_ref):
         """
-        Liest einen Knoten aus dem RAM-Cache.
-        Gibt None zurueck, wenn Node nicht existiert oder soft-deleted ist.
+        Read a node from the RAM cache.
+        Returns None if the node does not exist or is soft-deleted.
         """
         try:
             col, n_id = node_ref.split("/", 1)
@@ -266,8 +423,8 @@ class FlatGraphDB:
 
     def get_node_raw(self, node_ref):
         """
-        Wie get_node, aber zeigt auch soft-deleted Objekte.
-        Nuetzlich fuer Maintenance / Admin-Views.
+        Like get_node, but also returns soft-deleted nodes.
+        Useful for maintenance / admin views.
         """
         try:
             col, n_id = node_ref.split("/", 1)
@@ -278,33 +435,38 @@ class FlatGraphDB:
 
     def update_node(self, collection_name, node_id, update_data):
         """
-        Aktualisiert Felder eines bestehenden Knotens.
-        Validiert den Gesamtzustand gegen das Schema (falls vorhanden).
+        Update fields of an existing node.
+        Validates the merged state against the schema (if one is defined).
         """
         col_cache = self._cache["nodes"].get(collection_name, {})
         if node_id not in col_cache:
             return False
 
-        # Simulierter Merge fuer Schema-Check
+        # Simulate merge to check schema before applying
         merged = {**col_cache[node_id], **update_data}
-        # Interne Felder wie _deletion_flag sollen Schema nicht brechen
+        # Internal fields like _deletion_flag must not break schema validation
         schema_check_data = {k: v for k, v in merged.items() if not k.startswith("_")}
         try:
             self._validate_node(collection_name, schema_check_data)
         except (ValueError, TypeError):
-            # Bei reinen Internal-Flag-Updates (soft_delete) kein Schema-Check
+            # Pure internal-flag updates (soft_delete) skip schema check
             if not all(k.startswith("_") for k in update_data):
                 raise
 
         col_cache[node_id].update(update_data)
+        self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
+        public_fields = {k: v for k, v in update_data.items() if not k.startswith("_")}
+        if public_fields:
+            self._log_audit("update", collection_name, node_id, str(list(public_fields.keys())))
+            self._fire_hooks("update_node", collection_name, node_id)
         return True
 
     def list_nodes(self, collection_name, include_deleted=False):
         """
-        Gibt alle Nodes einer Collection zurueck als Dict {node_id: data}.
-        Standardmaessig ohne soft-deleted Eintraege.
+        Return all nodes of a collection as dict {node_id: data}.
+        Soft-deleted entries are excluded by default.
         """
         col = self._cache["nodes"].get(collection_name, {})
         if include_deleted:
@@ -312,18 +474,73 @@ class FlatGraphDB:
         return {nid: copy.deepcopy(data) for nid, data in col.items() if not self._is_deleted(data)}
 
     def list_collections(self):
-        """Gibt Namen aller bekannten Node-Collections zurueck."""
-        return list(self._cache["nodes"].keys())
+        """Return names of all known node collections (internal collections excluded)."""
+        return [c for c in self._cache["nodes"] if c not in _INTERNAL_COLLECTIONS]
+
+    def _log_audit(self, action, collection, node_id, details=None):
+        """Write an audit entry to _audit_log (only when audit=True)."""
+        if not self.audit or self._audit_writing:
+            return
+        if collection in _INTERNAL_COLLECTIONS:
+            return
+        self._audit_writing = True
+        try:
+            entry_id = uuid.uuid4().hex
+            entry = {
+                "ref":        f"{collection}/{node_id}",
+                "action":     action,
+                "changed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if details:
+                entry["details"] = details
+            if "_audit_log" not in self._cache["nodes"]:
+                self._cache["nodes"]["_audit_log"] = {}
+            self._cache["nodes"]["_audit_log"][entry_id] = entry
+            self._mark_node_dirty("_audit_log", entry_id)
+            self._persist_collection("_audit_log")
+        finally:
+            self._audit_writing = False
+
+    def _fire_hooks(self, event, collection, node_id):
+        """Fire non-blocking HTTP POST to all matching webhook URLs. Errors are silently ignored."""
+        if not self.webhooks or collection in _INTERNAL_COLLECTIONS:
+            return
+        payload = json.dumps({
+            "event":      event,
+            "collection": collection,
+            "node_id":    node_id,
+            "ref":        f"{collection}/{node_id}",
+            "timestamp":  datetime.now(timezone.utc).isoformat(),
+        }).encode()
+        for hook in self.webhooks:
+            events      = hook.get("events", "*")
+            collections = hook.get("collections", "*")
+            if events != "*" and event not in events:
+                continue
+            if collections != "*" and collection not in collections:
+                continue
+            url = hook.get("url", "")
+            if not url:
+                continue
+            def _send(u=url, p=payload):
+                try:
+                    req = urllib.request.Request(
+                        u, data=p, headers={"Content-Type": "application/json"}, method="POST"
+                    )
+                    urllib.request.urlopen(req, timeout=3)
+                except Exception:
+                    pass
+            threading.Thread(target=_send, daemon=True).start()
 
     def find_nodes(self, collection_name, match):
         """
-        Sucht Nodes nach Feldinhalten. Unterstuetzt drei Modi pro Feld:
+        Search nodes by field values. Supports three matching modes per field:
 
-          Exakt/Substring  {"title": "trocken"}      -> case-insensitive Substring
-          Wildcard         {"title": "LH*Trocken*"}   -> * als Platzhalter
-          Praedikat        {"title": lambda v: ...}   -> freie Logik, linearer Scan
+          Substring   {"title": "pump"}           -> case-insensitive substring
+          Wildcard    {"title": "LH*Pump*"}        -> * as wildcard
+          Predicate   {"title": lambda v: ...}    -> arbitrary logic, linear scan
 
-        Mehrere Felder werden mit AND verknuepft.
+        Multiple fields are AND-combined.
         :return: {node_id: node_data}
         """
         if not match:
@@ -365,12 +582,12 @@ class FlatGraphDB:
 
     def next_id(self, collection_name, prefix="", padding=0):
         """
-        Ermittelt die naechste freie ID in einer Collection.
-        Scannt bestehende IDs mit dem Prefix und findet das Maximum der numerischen Suffixe.
+        Return the next available ID in a collection.
+        Scans existing IDs with the given prefix and returns max+1.
 
-        :param collection_name: Collection in der gesucht wird
-        :param prefix: ID-Praefix, z.B. 'DOC-' oder 'EQ-'
-        :param padding: Zero-Padding der Nummer, z.B. 4 -> 'DOC-0001'
+        :param collection_name: collection to scan
+        :param prefix: ID prefix, e.g. 'DOC-' or 'EQ-'
+        :param padding: zero-pad the number, e.g. 4 → 'DOC-0001'
         :return: Neue ID als String
 
         Beispiel:
@@ -395,23 +612,30 @@ class FlatGraphDB:
         return f"{prefix}{next_num}"
 
     def soft_delete(self, collection_name, node_id, keep_asset=True):
-        """Markiert einen Knoten fuer den Garbage Collector."""
-        return self.update_node(collection_name, node_id, {
+        """Mark a node for deletion by the garbage collector."""
+        result = self.update_node(collection_name, node_id, {
             "_deletion_flag": datetime.now(timezone.utc).isoformat(),
             "_keep_asset": keep_asset,
         })
+        if result:
+            self._log_audit("soft_delete", collection_name, node_id)
+            self._fire_hooks("soft_delete", collection_name, node_id)
+        return result
 
     def restore_node(self, collection_name, node_id):
         """
-        Macht einen Soft-Delete rueckgaengig (solange GC noch nicht lief).
+        Undo a soft-delete (as long as the GC has not yet run).
         """
         col_cache = self._cache["nodes"].get(collection_name, {})
         if node_id not in col_cache:
             return False
         col_cache[node_id].pop("_deletion_flag", None)
         col_cache[node_id].pop("_keep_asset", None)
+        self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
+        self._log_audit("restore", collection_name, node_id)
+        self._fire_hooks("restore_node", collection_name, node_id)
         return True
 
     # ------------------------------------------------------------------
@@ -420,23 +644,23 @@ class FlatGraphDB:
 
     def create_edge(self, source_ref, target_ref, rel_type, meta=None, cascade_delete=False):
         """
-        Erstellt eine gerichtete Verbindung.
-        :param cascade_delete: Wenn True, stirbt der Ziel-Node mit dem Quell-Node.
-                               Verwenden fuer: Logs die zu einem Objekt gehoeren,
-                               Subprozesse die zu einem Hauptprozess gehoeren, etc.
+        Create a directed edge.
+        :param cascade_delete: if True the target node is deleted together with the source.
+                               Use for: logs belonging to an object, sub-processes of a
+                               main process, attached files, etc.
         :return: edge_id
         """
         if self.get_node(source_ref) is None:
-            raise ValueError(f"Quell-Node '{source_ref}' existiert nicht oder ist geloescht.")
+            raise ValueError(f"Source node '{source_ref}' does not exist or is soft-deleted.")
         if self.get_node(target_ref) is None:
-            raise ValueError(f"Ziel-Node '{target_ref}' existiert nicht oder ist geloescht.")
+            raise ValueError(f"Target node '{target_ref}' does not exist or is soft-deleted.")
 
         edge_id = f"link_{uuid.uuid4().hex[:12]}"
         edge_data = {
-            "quelle": source_ref,
-            "ziel": target_ref,
-            "typ": rel_type,
-            "erstellt_am": datetime.now(timezone.utc).isoformat(),
+            "source":     source_ref,
+            "target":     target_ref,
+            "type":       rel_type,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         if cascade_delete:
             edge_data["_cascade_delete"] = True
@@ -450,7 +674,7 @@ class FlatGraphDB:
         return edge_id
 
     def get_edge(self, edge_id):
-        """Liest ein Edge-Objekt."""
+        """Return a copy of the edge with the given ID, or None."""
         rel_type = self._edge_type_index.get(edge_id)
         if rel_type is None:
             return None
@@ -458,7 +682,7 @@ class FlatGraphDB:
         return copy.deepcopy(edge) if edge is not None else None
 
     def delete_edge(self, edge_id):
-        """Loescht eine Kante physisch (Edges haben keinen Soft-Delete)."""
+        """Delete an edge permanently (edges have no soft-delete)."""
         rel_type = self._edge_type_index.get(edge_id)
         if rel_type and edge_id in self._cache["edges"].get(rel_type, {}):
             del self._cache["edges"][rel_type][edge_id]
@@ -469,7 +693,7 @@ class FlatGraphDB:
 
     def list_edges(self, rel_type=None):
         """
-        Gibt alle Edges zurueck, optional gefiltert nach Typ.
+        Return all edges, optionally filtered by type.
         Format: {edge_id: edge_data}
         """
         if rel_type is not None:
@@ -486,12 +710,12 @@ class FlatGraphDB:
     def get_connected(self, node_ref, direction="out", rel_type=None,
                       target_collection=None, include_deleted=False):
         """
-        Findet verknuepfte Knoten-Referenzen.
-        :param direction: 'out' (ausgehend) oder 'in' (eingehend)
-        :param rel_type:  optional Filter nach Beziehungstyp
-        :param target_collection: optional Filter nach Ziel-Collection
-                                  (z.B. 'equipments' gibt nur Refs die mit 'equipments/' beginnen)
-        :param include_deleted: soft-deleted Targets mit einschliessen
+        Find connected node references.
+        :param direction: 'out' (outgoing) or 'in' (incoming)
+        :param rel_type:  optional filter by relationship type
+        :param target_collection: optional filter by target collection
+                                  (e.g. 'equipments' returns only refs starting with 'equipments/')
+        :param include_deleted: include soft-deleted targets
         :return: Liste von Node-Refs
         """
         if rel_type:
@@ -501,18 +725,18 @@ class FlatGraphDB:
 
         results = []
         for edge in (e for b in buckets for e in b):
-            if direction == "out" and edge["quelle"] == node_ref:
-                target = edge["ziel"]
-            elif direction == "in" and edge["ziel"] == node_ref:
-                target = edge["quelle"]
+            if direction == "out" and edge["source"] == node_ref:
+                target = edge["target"]
+            elif direction == "in" and edge["target"] == node_ref:
+                target = edge["source"]
             else:
                 continue
 
-            # Collection-Filter
+            # collection filter
             if target_collection and not target.startswith(f"{target_collection}/"):
                 continue
 
-            # Nicht-existente und soft-deleted Targets herausfiltern
+            # filter out non-existent and soft-deleted targets
             if not include_deleted:
                 raw = self._cache["nodes"].get(
                     target.split("/", 1)[0] if "/" in target else "", {}
@@ -525,7 +749,7 @@ class FlatGraphDB:
 
     def get_connected_edges(self, node_ref, direction="out", rel_type=None):
         """
-        Wie get_connected, aber gibt die vollen Edge-Objekte zurueck (inkl. Metadaten).
+        Like get_connected, but returns the full edge objects (including metadata).
         Format: [(edge_id, edge_data), ...]
         """
         if rel_type:
@@ -536,9 +760,9 @@ class FlatGraphDB:
         results = []
         for _, bucket in buckets:
             for edge_id, edge in bucket.items():
-                if direction == "out" and edge["quelle"] == node_ref:
+                if direction == "out" and edge["source"] == node_ref:
                     results.append((edge_id, copy.deepcopy(edge)))
-                elif direction == "in" and edge["ziel"] == node_ref:
+                elif direction == "in" and edge["target"] == node_ref:
                     results.append((edge_id, copy.deepcopy(edge)))
         return results
 
@@ -546,28 +770,27 @@ class FlatGraphDB:
                  max_depth=None, target_collection=None, include_deleted=False,
                  include_start=False):
         """
-        Multi-Hop Traversal (Breadth-First).
-        Findet alle ueber rel_type erreichbaren Nodes ab start_ref.
+        Multi-hop traversal (breadth-first).
+        Find all nodes reachable from start_ref via rel_type.
 
-        :param start_ref: Startknoten
-        :param rel_type: Filter auf Beziehungstyp (None = alle Typen folgen)
-        :param direction: 'out' folgt Edges vorwaerts, 'in' rueckwaerts
-        :param max_depth: maximale Tiefe (None = unbegrenzt)
-        :param target_collection: optionaler Filter auf Ziel-Collection
-        :param include_start: Startknoten in Ergebnis aufnehmen (default False)
-        :return: Liste von Node-Refs in Besuchsreihenfolge (BFS, ohne Duplikate)
+        :param start_ref: starting node
+        :param rel_type: filter by relationship type (None = follow all types)
+        :param direction: 'out' follows edges forward, 'in' follows backward
+        :param max_depth: maximum depth (None = unlimited)
+        :param target_collection: optional filter by target collection
+        :param include_start: include start node in result (default False)
+        :return: list of node refs in BFS order (no duplicates)
 
         Beispiel:
-            # Alle Subprozesse und Sub-Subprozesse eines Hauptprozesses:
-            db.traverse('processes/PROC-MAIN', rel_type='hat_subprozess')
+            # All sub-processes and sub-sub-processes of a main process:
+            db.traverse('processes/PROC-MAIN', rel_type='has_subprocess')
 
-            # Alle Equipments, die in irgendeinem Unter-Prozess benoetigt werden:
-            subs = db.traverse('processes/PROC-MAIN', rel_type='hat_subprozess')
-            # plus Startknoten
+            # All equipments needed by any sub-process:
+            subs = db.traverse('processes/PROC-MAIN', rel_type='has_subprocess')
             all_procs = [start] + subs
             equipments = set()
             for p in all_procs:
-                equipments.update(db.get_connected(p, 'out', 'benoetigt_equipment'))
+                equipments.update(db.get_connected(p, 'out', 'needs_equipment'))
         """
         visited = {start_ref}
         current_level = [start_ref]
@@ -595,32 +818,32 @@ class FlatGraphDB:
 
     def collect_related(self, start_ref, rel_type_path, direction="out"):
         """
-        Sammelt Nodes entlang einer Beziehungskette verschiedener Typen.
-        Nuetzlich fuer gemischte Traversals wie:
-        Hauptprozess --hat_subprozess--> Subprozesse --benoetigt_equipment--> Equipments
+        Collect nodes along a chain of different relationship types.
+        Useful for mixed traversals like:
+        MainProcess --has_subprocess--> SubProcesses --needs_equipment--> Equipments
 
-        :param rel_type_path: Liste der zu folgenden rel_types pro Ebene
-                              Die letzte Ebene liefert die Ergebnisse.
+        :param rel_type_path: list of rel_types to follow per level;
+                              the last level provides the results.
         :return: Liste von Node-Refs am Ende der Kette (ohne Duplikate)
 
         Beispiel:
-            # Alle Equipments aller Subprozesse (und des Hauptprozesses selbst):
+            # All equipments of all sub-processes (and the main process itself):
             db.collect_related('processes/PROC-MAIN',
-                               ['hat_subprozess', 'benoetigt_equipment'])
+                               ['has_subprocess', 'needs_equipment'])
         """
         if not rel_type_path:
             return []
 
-        # Alle Zwischen-Nodes sammeln (erste bis vorletzte Ebene)
+        # Collect all intermediate nodes (first to second-to-last level)
         current = {start_ref}
         for rel_type in rel_type_path[:-1]:
             next_set = set()
             for node in current:
                 next_set.update(self.get_connected(node, direction, rel_type))
-            # Auch Start-Ebene behalten, falls dort direkte Verbindungen existieren
+            # Keep start level too, in case there are direct connections at that level
             current = current | next_set
 
-        # Letzte Ebene: finale Targets einsammeln
+        # Final level: collect target nodes
         results = set()
         final_rel = rel_type_path[-1]
         for node in current:
@@ -629,47 +852,47 @@ class FlatGraphDB:
 
 
 # =============================================================================
-# WARTUNGS-MODUL: GARBAGE COLLECTOR
+# MAINTENANCE MODULE: GARBAGE COLLECTOR
 # =============================================================================
 
 class MaintenanceEngine(FlatGraphDB):
     """
-    Isoliertes Wartungsmodul. Laeuft manuell, zeitgesteuert oder beim App-Start.
-    Idempotent: kann nach Fehlern einfach erneut gestartet werden.
+    Isolated maintenance module. Runs manually, on a schedule, or at app startup.
+    Idempotent: safe to re-run after failures.
 
-    Phasen:
-      A - Scanner:  findet Nodes mit _deletion_flag
-      B - Cascader: loescht zugehoerige Edges
-      C - Purger:   verschiebt Assets und loescht Nodes final
+    Phases:
+      A - Scanner:  finds nodes with _deletion_flag
+      B - Cascader: removes associated edges
+      C - Purger:   archives assets and permanently deletes nodes
     """
 
     def run_garbage_collection(self, verbose=False):
         """
-        Fuehrt den kompletten GC-Lauf aus.
-        :return: Dict mit Statistik
+        Run the full garbage collection cycle.
+        :return: statistics dict
         """
         stats = {"scanned": 0, "edges_removed": 0, "nodes_purged": 0, "assets_archived": 0, "assets_kept": 0}
 
-        # --- SCHRITT A: Scanner ---
+        # --- PHASE A: Scanner ---
         to_delete = self._scan_for_deletions()
         stats["scanned"] = len(to_delete)
 
         if not to_delete:
             if verbose:
-                print("[GC] Keine zu loeschenden Objekte gefunden.")
+                print("[GC] No objects marked for deletion.")
             return stats
 
         if verbose:
-            print(f"[GC] {len(to_delete)} Objekt(e) zum Loeschen markiert.")
+            print(f"[GC] {len(to_delete)} object(s) marked for deletion.")
 
-        # --- SCHRITT B: Cascader ---
+        # --- PHASE B: Cascader ---
         refs_to_delete = {f"{col}/{nid}" for col, nid, _ in to_delete}
         stats["edges_removed"] = self._cascade_delete_edges(refs_to_delete)
 
         if verbose:
-            print(f"[GC] {stats['edges_removed']} verwaiste Kante(n) entfernt.")
+            print(f"[GC] {stats['edges_removed']} dangling edge(s) removed.")
 
-        # --- SCHRITT C: Purger ---
+        # --- PHASE C: Purger ---
         for col, nid, node_data in to_delete:
             archived = self._purge_node(col, nid, node_data)
             stats["nodes_purged"] += 1
@@ -679,8 +902,18 @@ class MaintenanceEngine(FlatGraphDB):
                 stats["assets_kept"] += 1
 
         if verbose:
-            print(f"[GC] {stats['nodes_purged']} Node(s) endgueltig geloescht.")
-            print(f"[GC] {stats['assets_archived']} Asset(s) archiviert, {stats['assets_kept']} behalten.")
+            print(f"[GC] {stats['nodes_purged']} node(s) permanently deleted.")
+            print(f"[GC] {stats['assets_archived']} asset(s) archived, {stats['assets_kept']} kept.")
+
+        # Compaction: write all collections that had deletions fully to disk
+        purged_collections = {col for col, _, _ in to_delete}
+        for col in purged_collections:
+            self._persist_collection_full(col)
+
+        # Also compact any other pending temp-files
+        for col in list(self._cache["nodes"].keys()):
+            if os.path.exists(self._temp_file(col)):
+                self._persist_collection_full(col)
 
         self._write_maintenance_log(stats)
         return stats
@@ -691,10 +924,10 @@ class MaintenanceEngine(FlatGraphDB):
 
     def _scan_for_deletions(self):
         """
-        Phase A: findet alle Nodes mit _deletion_flag.
-        Erweitert die Liste um cascade_delete-Ziele (transitive Schliessung).
+        Phase A: find all nodes with _deletion_flag.
+        Expand the set with cascade_delete targets (transitive closure).
         """
-        # Schritt 1: direkt markierte Nodes finden
+        # Step 1: find directly flagged nodes
         direct = []
         for col_name, col_data in self._cache["nodes"].items():
             for node_id, data in col_data.items():
@@ -704,33 +937,39 @@ class MaintenanceEngine(FlatGraphDB):
         if not direct:
             return []
 
-        # Schritt 2: Cascade-Expansion - folge allen cascade_delete-Edges rekursiv
-        # Sammele alle Refs die in die Loeschliste muessen
+        # Step 2: cascade expansion — follow all cascade_delete edges recursively.
+        # Only mark in RAM during expansion; no persist inside the loop.
+        # All affected collections are flushed after the expansion completes
+        # so the on-disk state stays consistent.
         to_delete_refs = {f"{col}/{nid}" for col, nid, _ in direct}
+        dirty_collections = set()
 
         changed = True
         while changed:
             changed = False
-            all_edges = [e for b in self._cache["edges"].values() for e in b.values()]
-            for edge in all_edges:
+            edges_snapshot = [e for b in self._cache["edges"].values() for e in b.values()]
+            for edge in edges_snapshot:
                 if not edge.get("_cascade_delete"):
                     continue
-                # Quelle ist markiert, Ziel noch nicht -> expandieren
-                if edge["quelle"] in to_delete_refs and edge["ziel"] not in to_delete_refs:
-                    to_delete_refs.add(edge["ziel"])
-                    # Ziel-Node markieren (Soft-Delete-Flag setzen) - vererbt Keep-Flag
+                if edge["source"] in to_delete_refs and edge["target"] not in to_delete_refs:
+                    to_delete_refs.add(edge["target"])
                     try:
-                        col, nid = edge["ziel"].split("/", 1)
+                        col, nid = edge["target"].split("/", 1)
                         target_node = self._cache["nodes"].get(col, {}).get(nid)
                         if target_node and not self._is_deleted(target_node):
                             target_node["_deletion_flag"] = datetime.now(timezone.utc).isoformat()
                             target_node.setdefault("_keep_asset", True)
-                            self._persist_collection(col)
+                            self._mark_node_dirty(col, nid)
+                            dirty_collections.add(col)
                     except ValueError:
                         pass
                     changed = True
 
-        # Schritt 3: finale Liste aus aktuellem Zustand aufbauen
+        # Expansion done — flush all marked collections to disk
+        for col in dirty_collections:
+            self._persist_collection(col)
+
+        # Step 3: build final list from the current cache state
         found = []
         for ref in to_delete_refs:
             try:
@@ -743,13 +982,13 @@ class MaintenanceEngine(FlatGraphDB):
         return found
 
     def _cascade_delete_edges(self, refs_to_delete):
-        """Phase B: entfernt alle Edges, die auf zu loeschende Nodes zeigen."""
+        """Phase B: remove all edges pointing to or from nodes being deleted."""
         dirty_types = set()
         count = 0
         for rel_type, bucket in self._cache["edges"].items():
             to_remove = [
                 eid for eid, e in bucket.items()
-                if e["quelle"] in refs_to_delete or e["ziel"] in refs_to_delete
+                if e["source"] in refs_to_delete or e["target"] in refs_to_delete
             ]
             for eid in to_remove:
                 del bucket[eid]
@@ -762,42 +1001,42 @@ class MaintenanceEngine(FlatGraphDB):
 
     def _purge_node(self, collection_name, node_id, node_data):
         """
-        Phase C: Asset-Behandlung und endgueltiges Loeschen eines Nodes.
-        :return: True wenn Asset archiviert, False wenn behalten, None wenn kein Asset
+        Phase C: handle asset archiving and permanently delete the node.
+        :return: True if asset archived, False if kept, None if no asset
         """
         keep_asset = node_data.get("_keep_asset", True)
-        asset_path = node_data.get("datei")  # Konvention: 'datei' zeigt auf Vault-Pfad
+        asset_path = node_data.get("datei")  # convention: 'datei' field points to a vault-relative path
         asset_status = None
 
         if asset_path:
             vault_real = os.path.realpath(self.dirs["vault"])
             candidate = os.path.realpath(os.path.join(self.root, asset_path))
-            # Pfad ausserhalb des Vaults wird ignoriert (verhindert Path-Traversal)
+            # path outside vault is ignored (prevents path traversal)
             if candidate.startswith(vault_real + os.sep) and os.path.exists(candidate):
                 if keep_asset:
-                    # Datei bleibt im Vault (wird zum Orphan)
+                    # file stays in vault (becomes an orphan)
                     asset_status = False
                 else:
-                    # Verschieben nach vault_archive (Sicherheitsnetz)
+                    # move to vault_archive (safety net)
                     target_path = os.path.join(
                         self.dirs["vault_archive"],
                         os.path.basename(candidate)
                     )
-                    # Namenskonflikt im Archiv vermeiden
+                    # avoid name collision in archive
                     if os.path.exists(target_path):
                         base, ext = os.path.splitext(target_path)
                         target_path = f"{base}_{uuid.uuid4().hex[:6]}{ext}"
                     shutil.move(candidate, target_path)
                     asset_status = True
 
-        # Node endgueltig entfernen (ALLERLETZTER Schritt -> Idempotenz)
+        # remove node permanently (LAST step → idempotency)
         del self._cache["nodes"][collection_name][node_id]
-        self._persist_collection(collection_name)
+        self._dirty_nodes.pop(collection_name, None)  # no temp-write for deleted nodes
         self._mark_index_dirty(collection_name)
         return asset_status
 
     def _write_maintenance_log(self, stats):
-        """Haengt einen Eintrag ans Maintenance-Logbuch."""
+        """Append an entry to the maintenance log."""
         log_path = os.path.join(self.root, "datenbank", "maintenance.log")
         timestamp = datetime.now(timezone.utc).isoformat()
         line = f"[{timestamp}] {json.dumps(stats, ensure_ascii=False)}\n"
