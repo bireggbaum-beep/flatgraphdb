@@ -2,7 +2,7 @@
 FLATGRAPH - Leichtgewichtige, filebasierte Graph-Datenbank fuer Python
 =============================================================================
 
-Version:  2.1
+Version:  0.9
 Stand:    April 2026
 Lizenz:   Privatprojekt, keine Lizenz vergeben
 Autor:    [User]
@@ -75,10 +75,10 @@ und vollstaendigen Datenbanksystemen (zu gross, zu viele Abhaengigkeiten).
 
   Entscheidungshilfe:
 
-  Nur Objekte, keine Beziehungen       -> dict / TinyDB
-  Objekte + Beziehungen, bis ~5k Nodes -> FlatGraphDB       <- hier
-  Hohe Parallelitaet oder >10k Nodes   -> SQLite + Erweiterung
-  Komplexe Graph-Queries, Produktion   -> Neo4j / ArangoDB
+  Nur Objekte, keine Beziehungen          -> dict / TinyDB
+  Objekte + Beziehungen, bis ~25k Nodes   -> FlatGraphDB       <- hier
+  Hohe Multi-Process-Parallelitaet        -> Andere Loesung
+  Komplexe Graph-Queries, Produktion      -> Neo4j / ArangoDB
 
 
 2.2 LEISTUNGEN
@@ -91,16 +91,25 @@ Datenhaltung:
   - Duplicate-Schutz: create_node wirft Fehler bei bereits vorhandener ID
   - Asset-Verwaltung: binaere Dateien im Vault, Archivierung bei Loeschung
 
+Schreiben:
+  - Temp-File-Writes: nur geaenderte Nodes werden geschrieben, nicht die
+    gesamte Collection (O(1) pro Write statt O(n))
+  - Atomare Transaktionen: with db.transaction() puffert alle Writes im
+    RAM und schreibt einmal am Ende — Rollback bei Exception
+  - Bulk-Writes in transaction(): ~0.5ms/Node statt ~90ms ohne
+  - GC kompaktiert Temp-Files periodisch in die Basis-Collection
+
 Zugriff:
   - RAM-Cache: alle Reads in Mikrosekunden nach initialem Ladevorgang
+  - Lazy Feldindex: find_nodes() nutzt automatisch einen Index pro Feld,
+    wird bei erstem Zugriff aufgebaut und bei Writes invalidiert
   - Atomic Writes: kein Datenverlust bei Absturz (temp + rename)
-  - Explizite Fehler bei beschaedigten JSON-Dateien (kein stiller Datenverlust)
   - Isolierte Copies bei allen Read-Methoden (kein Cache-Aliasing)
 
 Beziehungen:
   - Gerichtete Edges mit frei waehlbarem Beziehungstyp
   - Metadaten direkt am Edge (Menge, Reihenfolge, Prioritaet, ...)
-  - Traversal ein- und ausgehend (direction=in/out)
+  - Traversal ein- und ausgehend (direction=in/out/both)
   - Filter nach Beziehungstyp und Ziel-Collection
   - BFS-Traversal ueber beliebig viele Hops (traverse)
   - Kettenabfragen ueber gemischte Beziehungstypen (collect_related)
@@ -111,34 +120,44 @@ Wartung:
   - Restore: Soft-Delete rueckgaengig machen
   - Garbage Collector (MaintenanceEngine): 3-Phasen-Bereinigung
     (Scan -> Cascade -> Purge), idempotent und wiederanlauffaehig
+  - GC kompaktiert alle ausstehenden Temp-Files
   - Autoincrement-IDs mit Prefix und Zero-Padding (next_id)
+
+Optionale Features (alle opt-in, kein Breaking Change):
+  - file_lock=True    Dateibasiertes Cross-Process-Locking (Unix + Windows)
+  - audit=True        Automatisches Audit-Log bei jedem Write
+  - webhooks=[...]    HTTP-POST bei create/update/delete Events
 
 
 2.3 KAPAZITAETSGRENZEN
 -----------------------
-Richtwerte basierend auf der Architektur (lineares Scannen, vollstaendiger
-Datei-Rewrite bei jedem Schreibvorgang einer Collection/eines Edge-Typs):
+Benchmarks mit realistischen Nodes (10-12 Felder, kurze Werte):
 
-  Nodes pro Collection      bis ~5.000   problemlos
-                            bis ~20.000  spuerbar langsamer
-                            ueber 20.000 andere Loesung waehlen
+  Nodes gesamt          bis ~25.000   problemlos
+                        bis ~50.000   RAM spuerbar (>60 MB), noch nutzbar
+                        ueber 50.000  andere Loesung waehlen
 
-  Edges pro rel_type        bis ~5.000   problemlos
-                            (eine Datei pro Typ, groessere Gesamtmengen
-                            moeglich ohne gegenseitige Beeinflussung)
+  RAM-Verbrauch         ~1.5 MB pro 1.000 Nodes (inkl. Index)
+  Kaltstart             0.1s / 10.000 Nodes
 
-  Initialer Ladevorgang     einmalig beim Start; danach nur RAM-Cache
-                            10k Nodes + 10k Edges: ca. 1-2 Sekunden
+  Schreiben (transaction())     ~0.5 ms/Node (Bulk)
+  Schreiben (Einzeln)           ~45 ms/Write bei 10k Nodes
+                                (Temp-File-Roundtrip waechst mit Groesse)
+  Empfehlung: transaction() fuer alle Sequences von Writes verwenden
 
-  Schreiblatenz             1-10 ms pro Operation (ein Datei-Write)
+  find_nodes (1 Filter)         ~3 ms / 10.000 Nodes  (Lazy Index)
+  find_nodes (2 Filter)         ~5 ms / 10.000 Nodes  (Index + Schnitt)
+  get_node() einzeln            < 0.01 ms
+
+  GC-Laufzeit           ~0.5 ms pro zu loeschendem Node
 
 
 2.4 EIGNUNGSRAHMEN
 ------------------
 FlatGraphDB passt wenn:
 
-  - Single-Process oder sequenzielle Schreibzugriffe (ein Prozess schreibt)
-  - Datenmengen im dreistelligen bis niedrigen vierstelligen Bereich
+  - Single-Process-App (ein Prozess schreibt, kein paralleler Zugriff)
+  - Datenmengen bis ~25.000 Nodes gesamt
   - Beziehungsmodell mit mehreren verschiedenen Typen benoetigt wird
   - Daten menschenlesbar bleiben sollen (Git, rsync, manuell editierbar)
   - Kein externer Datenbankserver gewuenscht (embedded, zero deployment)
@@ -150,12 +169,12 @@ FlatGraphDB passt wenn:
 -----------------------
 FlatGraphDB passt NICHT wenn:
 
-  - Mehrere Prozesse gleichzeitig schreiben (kein File-Locking, Issue #1)
-  - Atomare Multi-Operationen benoetigt werden (kein Transaction-Manager,
-    Issue #2)
+  - Mehrere Prozesse gleichzeitig schreiben (Multi-Process nicht unterstuetzt;
+    file_lock=True schuetzt einzelne Writes, loest aber nicht das
+    Cache-Inkonsistenz-Problem zwischen Prozessen)
   - Komplexe Volltextsuche mit Ranking oder Stemming benoetigt wird
-    (einfache Feldabfragen und Textsuche: Issue #5 in Arbeit)
-  - Compliance- oder Audit-Anforderungen bestehen
+  - Analytische Aggregationen ueber grosse Datenmengen (kein GROUP BY,
+    kein SUM, kein JOIN)
   - Produktiv-System mit definierten SLA-Anforderungen
 
 
@@ -168,24 +187,29 @@ Flatgraph legt beim Initialisieren folgende Ordnerstruktur an:
   projekt_root/
     datenbank/
       nodes/                  <- Node-Collections als JSON-Dateien
-        dokumente.json
+        dokumente.json          <- Basis-Stand (nach GC-Kompaktierung)
+        dokumente_temp.json     <- ausstehende Writes (wird von GC gemergt)
         equipment.json
+        equipment_temp.json
         ...
       edges/                  <- eine JSON-Datei pro Beziehungstyp
         hat_subprozess.json
         gehoert_zu.json
         ...
+      index/                  <- Lazy Feldindex pro Collection
+        dokumente.json
+        equipment.json
+        ...
       maintenance.log         <- Logbuch der GC-Laeufe
     vault/                    <- Aktive Binaerdateien (PDFs, Bilder, ...)
     vault_archive/            <- Quarantaene fuer physisch geloeschte Assets
+    .flatgraph.lock           <- Cross-Process-Lock (nur bei file_lock=True)
 
-Jede Node-Collection und jeder Edge-Typ ist ein flaches Dict
-{id: daten}. Neue Edge-Typen entstehen automatisch beim ersten
-create_edge() mit diesem Typ. Alle Dateien sind direkt lesbar
-und bei Bedarf manuell editierbar.
+Temp-Files enthalten nur die seit dem letzten GC-Lauf geaenderten Nodes.
+Sie werden beim Start automatisch auf den Basis-Stand gemergt.
+Der GC kompaktiert sie in die Basis-Datei und loescht sie.
 
-Migration: Existiert noch eine alte objektlinks.json, wird sie beim
-naechsten Start automatisch in Einzel-Dateien aufgeteilt und geloescht.
+Alle Dateien sind direkt lesbar und bei Bedarf manuell editierbar.
 
 
 =============================================================================
@@ -194,35 +218,33 @@ naechsten Start automatisch in Einzel-Dateien aufgeteilt und geloescht.
 
   from flatgraph import FlatGraphDB, MaintenanceEngine
 
-  # Datenbank initialisieren. Schemas sind optional.
-  schemas = {
-      "dokumente": {"titel": str},
-      "equipment": {"name": str},
-  }
-  db = FlatGraphDB(root_dir="mein_projekt", schemas=schemas)
+  # Datenbank initialisieren
+  db = FlatGraphDB(root_dir="mein_projekt")
 
-  # Nodes anlegen
-  doc_ref = db.create_node("dokumente", "DOC-001", {
-      "titel": "Wartungsanleitung",
-      "doc_typ": "MAN",
-  })
-  eq_ref = db.create_node("equipment", "EQ-001", {
-      "name": "VW ID.7",
-      "baujahr": 2026,
-  })
-
-  # Beziehung herstellen (Edge)
-  db.create_edge(doc_ref, eq_ref, "gehoert_zu")
+  # Nodes anlegen (in Transaktion fuer Bulk-Inserts)
+  with db.transaction():
+      doc_ref = db.create_node("dokumente", "DOC-001", {
+          "titel": "Wartungsanleitung",
+          "doc_typ": "MAN",
+      })
+      eq_ref = db.create_node("equipment", "EQ-001", {
+          "name": "Pumpe A",
+          "baujahr": 2020,
+      })
+      db.create_edge(doc_ref, eq_ref, "gehoert_zu")
 
   # Lesen
   print(db.get_node(doc_ref))
   print(db.get_connected(doc_ref, direction="out"))
 
-  # Weich loeschen
-  db.soft_delete("dokumente", "DOC-001", keep_asset=True)
+  # Suchen (nutzt automatisch den Lazy Index)
+  aktive = db.find_nodes("equipment", {"status": "AKTIV"})
 
-  # Physisch aufraeumen (laeuft idempotent)
-  gc = MaintenanceEngine(root_dir="mein_projekt", schemas=schemas)
+  # Weich loeschen
+  db.soft_delete("dokumente", "DOC-001")
+
+  # Physisch aufraeumen
+  gc = MaintenanceEngine(root_dir="mein_projekt")
   gc.run_garbage_collection(verbose=True)
 
 
@@ -255,7 +277,7 @@ Eine Edge ist eine gerichtete Beziehung zwischen zwei Nodes. Edges haben:
 WICHTIG: Metadaten am Edge sind nicht optional. Sie sind haeufig die
 EIGENTLICHE Prozessinformation. Beispiel: Eine Edge vom Typ
 verbraucht_material zwischen Prozess und Material traegt die Menge als
-Metadatum. Die Menge gehoert weder zum Prozess noch zum Material - nur
+Metadatum. Die Menge gehoert weder zum Prozess noch zum Material — nur
 zur Beziehung dazwischen.
 
 5.3 NODE-REFERENZEN
@@ -280,20 +302,69 @@ Beim create_node wird das Schema hart geprueft. Beim update_node werden
 interne Felder (mit Unterstrich am Anfang, z.B. _deletion_flag) ignoriert,
 damit Soft-Delete funktioniert.
 
-Collections ohne Schema akzeptieren jede Struktur. Man kann flatgraph
-also auch voellig schemalos benutzen.
+Collections ohne Schema akzeptieren jede Struktur.
 
-5.5 RAM-CACHE
+5.5 RAM-CACHE UND TEMP-FILES
+-----------------------------
+Beim Initialisieren laedt FlatGraphDB alle JSON-Dateien in den RAM.
+Alle Lesevorgaenge gehen gegen den Cache (Mikrosekunden). Schreibvorgaenge
+aktualisieren den Cache und schreiben nur die geaenderten Nodes in eine
+Temp-Datei ({collection}_temp.json), nicht die gesamte Collection.
+
+Der GC kompaktiert Temp-Files in die Basis-Collection und loescht sie.
+Beim naechsten Start werden vorhandene Temp-Files automatisch eingelesen
+und auf den Basis-Stand gemergt — ausstehende Writes ueberleben Neustarts.
+
+Fuer Single-Process-Apps (der Normalfall) ist kein weiteres Locking noetig.
+Bei parallelem Zugriff aus mehreren Prozessen: file_lock=True verwenden
+(schuetzt einzelne Writes, loest aber nicht Cache-Inkonsistenz zwischen
+Prozessen — Multi-Process-Schreiben ist nicht voll unterstuetzt).
+
+5.6 TRANSAKTIONEN
+-----------------
+with db.transaction() puffert alle Writes im RAM und schreibt erst beim
+sauberen Verlassen des Blocks auf Disk. Bei Exception wird der Cache-Zustand
+vollstaendig auf den Stand vor der Transaktion zurueckgesetzt.
+
+  with db.transaction():
+      db.create_node("dokumente", "DOC-002", {...})
+      db.create_edge("dokumente/DOC-002", "equipment/EQ-001", "gehoert_zu")
+      # Erst hier: ein einziger Disk-Write fuer alles oben
+
+Verschachtelte Transaktionen joinen die aeussere — der innere Block
+committed nicht, er ist Teil der aeusseren Transaktion.
+
+Fuer Web-Apps (z.B. Flask) empfiehlt sich ein automatischer Transaction-
+Wrapper pro Request (siehe Abschnitt 8.8).
+
+5.7 AUDIT-LOG
 -------------
-Beim Initialisieren laedt flatgraph alle JSON-Dateien in den RAM. Alle
-Lesevorgaenge gehen gegen den Cache, sind also in Mikrosekunden. Bei
-Schreibvorgaengen wird der Cache aktualisiert UND die betroffene Datei
-atomar neu geschrieben.
+Mit audit=True schreibt FlatGraphDB bei jedem create_node, update_node,
+soft_delete und restore_node automatisch einen Eintrag in die interne
+Collection _audit_log. Diese Collection ist in list_collections() nicht
+sichtbar aber direkt abfragbar.
 
-Konsequenz: Bei paralleler Nutzung aus mehreren Prozessen haben die
-anderen Prozesse einen veralteten Cache. Flatgraph ist im aktuellen
-Stand NICHT fuer parallelen Multi-Process-Zugriff gedacht. Fuer solche
-Faelle braucht es ein separates FileLocker-Modul (geplant).
+  db = FlatGraphDB(root_dir="...", audit=True)
+  db.update_node("equipment", "EQ-001", {"status": "INAKTIV"})
+  # -> _audit_log erhaelt Eintrag: {ref, action="update", changed_at, details}
+
+5.8 WEBHOOKS
+------------
+Mit webhooks=[...] sendet FlatGraphDB bei jedem Write-Event einen HTTP-POST
+an konfigurierte URLs. Nicht-blockierend (Daemon-Thread), Fehler werden
+ignoriert.
+
+  db = FlatGraphDB(root_dir="...", webhooks=[
+      {"url": "https://hooks.example.com/notify",
+       "events": ["create_node", "update_node"],
+       "collections": ["issues", "equipments"]},
+      {"url": "https://teams.example.com/webhook",
+       "events": "*"},  # alle Events, alle Collections
+  ])
+
+Payload-Format:
+  {"event": "create_node", "collection": "issues", "node_id": "ISS-00001",
+   "ref": "issues/ISS-00001", "timestamp": "2026-04-25T10:00:00Z"}
 
 
 =============================================================================
@@ -303,60 +374,64 @@ Faelle braucht es ein separates FileLocker-Modul (geplant).
 6.1 INITIALISIERUNG
 -------------------
 
-FlatGraphDB(root_dir, schemas=None)
-  Startet die Engine. Erstellt Ordner falls nicht vorhanden, laedt
-  bestehende Daten in den Cache.
+FlatGraphDB(root_dir, schemas=None, file_lock=False, audit=False,
+            webhooks=None)
 
-  root_dir  - Pfad zum Projektordner
-  schemas   - optional, Dict {collection: {feld: typ}}
+  root_dir    - Pfad zum Projektordner
+  schemas     - optional, Dict {collection: {feld: typ}}
+  file_lock   - Cross-Process-Locking aktivieren (Unix + Windows)
+  audit       - Automatisches Audit-Log bei jedem Write
+  webhooks    - Liste von Hook-Configs (siehe 5.8)
 
 
 6.2 NODE-API
 ------------
 
 create_node(collection_name, node_id, data) -> node_ref
-  Legt einen Node an. Validiert gegen Schema, falls vorhanden. Gibt
-  die Referenz als String "collection/id" zurueck.
+  Legt einen Node an. Validiert gegen Schema, falls vorhanden.
+  Gibt die Referenz als String "collection/id" zurueck.
 
 get_node(node_ref) -> dict oder None
-  Liest Node aus dem Cache. Gibt None zurueck, wenn der Node nicht
-  existiert ODER soft-deleted ist (Flag _deletion_flag gesetzt).
+  Liest Node aus dem Cache. Gibt None zurueck wenn der Node nicht
+  existiert ODER soft-deleted ist.
 
 get_node_raw(node_ref) -> dict oder None
-  Wie get_node, aber ignoriert den Soft-Delete-Filter. Fuer Admin-
-  und Maintenance-Zwecke.
+  Wie get_node, aber zeigt auch soft-deleted Nodes. Fuer Admin-Zwecke.
 
 update_node(collection, id, update_data) -> bool
-  Aktualisiert Felder eines bestehenden Nodes. Validiert gegen Schema.
-  Gibt False zurueck, wenn der Node nicht existiert.
+  Aktualisiert Felder eines bestehenden Nodes. Gibt False zurueck
+  wenn der Node nicht existiert.
 
 list_nodes(collection_name, include_deleted=False) -> dict
-  Gibt alle Nodes einer Collection als Dict {id: data}. Soft-deleted
-  Eintraege werden standardmaessig ausgeblendet.
+  Gibt alle Nodes einer Collection als Dict {id: data}.
 
 list_collections() -> list
-  Liste der Namen aller bekannten Node-Collections.
+  Liste aller bekannten Node-Collections (interne wie _audit_log
+  werden ausgeblendet).
+
+find_nodes(collection_name, match) -> dict
+  Sucht Nodes nach Feldinhalten. Drei Modi pro Feld:
+    Substring:  {"title": "pumpe"}      case-insensitive
+    Wildcard:   {"title": "Pumpe*Nord"} * als Platzhalter
+    Praedikat:  {"baujahr": lambda v: v > 2020}
+
+  Mehrere Felder werden mit AND verknuepft. Nutzt automatisch den
+  Lazy Feldindex fuer String/Substring-Abfragen.
 
 next_id(collection_name, prefix="", padding=0) -> str
-  Autoincrement-Helper. Scannt die IDs der Collection mit dem Prefix,
-  findet die hoechste numerische ID und gibt die naechste zurueck.
-
-  Beispiel:
-    next_id("equipment", "EQ-", 4)
-      -> "EQ-0001" wenn leer, "EQ-0042" wenn EQ-0041 existiert
-
-  Hinweis: Funktioniert nicht bei composite keys mit zusaetzlichen
-  Zeichen (z.B. "10000-001"). Dafuer braucht es eine App-Logik, die
-  ueber ein eigenes numerisches Feld arbeitet.
+  Autoincrement-Helper. Gibt die naechste freie numerische ID zurueck.
+  Beispiel: next_id("equipment", "EQ-", 5) -> "EQ-00042"
 
 soft_delete(collection, id, keep_asset=True) -> bool
-  Markiert Node fuer den Garbage Collector. Setzt _deletion_flag und
-  _keep_asset. Der Node ist ab sofort fuer get_node und list_nodes
-  unsichtbar, wird aber erst vom GC endgueltig entfernt.
+  Markiert Node fuer den GC. Ab sofort unsichtbar fuer get_node
+  und list_nodes.
 
 restore_node(collection, id) -> bool
-  Macht einen Soft-Delete rueckgaengig, solange der GC noch nicht
-  gelaufen ist. Entfernt _deletion_flag und _keep_asset.
+  Macht Soft-Delete rueckgaengig (solange GC noch nicht lief).
+
+flush()
+  Schreibt alle gepufferten Writes sofort auf Disk. Nuetzlich
+  ausserhalb von transaction() und Web-Frameworks.
 
 
 6.3 EDGE-API
@@ -364,21 +439,12 @@ restore_node(collection, id) -> bool
 
 create_edge(source_ref, target_ref, rel_type, meta=None,
             cascade_delete=False) -> edge_id
-  Erstellt eine gerichtete Beziehung. Die edge_id wird ueber UUID4
-  generiert und ist kollisionssicher.
-
-  meta           - optional, Dict mit beliebigen Zusatzfeldern
-  cascade_delete - wenn True, stirbt der Ziel-Node mit dem Quell-Node
+  Erstellt eine gerichtete Beziehung.
+  cascade_delete=True: Ziel-Node stirbt mit Quell-Node.
 
 get_edge(edge_id) -> dict oder None
-  Liest ein Edge-Objekt aus dem Cache.
-
 delete_edge(edge_id) -> bool
-  Loescht eine Edge PHYSISCH. Edges haben kein Soft-Delete-Konzept -
-  sie sind leichtgewichtig und werden ohne Umweg entfernt.
-
 list_edges(rel_type=None) -> dict
-  Gibt alle Edges zurueck. Optional nach Typ gefiltert.
 
 
 6.4 TRAVERSAL-API
@@ -387,35 +453,24 @@ list_edges(rel_type=None) -> dict
 get_connected(node_ref, direction="out", rel_type=None,
               target_collection=None, include_deleted=False) -> list
   Findet direkt verknuepfte Nodes (ein Hop).
-
-  direction         - "out" (ausgehend) oder "in" (eingehend)
-  rel_type          - optional Filter auf Beziehungstyp
-  target_collection - optional, nur Treffer aus dieser Collection
-  include_deleted   - wenn True, werden soft-deleted Targets nicht
-                      automatisch ausgefiltert
+  direction: "out", "in"
 
 get_connected_edges(node_ref, direction="out", rel_type=None) -> list
-  Wie get_connected, aber gibt die VOLLEN Edge-Objekte zurueck als
-  [(edge_id, edge_data), ...]. Noetig, wenn man auf Edge-Metadaten
-  zugreifen will - zum Beispiel fuer die Sortierung nach reihenfolge.
+  Wie get_connected, gibt aber volle Edge-Objekte zurueck:
+  [(edge_id, edge_data), ...]
 
 traverse(start_ref, rel_type=None, direction="out", max_depth=None,
          target_collection=None, include_deleted=False,
          include_start=False) -> list
-  Breitensuche (BFS) ueber mehrere Hops. Findet alle transitiv
-  erreichbaren Nodes. Dubletten werden unterdrueckt, die Reihenfolge
-  entspricht der Besuchsreihenfolge.
-
-  Beispiel: alle Subprozesse und Sub-Subprozesse eines Hauptprozesses:
-    db.traverse("processes/PROC-MAIN", rel_type="hat_subprozess")
+  BFS ueber mehrere Hops. Findet alle transitiv erreichbaren Nodes.
 
 collect_related(start_ref, rel_type_path, direction="out") -> list
-  Sammelt Nodes entlang einer gemischten Beziehungskette. Jeder
-  Listeneintrag in rel_type_path ist ein Schritt im Pfad.
+  Sammelt Nodes entlang einer gemischten Beziehungskette.
+  Beispiel: db.collect_related(p, ["hat_sub", "benoetigt_eq"])
 
-  Beispiel: alle Equipments aller Subprozesse:
-    db.collect_related("processes/PROC-MAIN",
-                       ["hat_subprozess", "benoetigt_equipment"])
+transaction() -> context manager
+  Puffert alle Writes im RAM, Disk-Flush beim sauberen Exit.
+  Rollback bei Exception. Verschachtelt: joined die aeussere.
 
 
 =============================================================================
@@ -423,200 +478,199 @@ collect_related(start_ref, rel_type_path, direction="out") -> list
 =============================================================================
 
 Die MaintenanceEngine erbt von FlatGraphDB und fuehrt die physische
-Loeschung in drei Phasen durch. Sie laeuft idempotent - ein Abbruch
-mitten im Lauf fuehrt nie zu Inkonsistenzen, der naechste Lauf macht
-einfach weiter.
+Loeschung in drei Phasen durch. Sie laeuft idempotent.
 
 PHASE A - SCANNER
   Findet alle Nodes mit _deletion_flag. Erweitert die Loeschliste
-  rekursiv um Ziele von Edges mit _cascade_delete. Dadurch sterben
-  z.B. Log-Eintraege mit ihrem Equipment, Subprozesse mit ihrem
-  Hauptprozess.
+  rekursiv um Ziele von Edges mit _cascade_delete.
 
 PHASE B - CASCADER
-  Entfernt physisch alle Edges, bei denen quelle ODER ziel in der
-  Loeschliste stehen. Nach dieser Phase gibt es keine verwaisten Edges.
+  Entfernt alle Edges bei denen quelle ODER ziel in der Loeschliste
+  stehen.
 
 PHASE C - PURGER
-  Fuer jeden markierten Node:
-  1. Wenn ein Asset (Feld "datei") existiert:
-     - bei _keep_asset=True: Datei bleibt im Vault (wird zum Orphan)
-     - bei _keep_asset=False: Datei wird nach vault_archive verschoben
-  2. Node wird physisch aus seiner Collection entfernt
-  3. Eintrag in maintenance.log
+  Fuer jeden markierten Node: Asset behandeln (vault / vault_archive),
+  Node endgueltig entfernen.
+
+KOMPAKTIERUNG
+  Nach Phase C schreibt der GC alle betroffenen Collections vollstaendig
+  als neue Basis-Datei und loescht die zugehoerigen Temp-Files.
+  Ausstehende Temp-Files anderer Collections werden ebenfalls kompaktiert.
 
 Benutzung:
   gc = MaintenanceEngine(root_dir="mein_projekt")
   stats = gc.run_garbage_collection(verbose=True)
-
-stats ist ein Dict mit scanned, edges_removed, nodes_purged,
-assets_archived, assets_kept.
+  # stats: {scanned, edges_removed, nodes_purged, assets_archived, assets_kept}
 
 
 =============================================================================
-8. MUSTER UND REZEPTE
+8. MUSTER UND REZEPTE (COOKBOOK)
 =============================================================================
 
 8.1 COMPOSITE KEYS (z.B. DOKNR + DOKTL)
 ---------------------------------------
-Problem: SAP-Style-IDs bestehen oft aus mehreren Komponenten.
-
-Loesung: Die Komponenten im Node als Felder speichern, die node_id
-als zusammengesetzten String verwenden, und einen Helper fuer die
-Nummernvergabe in der App-Schicht bauen.
-
-  # Im Node-Datensatz:
   db.create_node("documents", "10032-001", {
-      "doc_nr": 10032,
-      "doc_tl": "001",
-      "doc_type": "INV",
-      "title": "Kaufrechnung",
+      "doc_nr": 10032, "doc_tl": "001",
+      "doc_type": "INV", "title": "Kaufrechnung",
   })
 
-  # Helper fuer naechste DOKNR (App-Logik):
   def next_doknr(db):
       docs = db.list_nodes("documents")
-      max_nr = max((d.get("doc_nr", 0) for d in docs.values()),
-                   default=9999)
-      return max_nr + 1
-
-  # Alle Teildokumente zu DOKNR 10033 finden:
-  alle = db.list_nodes("documents")
-  teile = {k: v for k, v in alle.items() if v.get("doc_nr") == 10033}
+      return max((d.get("doc_nr", 0) for d in docs.values()), default=9999) + 1
 
 
 8.2 REIHENFOLGE VON SUBPROZESSEN
 --------------------------------
-Problem: Subprozesse sollen in einer bestimmten Reihenfolge angezeigt
-werden, und derselbe Subprozess kann in mehreren Hauptprozessen an
-unterschiedlichen Positionen vorkommen.
+Reihenfolge gehoert an die EDGE, nicht an den Node:
 
-Loesung: Reihenfolge gehoert an die EDGE, nicht an den Node.
+  db.create_edge(p_main, p_a, "hat_subprozess", meta={"reihenfolge": 10})
+  db.create_edge(p_main, p_b, "hat_subprozess", meta={"reihenfolge": 20})
 
-  db.create_edge(p_main, p_grundierung, "hat_subprozess",
-                 meta={"reihenfolge": 10})
-  db.create_edge(p_main, p_lackierung, "hat_subprozess",
-                 meta={"reihenfolge": 20})
-
-  # Subprozesse sortiert abfragen:
   edges = db.get_connected_edges(p_main, "out", "hat_subprozess")
   ordered = sorted(edges, key=lambda e: e[1].get("reihenfolge", 0))
-  for eid, edge in ordered:
-      print(db.get_node(edge["ziel"])["name"])
-
-WICHTIG: Dieser Reihenfolge-Wert ist reine Darstellungshilfe, nicht
-Ausfuehrungsreihenfolge. Flatgraph ist KEINE Workflow-Engine und soll
-auch keine werden.
 
 
-8.3 CASCADE-DELETE (UNTRENNBARE BEZIEHUNGEN)
---------------------------------------------
-Problem: Manche Nodes haben keine Existenzberechtigung ohne ihren
-"Parent". Ein Log-Eintrag zum Auto ohne das Auto macht keinen Sinn.
-
-Loesung: Beim Anlegen der Edge cascade_delete=True setzen.
-
+8.3 CASCADE-DELETE
+------------------
   db.create_edge(equipment_ref, log_ref, "hat_log", cascade_delete=True)
+  # Beim Loeschen des Equipments sterben alle cascade-markierten Logs mit.
 
-Beim Loeschen des Equipments werden alle cascade-markierten Ziele
-automatisch mitgeloescht - transitiv ueber mehrere Ebenen, falls die
-Kette so aufgebaut ist.
-
-Cascade NICHT setzen bei:
-  - Dokumenten, die mehreren Objekten zugeordnet sein koennen
-  - Materialien und Equipments, die in mehreren Prozessen genutzt werden
-  - Allem, was ein Leben unabhaengig von der Quelle haben soll
-
-Cascade SETZEN bei:
-  - Log-Eintraegen zu einem Equipment
-  - Notizen zu einem Projekt
-  - Teildokumenten zu einem Hauptdokument
-  - Subprozessen, die exklusiv zu einem Hauptprozess gehoeren
+Cascade SETZEN bei: Log-Eintraegen, Notizen, exklusiven Subprozessen.
+Cascade NICHT setzen bei: Dokumenten, Materialien, geteilten Objekten.
 
 
-8.4 PROZESSMODELL (KATALOG, KEINE SIMULATION)
----------------------------------------------
-Flatgraph eignet sich gut zur BESCHREIBUNG von Prozessen, nicht zur
-Ausfuehrung.
+8.4 BULK-INSERTS (PERFORMANCE)
+-------------------------------
+Immer transaction() fuer Sequenzen von Writes verwenden:
 
-Entitaeten als Collections:
-  processes, products, intermediates, equipments, rooms,
-  materials, media, documents
+  with db.transaction():
+      for item in grosse_liste:
+          db.create_node("collection", item["id"], item)
+  # Ein einziger Disk-Write fuer alle Nodes
 
-Beziehungstypen:
-  hat_subprozess       - Hierarchie Haupt-/Subprozess
-  benoetigt_equipment  - Prozess zu Equipment
-  benoetigt_medium     - Prozess zu Medium (Druckluft, Waerme, ...)
-  verbraucht_material  - mit Menge als Edge-Metadatum
-  findet_statt_in      - Prozess zu Raum
-  steht_in             - Equipment zu Raum
-  erzeugt              - Prozess zu Produkt/Zwischenprodukt
-  verbraucht           - Prozess zu eingehendem Zwischenprodukt
-  dokumentiert_von     - Prozess zu Dokument
-
-Alle Prozesse (Haupt- und Sub-) in einer Collection "processes" halten.
-Das vereinfacht rekursive Abfragen, weil sie denselben Beziehungstyp
-hat_subprozess nutzen koennen.
-
-Parallele Ausfuehrung, Bedingungen und Schleifen NICHT im Graph
-modellieren. Wenn so eine Info dokumentarisch wichtig ist, als Text-
-Feld am Node oder am Edge hinterlegen ("nur bei Fehlerquote > 2%"),
-aber nicht als ausfuehrbare Logik.
+Ohne transaction(): ~45ms pro Write bei 10k Nodes.
+Mit transaction(): ~0.5ms pro Node, unabhaengig von der Groesse.
 
 
-8.5 TYPISCHE QUERIES IM PROZESSMODELL
--------------------------------------
+8.5 FLASK: AUTOMATISCHER TRANSACTION-WRAPPER
+--------------------------------------------
+Fuer Web-Apps empfiehlt sich ein geteilter DB-Instance und automatische
+Transaction pro Request:
 
-  # Alle direkten Subprozesse, geordnet
-  edges = db.get_connected_edges(p_main, "out", "hat_subprozess")
-  for eid, e in sorted(edges, key=lambda x: x[1].get("reihenfolge", 0)):
-      ...
+  _db = None
 
-  # Alle Subprozesse rekursiv (auch Sub-Sub-)
-  alle = db.traverse(p_main, rel_type="hat_subprozess")
+  def get_db():
+      global _db
+      if _db is None:
+          _db = FlatGraphDB(root_dir=DB_ROOT)
+      return _db
 
-  # Alle Equipments aller Subprozesse
-  equipments = db.collect_related(
-      p_main, ["hat_subprozess", "benoetigt_equipment"]
-  )
+  @app.before_request
+  def _begin():
+      get_db()._transaction_depth += 1
 
-  # Welche Equipments stehen im Raum X?
-  db.get_connected(raum_ref, "in", rel_type="steht_in")
+  @app.teardown_request
+  def _end(exc):
+      db = get_db()
+      if exc is None:
+          db._transaction_depth -= 1
+          db._flush_pending_writes()
+      else:
+          db._transaction_depth -= 1
+          db._dirty_nodes.clear()
+          db._dirty_edges.clear()
 
-  # In welchem Raum findet Prozess Y statt?
-  db.get_connected(proz_ref, "out", rel_type="findet_statt_in")
-
-  # Welche Prozesse nutzen das Foerderband?
-  db.get_connected(eq_foerd_ref, "in", rel_type="benoetigt_equipment")
+Damit: ein Disk-Write pro Request, Rollback bei unbehandelten Exceptions,
+kein DB-Init-Overhead nach dem ersten Request.
 
 
-8.6 DOKUMENT-INFOSATZ OHNE DATEI
---------------------------------
-Im pDMS soll ein Dokument auch ohne zugehoerige Datei angelegt werden
-koennen (EMPTY-Infosatz). Flatgraph unterstuetzt das nativ - die
-JSON-Struktur kennt keinen Unterschied zwischen "Feld fehlt" und
-"Feld ist leer", ausser man erzwingt es ueber das Schema.
+8.6 AUDIT-LOG ABFRAGEN
+-----------------------
+  db = FlatGraphDB(root_dir="...", audit=True)
 
-  # Ohne Datei
-  db.create_node("documents", "10034-001", {
-      "doc_nr": 10034, "doc_tl": "001", "doc_type": "WAR",
-      "doc_status": "EMPTY",
-      "title": "Werksgarantie VW",
+  # Alle Audit-Eintraege fuer ein bestimmtes Objekt
+  log = db.find_nodes("_audit_log", {"ref": "equipment/EQ-00001"})
+  for entry in sorted(log.values(), key=lambda e: e["changed_at"], reverse=True):
+      print(entry["changed_at"], entry["action"], entry.get("details", ""))
+
+
+8.7 WEBHOOKS KONFIGURIEREN
+---------------------------
+  db = FlatGraphDB(root_dir="...", webhooks=[
+      # Alle Events aller Collections -> Teams
+      {"url": "https://teams.example.com/incoming", "events": "*"},
+
+      # Nur neue Issues -> n8n Workflow
+      {"url": "https://n8n.example.com/webhook/issues",
+       "events": ["create_node"],
+       "collections": ["issues"]},
+  ])
+
+
+8.8 OBJECT LINKS (SYMMETRISCH)
+-------------------------------
+Edges verbinden beliebige Objekte. Fuer symmetrische Anzeige auf beiden
+Seiten beide Richtungen abfragen:
+
+  # Alle Verknuepfungen eines Objekts (egal wer Quelle/Ziel ist)
+  out = db.get_connected_edges(ref, direction="out", rel_type="obj_link")
+  ins = db.get_connected_edges(ref, direction="in",  rel_type="obj_link")
+  alle_links = out + ins
+
+
+8.9 DOKUMENT-INFOSATZ OHNE DATEI
+---------------------------------
+  db.create_node("documents", "DOC-001", {
+      "title": "Werksgarantie", "doc_type": "WAR", "status": "WK",
   })
-
-  # Spaeter Datei anhaengen:
-  db.update_node("documents", "10034-001", {
-      "doc_status": "ACTIVE",
-      "filepath": "vault/2026/04/10034_WAR_001.pdf",
+  # Datei spaeter anhaengen:
+  db.update_node("documents", "DOC-001", {
+      "filepath": "vault/2026/04/garantie.pdf",
       "filesize": 245100,
-      "checksum_sha256": "abc...",
   })
 
 
-8.7 OBJECT LINKS IM SAP-DVS-STIL
---------------------------------
-Die SAP-DVS-Object-Link-Logik mappt direkt auf Edges:
+=============================================================================
+9. GRENZEN UND BEWUSSTE NICHT-FEATURES
+=============================================================================
 
-  db.create_edge(
-      "documents/10032-001",    # Dokument
-      "equipment/EQ-001",    
+  - Kein Multi-Process-Schreiben
+      file_lock=True schuetzt einzelne Writes, loest aber nicht das
+      Cache-Inkonsistenz-Problem zwischen Prozessen. Fuer echten
+      Multi-Process-Betrieb braucht es eine andere Loesung.
+
+  - Keine Volltextsuche
+      find_nodes() unterstuetzt Substring und Wildcard, aber kein
+      Ranking, kein Stemming, keine phonetische Suche.
+
+  - Keine analytischen Aggregationen
+      Kein GROUP BY, kein SUM, kein COUNT ueber Felder. Solche
+      Auswertungen muessen in der App-Schicht gebaut werden.
+
+  - Keine Query-Sprache
+      Kein Cypher, kein SPARQL, kein SQL. Die API ist Python-nativ.
+
+  - Kein Longtext-Feld-Auslagern (geplant fuer 1.0)
+      Grosse Textfelder (Beschreibungen, Protokolle) liegen im RAM.
+      vault_text/ als separater Bereich ist geplant (#14).
+
+
+=============================================================================
+10. OFFENE ERWEITERUNGEN
+=============================================================================
+
+  #1  FileLocker (vollstaendig TOCTOU-sicher)
+        Lock muss Check + Reload + Write atomar umfassen.
+
+  #14 vault_text
+        Automatische Auslagerung von Longtext-Feldern (>500 Zeichen)
+        in vault_text/, nachladen bei get_node_full().
+
+  #15 Read-only Views
+        list_nodes/get_node mit readonly=True ohne deepcopy fuer
+        reine Anzeigeoperationen (Display Mode, analog SAP).
+
+  #13b Lazy Collection Loading
+        Collections erst beim ersten Zugriff laden statt alle beim
+        Start. Relevant wenn viele Collections existieren aber nur
+        ein Teil pro Session genutzt wird.

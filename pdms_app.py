@@ -1,0 +1,2610 @@
+"""
+pDMS + Equipment Modul — Demo-App auf FlatGraphDB
+Run: pip install flask && python pdms_app.py
+"""
+
+import os
+import json
+import urllib.request as _urllib
+from datetime import datetime, timezone
+from flask import Flask, render_template_string, request, redirect, url_for, flash, send_file, Response
+from flatgraph import FlatGraphDB, MaintenanceEngine
+
+app = Flask(__name__)
+app.secret_key = "pdms-secret"
+
+DB_ROOT = os.path.join(os.path.dirname(__file__), "_pdms_db")
+DEFAULT_USER = "User"
+
+STATUS_FLOW = {"WK": "FR", "FR": "OB", "OB": None}
+STATUS_LABEL = {"WK": "In Arbeit", "FR": "Freigegeben", "OB": "Veraltet"}
+STATUS_COLOR = {"WK": "#4361ee", "FR": "#2a9d60", "OB": "#888"}
+CATEGORIES = {"M": "Maschine", "F": "Fahrzeug", "I": "Instrument", "E": "Elektro"}
+EQ_STATUS      = {"AKTIV": "#2a9d60", "INAKTIV": "#e67e22", "STILLGELEGT": "#888"}
+EQ_STATUS_FLOW = {"AKTIV": "INAKTIV", "INAKTIV": "STILLGELEGT", "STILLGELEGT": None}
+
+ISSUE_TYPES       = {"STOERUNG": "Störung", "WARTUNG": "Wartung",
+                     "AENDERUNG": "Änderungsantrag", "PRUEFUNG": "Prüfung"}
+ISSUE_STATUS      = {"OFFEN": "#e74c3c", "IN_ARBEIT": "#e67e22", "ERLEDIGT": "#2a9d60"}
+ISSUE_STATUS_FLOW = {"OFFEN": "IN_ARBEIT", "IN_ARBEIT": "ERLEDIGT", "ERLEDIGT": None}
+ISSUE_PRIORITY    = {"HOCH": "#e74c3c", "MITTEL": "#e67e22", "NIEDRIG": "#888"}
+
+LOCKED_FIELDS = {
+    "_global":              {"created_at", "created_by", "_deletion_flag"},
+    "documents":            {"doc_nr", "doc_type", "doc_part", "status", "locked"},
+    "equipments":           {"status"},
+    "functional_locations": set(),
+    "originals":            set(),
+    "doc_types":            set(),
+}
+
+
+def get_locked(col):
+    return LOCKED_FIELDS["_global"] | LOCKED_FIELDS.get(col, set())
+
+
+def field_input(name, value):
+    if name.endswith("_at"):
+        return (str(value) if value is not None else "", True)
+    str_value = "" if value is None else str(value)
+    escaped   = str_value.replace('"', "&quot;").replace("<", "&lt;")
+    if isinstance(value, bool):
+        sel_t = "selected" if value     else ""
+        sel_f = "selected" if not value else ""
+        html  = (f'<select name="{name}">'
+                 f'<option value="true" {sel_t}>Ja</option>'
+                 f'<option value="false" {sel_f}>Nein</option>'
+                 f'</select>')
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        html = f'<input type="number" name="{name}" value="{escaped}">'
+    elif name == "language":
+        opts = "".join(f'<option value="{c}" {"selected" if str_value == c else ""}>{c}</option>'
+                       for c in ("DE", "EN"))
+        html = f'<select name="{name}">{opts}</select>'
+    elif name == "category":
+        opts = "".join(f'<option value="{k}" {"selected" if str_value == k else ""}>{k} – {v}</option>'
+                       for k, v in CATEGORIES.items())
+        html = f'<select name="{name}">{opts}</select>'
+    elif name == "file_type":
+        opts = "".join(f'<option value="{ft}" {"selected" if str_value == ft else ""}>{ft}</option>'
+                       for ft in ("PDF", "DXF", "DOCX", "TXT"))
+        html = f'<select name="{name}">{opts}</select>'
+    else:
+        html = f'<input type="text" name="{name}" value="{escaped}">'
+    return (html, False)
+
+
+def log_audit(db, ref, action, field="", old_value=None, new_value=None):
+    nid = db.next_id("audit_log", prefix="AUD-", padding=6)
+    db.create_node("audit_log", nid, {
+        "ref": ref, "action": action, "field": field,
+        "old_value": str(old_value) if old_value is not None else "",
+        "new_value": str(new_value) if new_value is not None else "",
+        "changed_by": DEFAULT_USER, "changed_at": now()
+    })
+
+
+def fire_webhooks(event, payload):
+    db = get_db()
+    if "webhooks" not in db.list_collections():
+        return
+    for wh in db.list_nodes("webhooks").values():
+        if not wh.get("active"):
+            continue
+        if wh.get("event") not in (event, "issue_all"):
+            continue
+        try:
+            data = json.dumps(payload).encode()
+            req  = _urllib.Request(wh["url"], data=data,
+                       headers={"Content-Type": "application/json"}, method="POST")
+            _urllib.urlopen(req, timeout=3)
+        except Exception:
+            pass
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+_OBJ_URL = {
+    "equipments":           "/equipment/",
+    "documents":            "/document/",
+    "functional_locations": "/functional-location/",
+    "issues":               "/issue/",
+    "logbook":              "/logbook/",
+}
+_OBJ_TYPE = {
+    "equipments":           "Equipment",
+    "documents":            "Dokument",
+    "functional_locations": "Funk. Platz",
+    "issues":               "Issue",
+}
+
+def obj_url(ref):
+    col = ref.split("/")[0] if "/" in ref else ""
+    return _OBJ_URL.get(col, "/") + ref
+
+def obj_type(ref):
+    col = ref.split("/")[0] if "/" in ref else ""
+    return _OBJ_TYPE.get(col, col)
+
+
+_db = None
+
+def get_db():
+    global _db
+    if _db is None:
+        _db = FlatGraphDB(root_dir=DB_ROOT)
+    return _db
+
+
+@app.before_request
+def _begin_transaction():
+    get_db()._transaction_depth += 1
+
+
+@app.teardown_request
+def _end_transaction(exc):
+    db = get_db()
+    if exc is None:
+        db._transaction_depth -= 1
+        db._flush_pending_writes()
+    else:
+        db._transaction_depth -= 1
+        db._dirty_nodes.clear()
+        db._dirty_edges.clear()
+
+
+def seed_if_empty():
+    db = get_db()
+    if db.list_collections():
+        return
+
+    # Dokumenttypen
+    db.create_node("doc_types", "DRW", {"code": "DRW", "description": "Zeichnung"})
+    db.create_node("doc_types", "MAN", {"code": "MAN", "description": "Handbuch"})
+    db.create_node("doc_types", "QSP", {"code": "QSP", "description": "Prüfplan"})
+    db.create_node("doc_types", "SPE", {"code": "SPE", "description": "Spezifikation"})
+
+    # Functional Locations
+    db.create_node("functional_locations", "WERK-01", {
+        "description": "Werk 01 – Hauptwerk", "category": "Werk"})
+    db.create_node("functional_locations", "WERK-01-HALLE-A", {
+        "description": "Halle A – Fertigung", "category": "Halle"})
+    db.create_node("functional_locations", "WERK-01-HALLE-B", {
+        "description": "Halle B – Montage", "category": "Halle"})
+    db.create_edge("functional_locations/WERK-01", "functional_locations/WERK-01-HALLE-A", "has_subarea")
+    db.create_edge("functional_locations/WERK-01", "functional_locations/WERK-01-HALLE-B", "has_subarea")
+
+    # Equipment
+    db.create_node("equipments", "EQ-00001", {
+        "description": "CNC Fräsmaschine DMG Mori", "category": "M",
+        "manufacturer": "DMG Mori", "model": "DMU 50",
+        "serial_nr": "DMG-2021-4471", "construction_year": 2021,
+        "status": "AKTIV", "cost_center": "K-100"})
+    db.create_node("equipments", "EQ-00002", {
+        "description": "Spindelmotor EQ-00001", "category": "E",
+        "manufacturer": "Siemens", "model": "1FT7-132",
+        "serial_nr": "SIE-2021-0092", "construction_year": 2021,
+        "status": "AKTIV", "cost_center": "K-100"})
+    db.create_node("equipments", "EQ-00003", {
+        "description": "Steuerungseinheit EQ-00001", "category": "E",
+        "manufacturer": "Siemens", "model": "SINUMERIK 840D",
+        "serial_nr": "SIE-2021-0093", "construction_year": 2021,
+        "status": "AKTIV", "cost_center": "K-100"})
+    db.create_node("equipments", "EQ-00004", {
+        "description": "Schweißroboter KUKA KR 16", "category": "M",
+        "manufacturer": "KUKA", "model": "KR 16-2",
+        "serial_nr": "KUK-2019-8812", "construction_year": 2019,
+        "status": "AKTIV", "cost_center": "K-200"})
+
+    # Equipment Hierarchie (EQ-00001 ist Parent von EQ-00002 und EQ-00003)
+    db.create_edge("equipments/EQ-00001", "equipments/EQ-00002", "is_parent_of", cascade_delete=True)
+    db.create_edge("equipments/EQ-00001", "equipments/EQ-00003", "is_parent_of", cascade_delete=True)
+
+    # Equipment → Functional Location
+    db.create_edge("equipments/EQ-00001", "functional_locations/WERK-01-HALLE-A", "installed_at",
+                   meta={"since": "2021-06-01"})
+    db.create_edge("equipments/EQ-00004", "functional_locations/WERK-01-HALLE-B", "installed_at",
+                   meta={"since": "2019-03-15"})
+
+    # Dokumente
+    t = now()
+    db.create_node("documents", "10001-DRW", {
+        "doc_nr": 10001, "doc_type": "DRW", "doc_part": "000",
+        "title": "CNC Fräsmaschine DMG Mori – Gesamtzeichnung",
+        "status": "FR", "locked": True, "language": "DE", "lab_office": "Konstruktion",
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
+    db.create_node("documents", "10002-MAN", {
+        "doc_nr": 10002, "doc_type": "MAN", "doc_part": "000",
+        "title": "Betriebsanleitung DMU 50",
+        "status": "FR", "locked": True, "language": "DE", "lab_office": "Dokumentation",
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
+    db.create_node("documents", "10003-QSP", {
+        "doc_nr": 10003, "doc_type": "QSP", "doc_part": "000",
+        "title": "Prüfplan Spindelmotor Wartung",
+        "status": "WK", "locked": False, "language": "DE", "lab_office": "Qualität",
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
+    db.create_node("documents", "10004-DRW", {
+        "doc_nr": 10004, "doc_type": "DRW", "doc_part": "000",
+        "title": "KUKA KR 16 – Aufstellungsplan",
+        "status": "FR", "locked": True, "language": "DE", "lab_office": "Konstruktion",
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
+    db.create_node("documents", "10005-SPE", {
+        "doc_nr": 10005, "doc_type": "SPE", "doc_part": "000",
+        "title": "Spezifikation Schweißnahtgüte",
+        "status": "OB", "locked": True, "language": "DE", "lab_office": "Qualität",
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t})
+
+    # Fake-Asset für DOC 10001
+    vault_path = os.path.join(DB_ROOT, "vault", "10001-DRW_Gesamtzeichnung.pdf")
+    os.makedirs(os.path.dirname(vault_path), exist_ok=True)
+    with open(vault_path, "w") as f:
+        f.write("FAKE PDF")
+    orig_ref = db.create_node("originals", "ORI-00001", {
+        "filename": "10001-DRW_Gesamtzeichnung.pdf",
+        "file_type": "PDF",
+        "datei": "vault/10001-DRW_Gesamtzeichnung.pdf",
+        "uploaded_at": t})
+    db.create_edge("documents/10001-DRW", orig_ref, "has_original", cascade_delete=True)
+
+    # Object Links: Dokumente → Equipment
+    db.create_edge("documents/10001-DRW", "equipments/EQ-00001", "object_link",
+                   meta={"linked_at": t, "linked_by": DEFAULT_USER})
+    db.create_edge("documents/10002-MAN", "equipments/EQ-00001", "object_link",
+                   meta={"linked_at": t, "linked_by": DEFAULT_USER})
+    db.create_edge("documents/10003-QSP", "equipments/EQ-00002", "object_link",
+                   meta={"linked_at": t, "linked_by": DEFAULT_USER})
+    db.create_edge("documents/10004-DRW", "equipments/EQ-00004", "object_link",
+                   meta={"linked_at": t, "linked_by": DEFAULT_USER})
+
+
+# =============================================================================
+# TEMPLATES
+# =============================================================================
+
+NAV = """
+<nav style="background:#1a1a2e;color:#fff;padding:0 1.5rem;display:flex;
+            align-items:center;gap:1.5rem;height:48px;font-size:.88rem">
+  <span style="font-weight:700;font-size:1rem;letter-spacing:.5px">⬡ pDMS</span>
+  <a href="/" style="color:#adb5d0">Dashboard</a>
+  <a href="/documents" style="color:#adb5d0">Dokumente</a>
+  <a href="/equipments" style="color:#adb5d0">Equipment</a>
+  <a href="/functional-locations" style="color:#adb5d0">Funktionale Plätze</a>
+  <a href="/doc-types" style="color:#adb5d0">Dok-Typen</a>
+  <a href="/traversal" style="color:#adb5d0">Traversal</a>
+  <a href="/gc" style="color:#adb5d0">GC</a>
+  <a href="/issues" style="color:#adb5d0">Issues</a>
+  <a href="/reports" style="color:#adb5d0">Reports</a>
+  <a href="/settings" style="color:#adb5d0;margin-left:auto;font-size:1.1rem"
+     title="Einstellungen">⚙</a>
+</nav>
+"""
+
+BASE = """<!doctype html><html lang="de"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pDMS</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f4f6f9;color:#1a1a2e;font-size:.9rem}
+a{color:#4361ee;text-decoration:none}a:hover{text-decoration:underline}
+nav a:hover{color:#fff;text-decoration:none}
+.wrap{max-width:1200px;margin:1.5rem auto;padding:0 1.5rem}
+h1{font-size:1.3rem;margin-bottom:1rem}
+h2{font-size:1rem;margin-bottom:.6rem;color:#444}
+.card{background:#fff;border-radius:8px;padding:1rem 1.25rem;
+      box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:1rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.75rem;margin-bottom:1.25rem}
+.stat .num{font-size:1.8rem;font-weight:700;color:#4361ee}
+.stat .lbl{font-size:.78rem;color:#666;margin-top:.15rem}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;
+      overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+th{background:#f0f2f8;text-align:left;padding:.55rem .9rem;font-size:.78rem;
+   text-transform:uppercase;letter-spacing:.4px;color:#555}
+td{padding:.55rem .9rem;border-top:1px solid #eee;vertical-align:top}
+tr:hover td{background:#fafbff}
+.badge{display:inline-block;padding:.18rem .5rem;border-radius:20px;
+       font-size:.73rem;font-weight:700;background:#e8ecff;color:#4361ee}
+.btn{display:inline-block;padding:.38rem .85rem;border-radius:5px;font-size:.83rem;
+     font-weight:600;cursor:pointer;border:none;background:#4361ee;color:#fff;line-height:1.4}
+.btn:hover{background:#3451d1;text-decoration:none}
+.btn.sm{padding:.25rem .6rem;font-size:.76rem}
+.btn.danger{background:#e74c3c}.btn.danger:hover{background:#c0392b}
+.btn.sec{background:#eee;color:#333}.btn.sec:hover{background:#ddd}
+.btn.warn{background:#e67e22;color:#fff}
+form.il{display:inline}
+label{display:block;font-size:.82rem;font-weight:600;margin-bottom:.25rem;color:#444}
+input[type=text],input[type=number],select,textarea{width:100%;padding:.42rem .7rem;
+  border:1px solid #ccc;border-radius:5px;font-size:.88rem;margin-bottom:.8rem}
+textarea{font-family:monospace;height:100px}
+.flash{padding:.6rem .9rem;border-radius:5px;margin-bottom:.9rem;font-size:.85rem;
+       background:#e8fff0;color:#0a0;border:1px solid #b2f0c8}
+.flash.err{background:#ffe8e8;color:#c00;border-color:#f0b2b2}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:.25rem .6rem;font-size:.87rem}
+.kv .k{color:#666;font-weight:600}.kv .v{word-break:break-all}
+.sec-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.5px;
+           color:#999;font-weight:700;margin:1.2rem 0 .5rem}
+.row{display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap}
+th.srt{cursor:pointer;user-select:none}
+th.srt::after{content:' ⇅';opacity:.35;font-size:.7rem}
+th.srt.asc::after{content:' ↑';opacity:.8}
+th.srt.dsc::after{content:' ↓';opacity:.8}
+</style></head><body>""" + NAV + """
+<div class="wrap">
+{% for msg,cat in get_flashed_messages(with_categories=true) %}
+<div class="flash {% if cat=='err' %}err{% endif %}">{{msg}}</div>
+{% endfor %}
+{% block content %}{% endblock %}
+</div>
+<script>
+function srt(th){
+  var tbl=th.closest('table'),idx=Array.from(th.parentElement.children).indexOf(th);
+  var asc=!th.classList.contains('asc');
+  th.parentElement.querySelectorAll('th.srt').forEach(function(t){t.classList.remove('asc','dsc')});
+  th.classList.add(asc?'asc':'dsc');
+  var rows=Array.from(tbl.tBodies[0].rows);
+  rows.sort(function(a,b){
+    var av=(a.cells[idx]?a.cells[idx].innerText:'').trim();
+    var bv=(b.cells[idx]?b.cells[idx].innerText:'').trim();
+    var n=parseFloat(av),m=parseFloat(bv);
+    if(!isNaN(n)&&!isNaN(m))return asc?n-m:m-n;
+    return asc?av.localeCompare(bv,'de'):bv.localeCompare(av,'de');
+  });
+  rows.forEach(function(r){tbl.tBodies[0].appendChild(r)});
+}
+</script>
+</body></html>"""
+
+
+def tmpl(block):
+    return BASE.replace("{% block content %}{% endblock %}", block)
+
+
+# =============================================================================
+# DASHBOARD
+# =============================================================================
+
+@app.route("/")
+def dashboard():
+    seed_if_empty()
+    db = get_db()
+    docs = db.list_nodes("documents")
+    eqs  = db.list_nodes("equipments")
+    fls  = db.list_nodes("functional_locations")
+    links = db.list_edges("object_link")
+
+    status_counts = {"WK": 0, "FR": 0, "OB": 0}
+    for d in docs.values():
+        status_counts[d.get("status", "WK")] = status_counts.get(d.get("status", "WK"), 0) + 1
+
+    recent    = sorted(docs.items(), key=lambda x: x[1].get("changed_at",""), reverse=True)[:5]
+    doc_types = db.list_nodes("doc_types")
+    type_counts = {tid: sum(1 for d in docs.values() if d.get("doc_type") == tid)
+                   for tid in doc_types}
+    activity  = sorted(db.list_nodes("audit_log").values(),
+                       key=lambda x: x.get("changed_at",""), reverse=True)[:15]
+
+    ACTION_LABEL = {
+        "update":        "Bearbeitet",
+        "status_change": "Status",
+        "soft_delete":   "Archiviert",
+        "link_created":  "Link +",
+        "link_deleted":  "Link −",
+        "file_uploaded": "Datei +",
+    }
+
+    T = tmpl("""
+<h1>Dashboard</h1>
+<div class="grid">
+  <div class="card stat"><div class="num">{{docs}}</div><div class="lbl">Dokumente</div></div>
+  <div class="card stat"><div class="num">{{eqs}}</div><div class="lbl">Equipment</div></div>
+  <div class="card stat"><div class="num">{{fls}}</div><div class="lbl">Funktionale Plätze</div></div>
+  <div class="card stat"><div class="num">{{links}}</div><div class="lbl">Object Links</div></div>
+  <div class="card stat"><div class="num" style="color:#4361ee">{{wk}}</div><div class="lbl">In Arbeit (WK)</div></div>
+  <div class="card stat"><div class="num" style="color:#2a9d60">{{fr}}</div><div class="lbl">Freigegeben (FR)</div></div>
+  <div class="card stat"><div class="num" style="color:#888">{{ob}}</div><div class="lbl">Veraltet (OB)</div></div>
+</div>
+<h2 style="margin-bottom:.5rem">Nach Dokumenttyp</h2>
+<div class="grid" style="margin-bottom:1.25rem">
+  {% for tid,t in doc_types.items() %}
+  <a href="/documents?doc_type={{tid}}" style="text-decoration:none">
+    <div class="card stat" style="cursor:pointer;transition:box-shadow .15s">
+      <div class="num" style="font-size:1.4rem">{{type_counts.get(tid,0)}}</div>
+      <div style="font-weight:700;font-size:.85rem;color:#4361ee;margin:.1rem 0">{{tid}}</div>
+      <div class="lbl">{{t.description}}</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
+<h2>Zuletzt geändert</h2>
+<table><tr><th>Dokument</th><th>Titel</th><th>Typ</th><th>Status</th><th>Geändert</th></tr>
+{% for nid,d in recent %}
+<tr>
+  <td><a href="/document/documents/{{nid}}">{{nid}}</a></td>
+  <td>{{d.title[:30]}}</td>
+  <td><span class="badge">{{d.doc_type}}</span></td>
+  <td><span class="badge" style="background:{{colors[d.status]}};color:#fff">{{labels[d.status]}}</span></td>
+  <td style="color:#999;font-size:.8rem">{{d.changed_at[:10]}}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+<div>
+<h2>Aktivitätsfeed</h2>
+{% if activity %}
+<table>
+  <tr><th>Zeit</th><th>Aktion</th><th>Objekt</th><th>Detail</th></tr>
+  {% for e in activity %}
+  <tr>
+    <td style="color:#999;font-size:.78rem;white-space:nowrap">{{e.changed_at[11:19]}}</td>
+    <td><span class="badge">{{action_labels.get(e.action, e.action)}}</span></td>
+    <td style="font-size:.8rem">{{e.ref.split('/')[-1]}}</td>
+    <td style="font-size:.78rem;color:#555;max-width:140px;overflow:hidden;text-overflow:ellipsis">
+      {% if e.field %}{{e.field}}: {% endif %}
+      {% if e.new_value %}{{e.new_value[:30]}}{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p style="color:#999;font-size:.85rem">Noch keine Aktivität.</p>
+{% endif %}
+</div>
+</div>
+""")
+    return render_template_string(T,
+        docs=len(docs), eqs=len(eqs), fls=len(fls), links=len(links),
+        wk=status_counts["WK"], fr=status_counts["FR"], ob=status_counts["OB"],
+        recent=recent, activity=activity, action_labels=ACTION_LABEL,
+        doc_types=doc_types, type_counts=type_counts,
+        colors=STATUS_COLOR, labels=STATUS_LABEL)
+
+
+# =============================================================================
+# DOKUMENTE
+# =============================================================================
+
+@app.route("/documents")
+def documents():
+    db = get_db()
+    q      = request.args.get("q", "").strip()
+    status = request.args.get("status", "")
+    dtype  = request.args.get("doc_type", "")
+
+    if q:
+        docs = db.find_nodes("documents", {"title": q})
+    else:
+        docs = db.list_nodes("documents")
+
+    if status:
+        docs = {k: v for k, v in docs.items() if v.get("status") == status}
+    if dtype:
+        docs = {k: v for k, v in docs.items() if v.get("doc_type") == dtype}
+
+    types = db.list_nodes("doc_types")
+    docs_sorted = sorted(docs.items(), key=lambda x: x[1].get("changed_at",""), reverse=True)
+
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Dokumente</h1>
+  <a class="btn sm" href="/documents/new">+ Neu</a>
+</div>
+<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem">
+  <form method="get" style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+    <div><label>Suche (Wildcard: *DRW*)</label>
+      <input type="text" name="q" value="{{q}}" style="width:280px;margin:0"></div>
+    <div><label>Status</label>
+      <select name="status" style="width:130px;margin:0">
+        <option value="">Alle</option>
+        {% for k,v in status_labels.items() %}
+        <option value="{{k}}" {% if k==status %}selected{% endif %}>{{v}}</option>
+        {% endfor %}
+      </select></div>
+    <div><label>Typ</label>
+      <select name="doc_type" style="width:110px;margin:0">
+        <option value="">Alle</option>
+        {% for tid,t in types.items() %}
+        <option value="{{tid}}" {% if tid==dtype %}selected{% endif %}>{{tid}}</option>
+        {% endfor %}
+      </select></div>
+    <button class="btn sm" type="submit">Suchen</button>
+    <a class="btn sm sec" href="/documents">Reset</a>
+  </form>
+</div>
+<table>
+  <tr><th class="srt" onclick="srt(this)">Nr</th><th class="srt" onclick="srt(this)">Titel</th><th class="srt" onclick="srt(this)">Typ</th><th class="srt" onclick="srt(this)">Status</th><th class="srt" onclick="srt(this)">Abteilung</th><th class="srt" onclick="srt(this)">Geändert</th><th></th></tr>
+  {% for nid,d in docs %}
+  <tr>
+    <td><a href="/document/documents/{{nid}}"><strong>{{nid}}</strong></a></td>
+    <td>{{d.title}}</td>
+    <td><span class="badge">{{d.doc_type}}</span></td>
+    <td><span class="badge" style="background:{{colors[d.status]}};color:#fff">{{labels[d.status]}}</span></td>
+    <td>{{d.get('lab_office','')}}</td>
+    <td style="color:#999;font-size:.79rem">{{d.changed_at[:10]}}</td>
+    <td>
+      <form class="il" method="post" action="/document/documents/{{nid}}/delete"
+            onsubmit="return confirm('Archivieren?')">
+        <button class="btn sm danger">Archivieren</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+""")
+    return render_template_string(T, docs=docs_sorted, q=q, status=status, dtype=dtype,
+                                  types=types, colors=STATUS_COLOR,
+                                  labels=STATUS_LABEL, status_labels=STATUS_LABEL)
+
+
+@app.route("/documents/new", methods=["GET", "POST"])
+def document_new():
+    db = get_db()
+    types = db.list_nodes("doc_types")
+
+    if request.method == "POST":
+        doc_type  = request.form.get("doc_type", "").strip()
+        title     = request.form.get("title", "").strip()
+        lab_office= request.form.get("lab_office", "").strip()
+        language  = request.form.get("language", "DE")
+
+        if not doc_type or not title:
+            flash("Dokumenttyp und Titel sind Pflicht.", "err")
+        else:
+            existing = db.list_nodes("documents")
+            max_nr = max((v.get("doc_nr", 0) for v in existing.values()), default=10000)
+            doc_nr = max_nr + 1
+            node_id = f"{doc_nr}-{doc_type}"
+            t = now()
+            db.create_node("documents", node_id, {
+                "doc_nr": doc_nr, "doc_type": doc_type, "doc_part": "000",
+                "title": title, "status": "WK", "locked": False, "language": language,
+                "lab_office": lab_office, "created_by": DEFAULT_USER,
+                "created_at": t, "changed_at": t})
+            flash(f"Dokument {node_id} angelegt.")
+            return redirect(url_for("document_detail", ref=f"documents/{node_id}"))
+
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/documents">← Dokumente</a></div>
+<h1>Neues Dokument</h1>
+<div class="card" style="max-width:560px">
+  <form method="post">
+    <label>Dokumenttyp *</label>
+    <select name="doc_type">
+      {% for tid,t in types.items() %}<option value="{{tid}}">{{tid}} – {{t.description}}</option>{% endfor %}
+    </select>
+    <label>Titel *</label>
+    <input type="text" name="title" placeholder="Kurzbeschreibung">
+    <label>Abteilung</label>
+    <input type="text" name="lab_office" placeholder="z.B. Konstruktion">
+    <label>Sprache</label>
+    <select name="language"><option value="DE">DE</option><option value="EN">EN</option></select>
+    <button class="btn" type="submit">Anlegen</button>
+    <a class="btn sec" href="/documents">Abbrechen</a>
+  </form>
+</div>
+""")
+    return render_template_string(T, types=types)
+
+
+@app.route("/document/<path:ref>")
+def document_detail(ref):
+    db = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash(f"Dokument '{ref}' nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+
+    nid = ref.split("/", 1)[1]
+    out_edges = db.get_connected_edges(ref, direction="out")
+    in_edges  = db.get_connected_edges(ref, direction="in")
+
+    # Originaldatei
+    originals = [(eid, e) for eid, e in out_edges if e["type"] == "has_original"]
+
+    # Objektverknüpfungen: beide Richtungen zusammenführen
+    out_obj = [(eid, e, db.get_node(e["target"]),   e["target"])   for eid,e in out_edges
+               if e["type"] == "object_link" and db.get_node(e["target"])]
+    in_obj  = [(eid, e, db.get_node(e["source"]), e["source"]) for eid,e in in_edges
+               if e["type"] == "object_link" and db.get_node(e["source"])]
+    obj_links = out_obj + in_obj
+    orig_nodes = [(eid, e, db.get_node(e["target"])) for eid, e in originals if db.get_node(e["target"])]
+
+    next_status = STATUS_FLOW.get(data.get("status", "WK"))
+    equipments  = db.list_nodes("equipments")
+    fls         = db.list_nodes("functional_locations")
+    audit_log   = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
+                         key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
+    issue_refs  = db.get_connected(ref, direction="out", rel_type="has_issue")
+    doc_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
+
+    log_refs = db.get_connected(ref, direction="out", rel_type="has_logbook")
+    logbook  = sorted(
+        [(r, db.get_node(r)) for r in log_refs if db.get_node(r)],
+        key=lambda x: (x[1].get("entry_date",""), x[1].get("created_at","")),
+        reverse=True
+    )
+
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/documents">← Dokumente</a></div>
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">{{nid}}</h1>
+  <span class="badge" style="background:{{colors[data.status]}};color:#fff;font-size:.85rem">
+    {{labels[data.status]}}</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
+<div class="card">
+  <h2>Dokumentdaten</h2>
+  <div class="kv">
+    <span class="k">Titel</span><span class="v">{{data.title}}</span>
+    <span class="k">Typ</span><span class="v">{{data.doc_type}}</span>
+    <span class="k">Teil</span><span class="v">{{data.doc_part}}</span>
+    <span class="k">Status</span><span class="v">{{labels[data.status]}}</span>
+    <span class="k">Sprache</span><span class="v">{{data.language}}</span>
+    <span class="k">Abteilung</span><span class="v">{{data.get('lab_office','')}}</span>
+    <span class="k">Erstellt von</span><span class="v">{{data.created_by}}</span>
+    <span class="k">Erstellt am</span><span class="v">{{data.created_at[:19].replace('T',' ')}}</span>
+    <span class="k">Geändert am</span><span class="v">{{data.changed_at[:19].replace('T',' ')}}</span>
+  </div>
+  <div style="margin-top:.8rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <form class="il" method="post" action="/document/{{ref}}/lock"
+          title="{% if data.locked %}Entsperren{% else %}Sperren{% endif %}">
+      <button class="btn sm" style="background:{% if data.locked %}#e74c3c{% else %}#2a9d60{% endif %};
+              font-size:1rem;padding:.25rem .55rem">
+        {% if data.locked %}🔒{% else %}🔓{% endif %}
+      </button>
+    </form>
+    {% if not data.locked %}
+    {% if next_status %}
+    <form class="il" method="post" action="/document/{{ref}}/status">
+      <input type="hidden" name="new_status" value="{{next_status}}">
+      <button class="btn {% if next_status=='OB' %}warn{% endif %}">
+        → {{labels[next_status]}} setzen</button>
+    </form>
+    {% endif %}
+    <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
+    {% endif %}
+    <form class="il" method="post" action="/document/{{ref}}/delete"
+          onsubmit="return confirm('Archivieren?')">
+      <button class="btn danger sm">Archivieren</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Originaldatei</h2>
+  {% if orig_nodes %}
+    {% for eid,e,o in orig_nodes %}
+    <div class="kv" style="margin-bottom:.5rem">
+      <span class="k">Dateiname</span>
+      <span class="v"><a href="/vault/{{o.datei.split('vault/')[-1]}}">{{o.filename}}</a></span>
+      <span class="k">Typ</span><span class="v">{{o.file_type}}</span>
+      <span class="k">Hochgeladen</span><span class="v" style="color:#999">{{o.get('uploaded_at','')[:10]}}</span>
+    </div>
+    <form class="il" method="post" action="/edge/{{eid}}/delete"
+          onsubmit="return confirm('Originaldatei-Verknüpfung entfernen?')">
+      <button class="btn sm sec">Entfernen</button>
+    </form>
+    {% endfor %}
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Kein Original angehängt.</p>
+  {% endif %}
+  <form method="post" action="/document/{{ref}}/upload"
+        enctype="multipart/form-data" style="margin-top:.75rem">
+    <div class="row">
+      <input type="file" name="file" accept=".pdf,.dxf,.docx,.doc,.xlsx,.txt,.png,.jpg,.dwg"
+             style="flex:1;margin:0;padding:.3rem">
+      <button class="btn sm" type="submit">Hochladen</button>
+    </div>
+  </form>
+</div>
+</div>
+
+<div>
+<div class="card">
+  <h2>Objektverknüpfungen ({{obj_links|length}})</h2>
+  {% if obj_links %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Nr</th><th>Bezeichnung</th><th>Typ</th><th></th></tr>
+    {% for eid,e,node,linked_ref in obj_links %}
+    <tr>
+      <td><a href="{{obj_url(linked_ref)}}">{{linked_ref.split('/')[-1]}}</a></td>
+      <td>{{(node.get('title') or node.get('description',''))[:45]}}</td>
+      <td style="font-size:.8rem;color:#666">{{obj_type(linked_ref)}}</td>
+      <td><form class="il" method="post" action="/edge/{{eid}}/delete">
+        <button class="btn sm danger">✕</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Verknüpfungen.</p>{% endif %}
+  <form method="post" action="/obj-link/new">
+    <input type="hidden" name="source_ref" value="{{ref}}">
+    <div class="row">
+      <select name="target_ref" style="flex:1;margin:0">
+        <optgroup label="Equipment">
+        {% for eid,eq in equipments.items() %}
+          <option value="equipments/{{eid}}">{{eid}} – {{eq.description[:40]}}</option>
+        {% endfor %}
+        </optgroup>
+        <optgroup label="Dokumente">
+        {% for did,d in all_docs.items() %}
+          <option value="documents/{{did}}">{{did}} – {{d.title[:40]}}</option>
+        {% endfor %}
+        </optgroup>
+        <optgroup label="Funktionale Plätze">
+        {% for fid,fl in fls.items() %}
+          <option value="functional_locations/{{fid}}">{{fid}} – {{fl.description[:35]}}</option>
+        {% endfor %}
+        </optgroup>
+      </select>
+      <button class="btn sm" type="submit">Verknüpfen</button>
+    </div>
+  </form>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:1rem">
+  <h2>Issues ({{doc_issues|length}})</h2>
+  {% if doc_issues %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Nr</th><th>Titel</th><th>Typ</th><th>Prio</th><th>Status</th><th>Fällig</th></tr>
+    {% for ir,id in doc_issues %}
+    <tr>
+      <td><a href="/issue/{{ir}}">{{ir.split('/')[-1]}}</a></td>
+      <td>{{id.title[:40]}}</td>
+      <td><span class="badge">{{itypes.get(id.issue_type,id.issue_type)}}</span></td>
+      <td><span class="badge" style="background:{{iprio.get(id.priority,'#888')}};color:#fff">{{id.priority}}</span></td>
+      <td><span class="badge" style="background:{{istatus.get(id.status,'#888')}};color:#fff">{{id.status}}</span></td>
+      <td style="color:#999;font-size:.8rem">{{id.get('due_date','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Issues.</p>
+  {% endif %}
+  <form method="post" action="/node/{{ref}}/issue/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div style="flex:2"><label>Titel *</label>
+        <input type="text" name="title" placeholder="Kurzbeschreibung" style="margin:0"></div>
+      <div><label>Typ</label>
+        <select name="issue_type" style="width:130px;margin:0">
+          {% for k,v in itypes.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}
+        </select></div>
+      <div><label>Priorität</label>
+        <select name="priority" style="width:100px;margin:0">
+          {% for k in iprio.keys() %}<option value="{{k}}">{{k}}</option>{% endfor %}
+        </select></div>
+      <div><label>Fällig</label>
+        <input type="date" name="due_date" style="width:140px;margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Issue</button></div>
+    </div>
+  </form>
+</div>
+<div class="card" style="margin-top:1rem">
+  <h2>Logbuch ({{logbook|length}})</h2>
+  {% if logbook %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Datum</th><th>Eintrag</th><th></th></tr>
+    {% for lr,le in logbook %}
+    <tr>
+      <td style="white-space:nowrap;color:#666;width:100px">{{le.get('entry_date','')}}</td>
+      <td>{{le.get('text','')}}</td>
+      <td><form class="il" method="post" action="/logbook/{{lr.split('/')[-1]}}/delete">
+        <button class="btn sm danger" title="Löschen">✕</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Einträge.</p>
+  {% endif %}
+  <form method="post" action="/node/{{ref}}/logbook/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div><label>Datum</label>
+        <input type="date" name="entry_date" value="{{today}}" style="width:145px;margin:0"></div>
+      <div style="flex:1"><label>Eintrag *</label>
+        <input type="text" name="text" placeholder="Was ist passiert?" style="margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Eintrag</button></div>
+    </div>
+  </form>
+</div>
+{% if audit_log %}
+<div class="card" style="margin-top:1rem">
+  <h2>Änderungshistorie</h2>
+  <table style="margin-top:.5rem">
+    <tr><th>Datum</th><th>Aktion</th><th>Feld</th><th>Alt</th><th>Neu</th></tr>
+    {% for e in audit_log %}
+    <tr>
+      <td style="color:#999;font-size:.79rem;white-space:nowrap">{{e.changed_at[:19].replace('T',' ')}}</td>
+      <td><span class="badge">{{e.action}}</span></td>
+      <td>{{e.get('field','')}}</td>
+      <td style="color:#888;max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('old_value','')}}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('new_value','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+""")
+    all_docs = db.list_nodes("documents")
+    return render_template_string(T, ref=ref, nid=nid, data=data,
+                                  obj_links=obj_links, orig_nodes=orig_nodes,
+                                  next_status=next_status, equipments=equipments,
+                                  fls=fls, all_docs=all_docs,
+                                  colors=STATUS_COLOR, labels=STATUS_LABEL,
+                                  audit_log=audit_log, doc_issues=doc_issues,
+                                  itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY,
+                                  logbook=logbook, obj_url=obj_url, obj_type=obj_type,
+                                  today=datetime.now(timezone.utc).date().isoformat())
+
+
+@app.route("/document/<path:ref>/status", methods=["POST"])
+def document_status(ref):
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        return redirect(url_for("documents"))
+    col, nid = parts
+    new_status = request.form.get("new_status", "")
+    db = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    if data.get("locked"):
+        flash("Dokument ist gesperrt. Bitte zuerst entsperren.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    cur = data.get("status", "WK")
+    if STATUS_FLOW.get(cur) != new_status:
+        flash(f"Status-Übergang {cur}→{new_status} nicht erlaubt.", "err")
+    else:
+        db.update_node(col, nid, {"status": new_status, "changed_at": now()})
+        log_audit(db, ref, "status_change", field="status", old_value=cur, new_value=new_status)
+        flash(f"Status auf {STATUS_LABEL[new_status]} gesetzt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/document/<path:ref>/link", methods=["POST"])
+def document_link(ref):
+    target = request.form.get("target_ref", "").strip()
+    db = get_db()
+    if not target or not db.get_node(target):
+        flash("Ziel nicht gefunden.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    t = now()
+    db.create_edge(ref, target, "object_link",
+                   meta={"linked_at": t, "linked_by": DEFAULT_USER})
+    log_audit(db, ref, "link_created", new_value=target)
+    flash(f"Object Link zu {target} angelegt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/document/<path:ref>/delete", methods=["POST"])
+def document_delete(ref):
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        return redirect(url_for("documents"))
+    col, nid = parts
+    db = get_db()
+    db.soft_delete(col, nid)
+    log_audit(db, ref, "soft_delete")
+    flash(f"{ref} archiviert (wartet auf GC).")
+    return redirect(url_for("documents"))
+
+
+@app.route("/document/<path:ref>/lock", methods=["POST"])
+def document_lock_toggle(ref):
+    parts = ref.split("/", 1)
+    if len(parts) != 2:
+        return redirect(url_for("documents"))
+    col, nid = parts
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    new_lock = not data.get("locked", False)
+    db.update_node(col, nid, {"locked": new_lock, "changed_at": now()})
+    log_audit(db, ref, "unlocked" if not new_lock else "locked")
+    flash("Dokument entsperrt." if not new_lock else "Dokument gesperrt.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/edge/<edge_id>/delete", methods=["POST"])
+def edge_delete(edge_id):
+    referrer = request.referrer or url_for("documents")
+    db = get_db()
+    edge = db.get_edge(edge_id)
+    db.delete_edge(edge_id)
+    if edge:
+        log_audit(db, edge["source"], "link_deleted", old_value=edge_id, new_value=edge.get("ziel",""))
+    flash("Edge gelöscht.")
+    return redirect(referrer)
+
+
+# =============================================================================
+# FILE UPLOAD / DOWNLOAD
+# =============================================================================
+
+ALLOWED_EXTENSIONS = {"pdf", "dxf", "docx", "doc", "xlsx", "txt", "png", "jpg", "dwg"}
+VAULT_DIR = os.path.join(DB_ROOT, "vault")
+
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def safe_vault_path(filename):
+    """Return absolute vault path, raises ValueError on path traversal attempt."""
+    safe_name = os.path.basename(filename)
+    if not safe_name or safe_name != filename:
+        raise ValueError("Ungültiger Dateiname.")
+    return os.path.join(VAULT_DIR, safe_name)
+
+
+@app.route("/document/<path:ref>/upload", methods=["POST"])
+def document_upload(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Dokument nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+
+    f = request.files.get("file")
+    if not f or f.filename == "":
+        flash("Keine Datei ausgewählt.", "err")
+        return redirect(url_for("document_detail", ref=ref))
+    if not allowed_file(f.filename):
+        flash(f"Dateityp nicht erlaubt. Erlaubt: {', '.join(sorted(ALLOWED_EXTENSIONS))}", "err")
+        return redirect(url_for("document_detail", ref=ref))
+
+    os.makedirs(VAULT_DIR, exist_ok=True)
+    nid_safe   = ref.replace("/", "_")
+    ext        = f.filename.rsplit(".", 1)[1].lower()
+    vault_name = f"{nid_safe}.{ext}"
+    vault_path = safe_vault_path(vault_name)
+    f.save(vault_path)
+
+    t        = now()
+    orig_nid = db.next_id("originals", prefix="ORI-", padding=5)
+    db.create_node("originals", orig_nid, {
+        "filename":    f.filename,
+        "file_type":   ext.upper(),
+        "datei":       f"vault/{vault_name}",
+        "uploaded_at": t,
+    })
+    orig_ref = f"originals/{orig_nid}"
+    db.create_edge(ref, orig_ref, "has_original", cascade_delete=True)
+    log_audit(db, ref, "file_uploaded", new_value=f.filename)
+    flash(f"Datei '{f.filename}' hochgeladen.")
+    return redirect(url_for("document_detail", ref=ref))
+
+
+@app.route("/vault/<path:filename>")
+def vault_download(filename):
+    try:
+        path = safe_vault_path(filename)
+    except ValueError:
+        flash("Ungültiger Dateipfad.", "err")
+        return redirect(url_for("documents"))
+    if not os.path.isfile(path):
+        flash("Datei nicht gefunden.", "err")
+        return redirect(url_for("documents"))
+    return send_file(path, as_attachment=True)
+
+
+# =============================================================================
+# GENERIC EDIT
+# =============================================================================
+
+_DETAIL_ROUTES = {
+    "documents":            ("document_detail",            "documents"),
+    "equipments":           ("equipment_detail",           "equipments"),
+    "functional_locations": ("functional_location_detail", "functional_locations"),
+}
+
+
+@app.route("/edit/<col>/<path:nid>", methods=["GET", "POST"])
+def node_edit(col, nid):
+    db   = get_db()
+    ref  = f"{col}/{nid}"
+    data = db.get_node(ref)
+    if data is None:
+        flash(f"Node '{ref}' nicht gefunden.", "err")
+        return redirect(url_for("dashboard"))
+    route_info = _DETAIL_ROUTES.get(col)
+    if route_info is None:
+        flash(f"Bearbeitung für '{col}' nicht unterstützt.", "err")
+        return redirect(url_for("dashboard"))
+    detail_view, _ = route_info
+    locked = get_locked(col)
+
+    if col == "documents" and data.get("locked"):
+        flash("Dokument ist gesperrt. Bitte zuerst entsperren.", "err")
+        return redirect(url_for(detail_view, ref=ref))
+
+    if request.method == "POST":
+        updates = {}
+        for field, old_value in data.items():
+            if field in locked or field.endswith("_at") or field.startswith("_"):
+                continue
+            raw = request.form.get(field)
+            if raw is None:
+                continue
+            if isinstance(old_value, bool):
+                new_value = raw.lower() == "true"
+            elif isinstance(old_value, int) and not isinstance(old_value, bool):
+                try:    new_value = int(raw) if raw.strip() else None
+                except: new_value = raw
+            elif isinstance(old_value, float):
+                try:    new_value = float(raw) if raw.strip() else None
+                except: new_value = raw
+            else:
+                new_value = raw if raw != "" else (None if old_value is None else raw)
+            if new_value != old_value:
+                updates[field] = new_value
+        if updates:
+            if col == "documents":
+                updates["changed_at"] = now()
+            db.update_node(col, nid, updates)
+            for field, new_val in updates.items():
+                if field != "changed_at":
+                    log_audit(db, ref, "update", field=field,
+                              old_value=data.get(field), new_value=new_val)
+            flash(f"{nid} gespeichert.")
+        else:
+            flash("Keine Änderungen.")
+        return redirect(url_for(detail_view, ref=ref))
+
+    back_titles = {"documents": "← Dokumente", "equipments": "← Equipment",
+                   "functional_locations": "← Funktionale Plätze"}
+    back_url  = url_for(detail_view, ref=ref)
+    back_text = back_titles.get(col, "← Zurück")
+    fields = []
+    for field, value in data.items():
+        html_input, auto_locked = field_input(field, value)
+        fields.append({
+            "name":      field,
+            "label":     field.replace("_", " ").capitalize(),
+            "html":      html_input,
+            "is_locked": (field in locked) or auto_locked,
+            "value":     value,
+        })
+
+    # Felder aus field_definitions die noch nicht im Node sind
+    existing_names = {f["name"] for f in fields}
+    for fd in get_field_defs(col).values():
+        fname = fd.get("name", "")
+        if not fname or fname in existing_names:
+            continue
+        ft    = fd.get("field_type", "text")
+        opts  = [o.strip() for o in fd.get("options","").split(",") if o.strip()]
+        if ft == "number":
+            html = f'<input type="number" name="{fname}" value="">'
+        elif ft == "select" and opts:
+            o_html = "".join(f'<option value="{o}">{o}</option>' for o in opts)
+            html   = f'<select name="{fname}"><option value="">—</option>{o_html}</select>'
+        else:
+            html = f'<input type="text" name="{fname}" value="">'
+        fields.append({
+            "name":      fname,
+            "label":     fd.get("label", fname),
+            "html":      html,
+            "is_locked": False,
+            "value":     "",
+            "is_new":    True,
+        })
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="{{back_url}}">{{back_text}}</a></div>
+<h1>Bearbeiten: {{nid}}</h1>
+<div class="card" style="max-width:640px">
+  <form method="post">
+    {% for f in fields %}
+    <label>{{f.label}}
+      {% if f.is_locked %}<span style="font-weight:400;color:#999;font-size:.78rem"> (gesperrt)</span>
+      {% elif f.is_new %}<span style="font-weight:400;color:#4361ee;font-size:.78rem"> (neu)</span>
+      {% endif %}
+    </label>
+    {% if f.is_locked %}
+      <div style="padding:.42rem .7rem;border:1px solid #e0e0e0;border-radius:5px;
+                  background:#f8f8f8;margin-bottom:.8rem;color:#888;font-size:.88rem">
+        {{f.value if f.value is not none else '–'}}</div>
+    {% else %}{{f.html|safe}}
+    {% endif %}
+    {% endfor %}
+    <div style="display:flex;gap:.6rem;margin-top:.5rem">
+      <button class="btn" type="submit">Speichern</button>
+      <a class="btn sec" href="{{back_url}}">Abbrechen</a>
+    </div>
+  </form>
+</div>
+""")
+    return render_template_string(T, nid=nid, fields=fields,
+                                  back_url=back_url, back_text=back_text)
+
+
+# =============================================================================
+# EQUIPMENT
+# =============================================================================
+
+@app.route("/equipments")
+def equipments():
+    db     = get_db()
+    q      = request.args.get("q", "").strip()
+    cat    = request.args.get("category", "")
+    eq_st  = request.args.get("eq_status", "")
+
+    if q:
+        eqs = db.find_nodes("equipments", {"description": q})
+        if not eqs:
+            eqs = db.find_nodes("equipments", {"serial_nr": q})
+        if not eqs:
+            eqs = db.find_nodes("equipments", {"manufacturer": q})
+    else:
+        eqs = db.list_nodes("equipments")
+
+    if cat:
+        eqs = {k: v for k, v in eqs.items() if v.get("category") == cat}
+    if eq_st:
+        eqs = {k: v for k, v in eqs.items() if v.get("status") == eq_st}
+
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Equipment</h1>
+  <a class="btn sm" href="/equipments/new">+ Neu</a>
+</div>
+<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem">
+  <form method="get" style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+    <div><label>Suche (Beschreibung, Seriennr., Hersteller)</label>
+      <input type="text" name="q" value="{{q}}" style="width:300px;margin:0"></div>
+    <div><label>Kategorie</label>
+      <select name="category" style="width:130px;margin:0">
+        <option value="">Alle</option>
+        {% for k,v in cats.items() %}
+        <option value="{{k}}" {% if k==cat %}selected{% endif %}>{{k}} – {{v}}</option>
+        {% endfor %}
+      </select></div>
+    <div><label>Status</label>
+      <select name="eq_status" style="width:130px;margin:0">
+        <option value="">Alle</option>
+        {% for k in eq_st_opts %}
+        <option value="{{k}}" {% if k==eq_st %}selected{% endif %}>{{k}}</option>
+        {% endfor %}
+      </select></div>
+    <button class="btn sm" type="submit">Suchen</button>
+    <a class="btn sm sec" href="/equipments">Reset</a>
+  </form>
+</div>
+<table>
+  <tr><th class="srt" onclick="srt(this)">Nr</th><th class="srt" onclick="srt(this)">Beschreibung</th><th class="srt" onclick="srt(this)">Kat.</th><th class="srt" onclick="srt(this)">Hersteller</th><th class="srt" onclick="srt(this)">Status</th><th class="srt" onclick="srt(this)">Kostenstelle</th><th></th></tr>
+  {% for nid,e in eqs %}
+  <tr>
+    <td><a href="/equipment/equipments/{{nid}}"><strong>{{nid}}</strong></a></td>
+    <td>{{e.description}}</td>
+    <td><span class="badge">{{e.category}}</span></td>
+    <td>{{e.get('manufacturer','')}}</td>
+    <td><span class="badge" style="background:{{st_col[e.status]}};color:#fff">{{e.status}}</span></td>
+    <td>{{e.get('cost_center','')}}</td>
+    <td><form class="il" method="post" action="/equipment/equipments/{{nid}}/delete"
+          onsubmit="return confirm('Stilllegen?')">
+      <button class="btn sm danger">Stilllegen</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+""")
+    return render_template_string(T, eqs=sorted(eqs.items()), q=q, cat=cat, eq_st=eq_st,
+                                  cats=CATEGORIES, st_col=EQ_STATUS,
+                                  eq_st_opts=list(EQ_STATUS.keys()))
+
+
+@app.route("/equipments/new", methods=["GET", "POST"])
+def equipment_new():
+    db = get_db()
+    if request.method == "POST":
+        desc   = request.form.get("description","").strip()
+        cat    = request.form.get("category","M")
+        mfr    = request.form.get("manufacturer","").strip()
+        model  = request.form.get("model","").strip()
+        serial = request.form.get("serial_nr","").strip()
+        year   = request.form.get("construction_year","")
+        cc     = request.form.get("cost_center","").strip()
+        if not desc:
+            flash("Beschreibung ist Pflicht.", "err")
+        else:
+            nid = db.next_id("equipments", prefix="EQ-", padding=5)
+            db.create_node("equipments", nid, {
+                "description": desc, "category": cat, "manufacturer": mfr,
+                "model": model, "serial_nr": serial,
+                "construction_year": int(year) if year else None,
+                "status": "AKTIV", "cost_center": cc})
+            flash(f"Equipment {nid} angelegt.")
+            return redirect(url_for("equipment_detail", ref=f"equipments/{nid}"))
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/equipments">← Equipment</a></div>
+<h1>Neues Equipment</h1>
+<div class="card" style="max-width:560px">
+  <form method="post">
+    <label>Beschreibung *</label>
+    <input type="text" name="description" placeholder="z.B. CNC Fräsmaschine">
+    <label>Kategorie</label>
+    <select name="category">
+      {% for k,v in cats.items() %}<option value="{{k}}">{{k}} – {{v}}</option>{% endfor %}
+    </select>
+    <label>Hersteller</label><input type="text" name="manufacturer">
+    <label>Modell</label><input type="text" name="model">
+    <label>Seriennummer</label><input type="text" name="serial_nr">
+    <label>Baujahr</label><input type="number" name="construction_year" placeholder="2024">
+    <label>Kostenstelle</label><input type="text" name="cost_center">
+    <button class="btn" type="submit">Anlegen</button>
+    <a class="btn sec" href="/equipments">Abbrechen</a>
+  </form>
+</div>
+""")
+    return render_template_string(T, cats=CATEGORIES)
+
+
+@app.route("/equipment/<path:ref>")
+def equipment_detail(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Equipment nicht gefunden.", "err")
+        return redirect(url_for("equipments"))
+    nid = ref.split("/", 1)[1]
+
+    children_refs = db.get_connected(ref, direction="out", rel_type="is_parent_of")
+    children = [(r, db.get_node(r)) for r in children_refs if db.get_node(r)]
+
+    parent_refs = db.get_connected(ref, direction="in", rel_type="is_parent_of")
+    parent = (parent_refs[0], db.get_node(parent_refs[0])) if parent_refs else None
+
+    fl_refs = db.get_connected_edges(ref, direction="out", rel_type="installed_at")
+    fl_data = [(eid, e, db.get_node(e["target"])) for eid,e in fl_refs if db.get_node(e["target"])]
+
+    # Objektverknüpfungen: beide Richtungen zusammenführen
+    out_obj = db.get_connected_edges(ref, direction="out", rel_type="object_link")
+    in_obj  = db.get_connected_edges(ref, direction="in",  rel_type="object_link")
+    obj_links_eq = (
+        [(eid, e, db.get_node(e["target"]),   e["target"])   for eid,e in out_obj if db.get_node(e["target"])] +
+        [(eid, e, db.get_node(e["source"]), e["source"]) for eid,e in in_obj  if db.get_node(e["source"])]
+    )
+
+    all_docs_in_tree = db.traverse(ref, rel_type="is_parent_of",
+                                   direction="out", include_start=True)
+    tree_doc_refs = set()
+    for eq_ref in all_docs_in_tree:
+        for _, e in db.get_connected_edges(eq_ref, direction="in", rel_type="object_link"):
+            if e["source"].startswith("documents/"):
+                tree_doc_refs.add(e["source"])
+    tree_docs = [(r, db.get_node(r)) for r in sorted(tree_doc_refs) if db.get_node(r)]
+
+    fls_all   = db.list_nodes("functional_locations")
+    eqs_all   = db.list_nodes("equipments")
+    docs_all  = db.list_nodes("documents")
+    audit_log  = sorted(db.find_nodes("audit_log", {"ref": ref}).values(),
+                        key=lambda x: x.get("changed_at", ""), reverse=True)[:20]
+    issue_refs = db.get_connected(ref, direction="out", rel_type="has_issue")
+    eq_issues  = [(r, db.get_node(r)) for r in issue_refs if db.get_node(r)]
+    next_eq_status = EQ_STATUS_FLOW.get(data.get("status", "AKTIV"))
+
+    log_refs = db.get_connected(ref, direction="out", rel_type="has_logbook")
+    logbook  = sorted(
+        [(r, db.get_node(r)) for r in log_refs if db.get_node(r)],
+        key=lambda x: (x[1].get("entry_date",""), x[1].get("created_at","")),
+        reverse=True
+    )
+
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/equipments">← Equipment</a></div>
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">{{nid}}</h1>
+  <span class="badge" style="background:{{st_col[data.status]}};color:#fff">{{data.status}}</span>
+  <span class="badge">{{cats[data.category]}}</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
+<div class="card">
+  <h2>Stammdaten</h2>
+  <div class="kv">
+    <span class="k">Beschreibung</span><span class="v">{{data.description}}</span>
+    <span class="k">Hersteller</span><span class="v">{{data.get('manufacturer','')}}</span>
+    <span class="k">Modell</span><span class="v">{{data.get('model','')}}</span>
+    <span class="k">Seriennr.</span><span class="v">{{data.get('serial_nr','')}}</span>
+    <span class="k">Baujahr</span><span class="v">{{data.get('construction_year','')}}</span>
+    <span class="k">Kostenstelle</span><span class="v">{{data.get('cost_center','')}}</span>
+  </div>
+  <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
+    <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
+    {% if next_eq_status %}
+    <form class="il" method="post" action="/equipment/{{ref}}/eq-status">
+      <input type="hidden" name="new_status" value="{{next_eq_status}}">
+      <button class="btn sm" style="background:{{st_col[next_eq_status]}};color:#fff"
+              onclick="return confirm('Status ändern zu {{next_eq_status}}?')">
+        → {{next_eq_status}}</button>
+    </form>
+    {% endif %}
+    <form class="il" method="post" action="/equipment/{{ref}}/delete"
+          onsubmit="return confirm('Stilllegen?')">
+      <button class="btn sm danger">Stilllegen</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Installationsort</h2>
+  {% if fl_data %}
+    {% for eid,e,fl in fl_data %}
+    <div class="kv" style="margin-bottom:.5rem">
+      <span class="k">Platz</span>
+      <span class="v"><a href="/functional-location/{{e.target}}">{{e.target}}</a></span>
+      <span class="k">Beschreibung</span><span class="v">{{fl.description}}</span>
+      <span class="k">Seit</span><span class="v">{{e.get('since','')}}</span>
+    </div>
+    <form class="il" method="post" action="/edge/{{eid}}/delete">
+      <button class="btn sm sec">Link entfernen</button></form>
+    {% endfor %}
+  {% else %}<p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Nicht installiert.</p>{% endif %}
+  <form method="post" action="/equipment/{{ref}}/link-fl" style="margin-top:.5rem">
+    <div class="row">
+      <select name="fl_ref" style="flex:1;margin:0">
+        {% for fid,fl in fls_all.items() %}
+        <option value="functional_locations/{{fid}}">{{fid}} – {{fl.description[:40]}}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="since" placeholder="Seit (YYYY-MM-DD)"
+             style="width:140px;margin:0">
+      <button class="btn sm" type="submit">Zuordnen</button>
+    </div>
+  </form>
+</div>
+</div>
+
+<div>
+<div class="card">
+  <h2>Hierarchie</h2>
+  {% if parent %}
+  <p style="margin-bottom:.5rem;font-size:.85rem">
+    ↑ Übergeordnet: <a href="/equipment/{{parent[0]}}">{{parent[0]}}</a>
+    – {{parent[1].description}}</p>
+  {% endif %}
+  {% if children %}
+  <div class="sec-title">Unterbaugruppen</div>
+  <table>
+    <tr><th>Nr</th><th>Beschreibung</th><th>Status</th></tr>
+    {% for cr,cd in children %}
+    <tr>
+      <td><a href="/equipment/{{cr}}">{{cr.split('/')[-1]}}</a></td>
+      <td>{{cd.description}}</td>
+      <td><span class="badge" style="background:{{st_col[cd.status]}};color:#fff">{{cd.status}}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p style="color:#999;font-size:.85rem">Keine Unterbaugruppen.</p>{% endif %}
+  <div style="margin-top:.75rem">
+    <form method="post" action="/equipment/{{ref}}/add-child">
+      <div class="row">
+        <select name="child_ref" style="flex:1;margin:0">
+          {% for eid,eq in eqs_all.items() %}
+          <option value="equipments/{{eid}}">{{eid}} – {{eq.description[:40]}}</option>
+          {% endfor %}
+        </select>
+        <button class="btn sm" type="submit">Als Unterbaugruppe</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Objektverknüpfungen ({{obj_links_eq|length}})</h2>
+  {% if obj_links_eq %}
+  <table style="margin-bottom:.5rem">
+    <tr><th>Nr</th><th>Bezeichnung</th><th>Typ</th><th></th></tr>
+    {% for eid,e,node,linked_ref in obj_links_eq %}
+    <tr>
+      <td><a href="{{obj_url(linked_ref)}}">{{linked_ref.split('/')[-1]}}</a></td>
+      <td>{{(node.get('title') or node.get('description',''))[:45]}}</td>
+      <td style="font-size:.8rem;color:#666">{{obj_type(linked_ref)}}</td>
+      <td><form class="il" method="post" action="/edge/{{eid}}/delete">
+        <button class="btn sm danger">✕</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p style="color:#999;font-size:.85rem">Keine Verknüpfungen.</p>{% endif %}
+  {% if tree_docs %}
+  <div class="sec-title">Docs aus Equipment-Baum (Unterbaugruppen)</div>
+  <table style="margin-bottom:.5rem">
+    <tr><th>Dokument</th><th>Titel</th></tr>
+    {% for r,d in tree_docs %}
+    <tr>
+      <td><a href="/document/{{r}}">{{r.split('/')[-1]}}</a></td>
+      <td>{{d.title[:50]}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <form method="post" action="/obj-link/new" style="margin-top:.5rem">
+    <input type="hidden" name="source_ref" value="{{ref}}">
+    <div class="row">
+      <select name="target_ref" style="flex:1;margin:0">
+        <optgroup label="Equipment">
+          {% for eid,eq in eqs_all.items() %}
+          <option value="equipments/{{eid}}">{{eid}} – {{eq.description[:40]}}</option>
+          {% endfor %}
+        </optgroup>
+        <optgroup label="Dokumente">
+          {% for did,d in docs_all.items() %}
+          <option value="documents/{{did}}">{{did}} – {{d.title[:40]}}</option>
+          {% endfor %}
+        </optgroup>
+        <optgroup label="Funktionale Plätze">
+          {% for fid,fl in fls_all.items() %}
+          <option value="functional_locations/{{fid}}">{{fid}} – {{fl.description[:35]}}</option>
+          {% endfor %}
+        </optgroup>
+      </select>
+      <button class="btn sm" type="submit">Verknüpfen</button>
+    </div>
+  </form>
+</div>
+</div>
+</div>
+<div class="card" style="margin-top:1rem">
+  <h2>Issues ({{eq_issues|length}})</h2>
+  {% if eq_issues %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Nr</th><th>Titel</th><th>Typ</th><th>Prio</th><th>Status</th><th>Fällig</th></tr>
+    {% for ir,id in eq_issues %}
+    <tr>
+      <td><a href="/issue/{{ir}}">{{ir.split('/')[-1]}}</a></td>
+      <td>{{id.title[:40]}}</td>
+      <td><span class="badge">{{itypes.get(id.issue_type,id.issue_type)}}</span></td>
+      <td><span class="badge" style="background:{{iprio.get(id.priority,'#888')}};color:#fff">{{id.priority}}</span></td>
+      <td><span class="badge" style="background:{{istatus.get(id.status,'#888')}};color:#fff">{{id.status}}</span></td>
+      <td style="color:#999;font-size:.8rem">{{id.get('due_date','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine offenen Issues.</p>
+  {% endif %}
+  <form method="post" action="/node/{{ref}}/issue/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div style="flex:2"><label>Titel *</label>
+        <input type="text" name="title" placeholder="Kurzbeschreibung" style="margin:0"></div>
+      <div><label>Typ</label>
+        <select name="issue_type" style="width:130px;margin:0">
+          {% for k,v in itypes.items() %}<option value="{{k}}">{{v}}</option>{% endfor %}
+        </select></div>
+      <div><label>Priorität</label>
+        <select name="priority" style="width:100px;margin:0">
+          {% for k in iprio.keys() %}<option value="{{k}}">{{k}}</option>{% endfor %}
+        </select></div>
+      <div><label>Fällig</label>
+        <input type="date" name="due_date" style="width:140px;margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Issue</button></div>
+    </div>
+  </form>
+</div>
+<div class="card" style="margin-top:1rem">
+  <h2>Logbuch ({{logbook|length}})</h2>
+  {% if logbook %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Datum</th><th>Eintrag</th><th></th></tr>
+    {% for lr,le in logbook %}
+    <tr>
+      <td style="white-space:nowrap;color:#666;width:100px">{{le.get('entry_date','')}}</td>
+      <td>{{le.get('text','')}}</td>
+      <td><form class="il" method="post" action="/logbook/{{lr.split('/')[-1]}}/delete">
+        <button class="btn sm danger" title="Löschen">✕</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Einträge.</p>
+  {% endif %}
+  <form method="post" action="/node/{{ref}}/logbook/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div><label>Datum</label>
+        <input type="date" name="entry_date" value="{{today}}" style="width:145px;margin:0"></div>
+      <div style="flex:1"><label>Eintrag *</label>
+        <input type="text" name="text" placeholder="Was ist passiert?" style="margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Eintrag</button></div>
+    </div>
+  </form>
+</div>
+{% if audit_log %}
+<div class="card" style="margin-top:1rem">
+  <h2>Änderungshistorie</h2>
+  <table style="margin-top:.5rem">
+    <tr><th>Datum</th><th>Aktion</th><th>Feld</th><th>Alt</th><th>Neu</th></tr>
+    {% for e in audit_log %}
+    <tr>
+      <td style="color:#999;font-size:.79rem;white-space:nowrap">{{e.changed_at[:19].replace('T',' ')}}</td>
+      <td><span class="badge">{{e.action}}</span></td>
+      <td>{{e.get('field','')}}</td>
+      <td style="color:#888;max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('old_value','')}}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis">{{e.get('new_value','')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+""")
+    return render_template_string(T, ref=ref, nid=nid, data=data,
+        children=children, parent=parent, fl_data=fl_data,
+        obj_links_eq=obj_links_eq, tree_docs=tree_docs,
+        fls_all=fls_all, eqs_all=eqs_all, docs_all=docs_all,
+        colors=STATUS_COLOR, st_col=EQ_STATUS, cats=CATEGORIES,
+        audit_log=audit_log, eq_issues=eq_issues,
+        itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY,
+        next_eq_status=next_eq_status, logbook=logbook,
+        obj_url=obj_url, obj_type=obj_type,
+        today=datetime.now(timezone.utc).date().isoformat())
+
+
+@app.route("/equipment/<path:ref>/link-fl", methods=["POST"])
+def equipment_link_fl(ref):
+    fl_ref = request.form.get("fl_ref","").strip()
+    since  = request.form.get("since","").strip()
+    db = get_db()
+    if not fl_ref or not db.get_node(fl_ref):
+        flash("Funktionaler Platz nicht gefunden.", "err")
+    else:
+        db.create_edge(ref, fl_ref, "installed_at", meta={"since": since})
+        flash(f"Installationsort {fl_ref} zugeordnet.")
+    return redirect(url_for("equipment_detail", ref=ref))
+
+
+@app.route("/equipment/<path:ref>/add-child", methods=["POST"])
+def equipment_add_child(ref):
+    child = request.form.get("child_ref","").strip()
+    db = get_db()
+    if not child or not db.get_node(child):
+        flash("Equipment nicht gefunden.", "err")
+    else:
+        db.create_edge(ref, child, "is_parent_of", cascade_delete=True)
+        flash(f"{child} als Unterbaugruppe hinzugefügt.")
+    return redirect(url_for("equipment_detail", ref=ref))
+
+
+@app.route("/equipment/<path:ref>/eq-status", methods=["POST"])
+def equipment_eq_status(ref):
+    new_status = request.form.get("new_status", "").strip()
+    db = get_db()
+    data = db.get_node(ref)
+    if not data or new_status not in EQ_STATUS_FLOW:
+        flash("Ungültiger Status.", "err")
+        return redirect(url_for("equipment_detail", ref=ref))
+    old_status = data.get("status", "AKTIV")
+    if EQ_STATUS_FLOW.get(old_status) != new_status:
+        flash("Status-Übergang nicht erlaubt.", "err")
+        return redirect(url_for("equipment_detail", ref=ref))
+    parts = ref.split("/", 1)
+    db.update_node(parts[0], parts[1], {"status": new_status})
+    log_audit(db, ref, "status_change", f"{old_status} → {new_status}")
+    fire_webhooks("equipment_status_changed", {"ref": ref, "old_status": old_status, "new_status": new_status})
+    flash(f"Status geändert: {old_status} → {new_status}")
+    return redirect(url_for("equipment_detail", ref=ref))
+
+
+@app.route("/equipment/<path:ref>/delete", methods=["POST"])
+def equipment_delete(ref):
+    parts = ref.split("/", 1)
+    if len(parts) == 2:
+        db = get_db()
+        db.soft_delete(parts[0], parts[1])
+        log_audit(db, ref, "soft_delete")
+        flash(f"{ref} stillgelegt (wartet auf GC).")
+    return redirect(url_for("equipments"))
+
+
+# =============================================================================
+# FUNCTIONAL LOCATIONS
+# =============================================================================
+
+@app.route("/functional-locations")
+def functional_locations():
+    db  = get_db()
+    fls = db.list_nodes("functional_locations")
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Funktionale Plätze</h1>
+  <a class="btn sm" href="/functional-locations/new">+ Neu</a>
+</div>
+<table>
+  <tr><th>TPLNR</th><th>Beschreibung</th><th>Kategorie</th><th>Equipment</th></tr>
+  {% for fid,fl in fls %}
+  <tr>
+    <td><a href="/functional-location/functional_locations/{{fid}}"><strong>{{fid}}</strong></a></td>
+    <td>{{fl.description}}</td>
+    <td>{{fl.get('category','')}}</td>
+    <td>{{eq_counts.get(fid,0)}}</td>
+  </tr>
+  {% endfor %}
+</table>
+""")
+    eq_counts = {}
+    for fid in fls:
+        eq_counts[fid] = len(db.get_connected(
+            f"functional_locations/{fid}", direction="in", rel_type="installed_at"))
+    return render_template_string(T, fls=sorted(fls.items()), eq_counts=eq_counts)
+
+
+@app.route("/functional-locations/new", methods=["GET","POST"])
+def functional_location_new():
+    if request.method == "POST":
+        tplnr = request.form.get("tplnr","").strip()
+        desc  = request.form.get("description","").strip()
+        cat   = request.form.get("category","").strip()
+        if not tplnr or not desc:
+            flash("TPLNR und Beschreibung sind Pflicht.", "err")
+        else:
+            db = get_db()
+            db.create_node("functional_locations", tplnr,
+                           {"description": desc, "category": cat})
+            flash(f"Funktionaler Platz {tplnr} angelegt.")
+            return redirect(url_for("functional_locations"))
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/functional-locations">← Funktionale Plätze</a></div>
+<h1>Neuer Funktionaler Platz</h1>
+<div class="card" style="max-width:480px">
+  <form method="post">
+    <label>TPLNR (Schlüssel) *</label>
+    <input type="text" name="tplnr" placeholder="z.B. WERK-01-HALLE-C">
+    <label>Beschreibung *</label>
+    <input type="text" name="description" placeholder="Halle C – Prüfbereich">
+    <label>Kategorie</label>
+    <input type="text" name="category" placeholder="Werk / Halle / Bereich">
+    <button class="btn" type="submit">Anlegen</button>
+    <a class="btn sec" href="/functional-locations">Abbrechen</a>
+  </form>
+</div>
+""")
+    return render_template_string(T)
+
+
+@app.route("/functional-location/<path:ref>")
+def functional_location_detail(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Funktionaler Platz nicht gefunden.", "err")
+        return redirect(url_for("functional_locations"))
+
+    eq_refs = db.get_connected(ref, direction="in", rel_type="installed_at")
+    eqs = [(r, db.get_node(r)) for r in eq_refs if db.get_node(r)]
+
+    all_doc_refs = db.collect_related(
+        ref, ["installed_at", "object_link"], direction="in")
+    docs = [(r, db.get_node(r)) for r in all_doc_refs if db.get_node(r)]
+
+    sub_refs = db.get_connected(ref, direction="out", rel_type="has_subarea")
+    subs = [(r, db.get_node(r)) for r in sub_refs if db.get_node(r)]
+
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/functional-locations">← Funktionale Plätze</a></div>
+<h1>{{ref.split('/')[-1]}}</h1>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
+<div class="card">
+  <h2>Stammdaten</h2>
+  <div class="kv">
+    <span class="k">Beschreibung</span><span class="v">{{data.description}}</span>
+    <span class="k">Kategorie</span><span class="v">{{data.get('category','')}}</span>
+  </div>
+  <div style="margin-top:.75rem">
+    <a class="btn sm sec" href="/edit/{{ref}}">Bearbeiten</a>
+  </div>
+</div>
+{% if subs %}
+<div class="card">
+  <h2>Unterbereiche</h2>
+  {% for sr,sd in subs %}
+  <div><a href="/functional-location/{{sr}}">{{sr.split('/')[-1]}}</a>
+    – {{sd.description}}</div>
+  {% endfor %}
+</div>
+{% endif %}
+</div>
+<div>
+<div class="card">
+  <h2>Installierte Equipment ({{eqs|length}})</h2>
+  {% if eqs %}
+  <table>
+    <tr><th>Nr</th><th>Beschreibung</th><th>Status</th></tr>
+    {% for er,ed in eqs %}
+    <tr>
+      <td><a href="/equipment/{{er}}">{{er.split('/')[-1]}}</a></td>
+      <td>{{ed.description[:45]}}</td>
+      <td><span class="badge" style="background:{{st_col[ed.status]}};color:#fff">{{ed.status}}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p style="color:#999;font-size:.85rem">Kein Equipment installiert.</p>{% endif %}
+</div>
+<div class="card">
+  <h2>Verknüpfte Dokumente über Equipment ({{docs|length}})</h2>
+  {% if docs %}
+  <table>
+    <tr><th>Dokument</th><th>Titel</th><th>Status</th></tr>
+    {% for dr,dd in docs %}
+    <tr>
+      <td><a href="/document/{{dr}}">{{dr.split('/')[-1]}}</a></td>
+      <td>{{dd.title[:45]}}</td>
+      <td><span class="badge" style="background:{{colors[dd.status]}};color:#fff">{{dd.status}}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p style="color:#999;font-size:.85rem">Keine Dokumente gefunden.</p>{% endif %}
+</div>
+</div>
+</div>
+""")
+    return render_template_string(T, ref=ref, data=data, eqs=eqs, docs=docs,
+                                  subs=subs, colors=STATUS_COLOR, st_col=EQ_STATUS)
+
+
+# =============================================================================
+# DOK-TYPEN
+# =============================================================================
+
+@app.route("/doc-types")
+def doc_types():
+    db    = get_db()
+    types = db.list_nodes("doc_types")
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Dokumenttypen</h1>
+  <a class="btn sm" href="/doc-types/new">+ Neu</a>
+</div>
+<table>
+  <tr><th>Code</th><th>Beschreibung</th></tr>
+  {% for tid,t in types %}
+  <tr>
+    <td><span class="badge">{{tid}}</span></td>
+    <td>{{t.description}}</td>
+  </tr>
+  {% endfor %}
+</table>
+""")
+    return render_template_string(T, types=sorted(types.items()))
+
+
+@app.route("/doc-types/new", methods=["GET","POST"])
+def doc_type_new():
+    if request.method == "POST":
+        code = request.form.get("code","").strip().upper()
+        desc = request.form.get("description","").strip()
+        if not code or not desc:
+            flash("Code und Beschreibung sind Pflicht.", "err")
+        else:
+            get_db().create_node("doc_types", code, {"code": code, "description": desc})
+            flash(f"Dokumenttyp {code} angelegt.")
+            return redirect(url_for("doc_types"))
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/doc-types">← Dokumenttypen</a></div>
+<h1>Neuer Dokumenttyp</h1>
+<div class="card" style="max-width:400px">
+  <form method="post">
+    <label>Code (z.B. DRW) *</label>
+    <input type="text" name="code" placeholder="DRW" maxlength="10">
+    <label>Beschreibung *</label>
+    <input type="text" name="description" placeholder="Zeichnung">
+    <button class="btn" type="submit">Anlegen</button>
+    <a class="btn sec" href="/doc-types">Abbrechen</a>
+  </form>
+</div>
+""")
+    return render_template_string(T)
+
+
+# =============================================================================
+# TRAVERSAL
+# =============================================================================
+
+@app.route("/traversal")
+def traversal():
+    db      = get_db()
+    start   = request.args.get("start","").strip()
+    rel     = request.args.get("rel_type","").strip() or None
+    direc   = request.args.get("direction","out")
+    results = []
+    node_info = {}
+    error = None
+
+    if start:
+        if not db.get_node(start):
+            error = f"Node '{start}' nicht gefunden."
+        else:
+            results = db.traverse(start, rel_type=rel, direction=direc, include_start=True)
+            for r in results:
+                nd = db.get_node(r)
+                if nd:
+                    node_info[r] = nd.get("title") or nd.get("description") or nd.get("name","")
+
+    edge_types = list(db._cache["edges"].keys())
+    all_refs   = ([f"documents/{k}" for k in db.list_nodes("documents")] +
+                  [f"equipments/{k}" for k in db.list_nodes("equipments")] +
+                  [f"functional_locations/{k}" for k in db.list_nodes("functional_locations")])
+
+    T = tmpl("""
+<h1>Graph-Traversal (BFS)</h1>
+<div class="card">
+  <form method="get">
+    <div class="row">
+      <div style="flex:2"><label>Start-Node</label>
+        <select name="start" style="margin:0">
+          <option value="">— wählen —</option>
+          {% for r in all_refs %}
+          <option value="{{r}}" {% if r==start %}selected{% endif %}>{{r}}</option>
+          {% endfor %}
+        </select></div>
+      <div style="flex:1"><label>Beziehungstyp</label>
+        <select name="rel_type" style="margin:0">
+          <option value="">Alle</option>
+          {% for et in edge_types %}
+          <option value="{{et}}" {% if et==rel %}selected{% endif %}>{{et}}</option>
+          {% endfor %}
+        </select></div>
+      <div><label>Richtung</label>
+        <select name="direction" style="margin:0">
+          <option value="out" {% if direction=='out' %}selected{% endif %}>→ out</option>
+          <option value="in"  {% if direction=='in'  %}selected{% endif %}>← in</option>
+        </select></div>
+      <button class="btn" type="submit" style="margin-top:1.3rem">Traversieren</button>
+    </div>
+  </form>
+</div>
+{% if error %}<div class="flash err">{{error}}</div>{% endif %}
+{% if start and not error %}
+<div class="card">
+  <h2>Ergebnis: {{results|length}} Node(s)</h2>
+  {% if results %}
+  <table style="margin-top:.5rem">
+    <tr><th>#</th><th>Ref</th><th>Name / Titel</th></tr>
+    {% for r in results %}
+    <tr>
+      <td style="color:#999">{{loop.index}}</td>
+      <td><a href="/{% if 'equipments' in r %}equipment{% elif 'documents' in r %}document
+           {%- elif 'functional' in r %}functional-location{% else %}node{% endif %}/{{r}}">{{r}}</a></td>
+      <td>{{node_info.get(r,'')}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p style="color:#999">Keine verbundenen Nodes gefunden.</p>{% endif %}
+</div>
+{% endif %}
+""")
+    return render_template_string(T, start=start, rel=rel, direction=direc,
+        results=results, node_info=node_info, error=error,
+        edge_types=edge_types, all_refs=sorted(all_refs))
+
+
+# =============================================================================
+# GARBAGE COLLECTOR
+# =============================================================================
+
+@app.route("/gc")
+def gc_view():
+    db = get_db()
+    pending = []
+    for col in db.list_collections():
+        for nid, data in db.list_nodes(col, include_deleted=True).items():
+            if "_deletion_flag" in data:
+                pending.append((f"{col}/{nid}", data.get("_deletion_flag","")[:19], col, nid))
+    T = tmpl("""
+<h1>Garbage Collector</h1>
+<div class="card" style="max-width:600px">
+  <p style="margin-bottom:.75rem;color:#555;font-size:.88rem">
+    Bereinigt alle soft-deleted Nodes physisch. Cascade-Delete-Ketten
+    werden transitiv aufgelöst. Idempotent.</p>
+  <form method="post" action="/gc/run">
+    <button class="btn" type="submit">GC jetzt ausführen</button>
+  </form>
+</div>
+{% if stats %}
+<div class="card" style="max-width:600px;margin-top:.5rem">
+  <h2>Letzter Lauf</h2>
+  <div class="kv" style="margin-top:.5rem">
+    <span class="k">Gescannt</span><span class="v">{{stats.scanned}}</span>
+    <span class="k">Edges entfernt</span><span class="v">{{stats.edges_removed}}</span>
+    <span class="k">Nodes gelöscht</span><span class="v">{{stats.nodes_purged}}</span>
+    <span class="k">Assets archiviert</span><span class="v">{{stats.assets_archived}}</span>
+  </div>
+</div>
+{% endif %}
+<div class="card">
+  <h2>Warten auf Bereinigung ({{pending|length}})</h2>
+  {% if pending %}
+  <table><tr><th>Ref</th><th>Collection</th><th>Markiert am</th><th></th></tr>
+  {% for ref,flag,col,nid in pending %}
+  <tr>
+    <td>{{ref}}</td><td>{{col}}</td>
+    <td style="color:#999;font-size:.8rem">{{flag.replace('T',' ')}}</td>
+    <td>
+      <form class="il" method="post" action="/restore/{{col}}/{{nid}}">
+        <button class="btn sm sec">Wiederherstellen</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </table>
+  {% else %}<p style="color:#999">Keine Nodes warten auf Bereinigung.</p>{% endif %}
+</div>
+""")
+    return render_template_string(T, pending=pending, stats=None)
+
+
+@app.route("/gc/run", methods=["POST"])
+def gc_run():
+    gc   = MaintenanceEngine(root_dir=DB_ROOT)
+    stats = gc.run_garbage_collection()
+    pending = []
+    for col in gc.list_collections():
+        for nid, data in gc.list_nodes(col, include_deleted=True).items():
+            if "_deletion_flag" in data:
+                pending.append((f"{col}/{nid}", data.get("_deletion_flag","")[:19], col, nid))
+    flash(f"GC: {stats['nodes_purged']} Node(s) bereinigt, {stats['edges_removed']} Edge(s) entfernt.")
+    T = tmpl("""
+<h1>Garbage Collector</h1>
+<div class="card" style="max-width:600px">
+  <p style="margin-bottom:.75rem;color:#555;font-size:.88rem">Idempotent, jederzeit wieder ausführbar.</p>
+  <form method="post" action="/gc/run">
+    <button class="btn" type="submit">Erneut ausführen</button>
+  </form>
+</div>
+<div class="card" style="max-width:600px;margin-top:.5rem">
+  <h2>Letzter Lauf</h2>
+  <div class="kv" style="margin-top:.5rem">
+    <span class="k">Gescannt</span><span class="v">{{stats.scanned}}</span>
+    <span class="k">Edges entfernt</span><span class="v">{{stats.edges_removed}}</span>
+    <span class="k">Nodes gelöscht</span><span class="v">{{stats.nodes_purged}}</span>
+    <span class="k">Assets archiviert</span><span class="v">{{stats.assets_archived}}</span>
+  </div>
+</div>
+<div class="card">
+  <h2>Verbleibend ({{pending|length}})</h2>
+  {% if pending %}<table><tr><th>Ref</th><th>Collection</th><th>Flag</th><th></th></tr>
+  {% for ref,flag,col,nid in pending %}<tr><td>{{ref}}</td><td>{{col}}</td>
+  <td style="color:#999">{{flag}}</td>
+  <td><form class="il" method="post" action="/restore/{{col}}/{{nid}}">
+    <button class="btn sm sec">Wiederherstellen</button></form></td>
+  </tr>{% endfor %}</table>
+  {% else %}<p style="color:#999">Keine pending Nodes.</p>{% endif %}
+</div>
+""")
+    return render_template_string(T, pending=pending, stats=stats)
+
+
+@app.route("/restore/<col>/<path:nid>", methods=["POST"])
+def node_restore(col, nid):
+    db = get_db()
+    ok = db.restore_node(col, nid)
+    if ok:
+        log_audit(db, f"{col}/{nid}", "restore")
+        flash(f"{col}/{nid} wiederhergestellt.")
+    else:
+        flash(f"{col}/{nid} konnte nicht wiederhergestellt werden.", "err")
+    return redirect(url_for("gc_view"))
+
+
+# =============================================================================
+# SETTINGS
+# =============================================================================
+
+FIELD_TYPES = {"text": "Text", "number": "Zahl", "select": "Dropdown"}
+SETTINGS_ENTITIES = {"documents": "Dokumente", "equipments": "Equipment"}
+
+
+def get_field_defs(col=None):
+    db   = get_db()
+    defs = db.list_nodes("field_definitions")
+    if col:
+        defs = {k: v for k, v in defs.items() if v.get("entity_type") == col}
+    return defs
+
+
+@app.route("/settings")
+def settings():
+    defs_docs = get_field_defs("documents")
+    defs_eqs  = get_field_defs("equipments")
+    T = tmpl("""
+<h1>⚙ Einstellungen <span style="font-size:.75rem;color:#999;font-weight:400">Developer</span></h1>
+<p style="color:#666;font-size:.87rem;margin-bottom:1.25rem">
+  Hier können zusätzliche Felder für Dokumente und Equipment definiert werden.
+  Nützlich zum Ausprobieren vor der Hardcodierung im Code.
+</p>
+{% for entity, entity_label, defs in sections %}
+<div class="card" style="margin-bottom:1rem">
+  <h2>{{entity_label}} – Zusatzfelder</h2>
+  {% if defs %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Feldname</th><th>Label</th><th>Typ</th><th>Optionen</th><th>Pflicht</th><th></th></tr>
+    {% for nid,d in defs %}
+    <tr>
+      <td><code>{{d.name}}</code></td>
+      <td>{{d.label}}</td>
+      <td><span class="badge">{{d.field_type}}</span></td>
+      <td style="color:#999;font-size:.8rem">{{d.get('options','')}}</td>
+      <td>{% if d.required %}✓{% endif %}</td>
+      <td>
+        <form class="il" method="post" action="/settings/field/{{nid}}/delete"
+              onsubmit="return confirm('Feld löschen?')">
+          <button class="btn sm danger">✕</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Zusatzfelder definiert.</p>
+  {% endif %}
+  <form method="post" action="/settings/field/new">
+    <input type="hidden" name="entity_type" value="{{entity}}">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div><label>Feldname *</label>
+        <input type="text" name="name" placeholder="z.B. revision" style="width:140px;margin:0"></div>
+      <div><label>Label *</label>
+        <input type="text" name="label" placeholder="z.B. Revision" style="width:140px;margin:0"></div>
+      <div><label>Typ</label>
+        <select name="field_type" style="width:110px;margin:0">
+          {% for k,v in field_types.items() %}
+          <option value="{{k}}">{{v}}</option>
+          {% endfor %}
+        </select></div>
+      <div><label>Optionen (Dropdown)</label>
+        <input type="text" name="options" placeholder="A,B,C" style="width:140px;margin:0"></div>
+      <div><label>Pflichtfeld</label>
+        <select name="required" style="width:80px;margin:0">
+          <option value="false">Nein</option>
+          <option value="true">Ja</option>
+        </select></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Hinzufügen</button></div>
+    </div>
+  </form>
+</div>
+{% endfor %}
+<div class="card" style="margin-bottom:1rem">
+  <h2>Webhooks</h2>
+  <p style="font-size:.83rem;color:#666;margin-bottom:.75rem">
+    HTTP POST bei Issue-Events. Kompatibel mit n8n, Make, Teams, Slack Incoming Webhooks.</p>
+  {% if webhooks %}
+  <table style="margin-bottom:.75rem">
+    <tr><th>Beschreibung</th><th>Event</th><th>URL</th><th>Aktiv</th><th></th></tr>
+    {% for nid,wh in webhooks %}
+    <tr>
+      <td>{{wh.get('description','')}}</td>
+      <td><span class="badge">{{wh.get('event','')}}</span></td>
+      <td style="font-size:.78rem;color:#666;max-width:200px;overflow:hidden;text-overflow:ellipsis">
+        {{wh.get('url','')}}</td>
+      <td>
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/toggle">
+          <button class="btn sm {% if wh.active %}sec{% else %}warn{% endif %}">
+            {% if wh.active %}Aktiv{% else %}Inaktiv{% endif %}</button>
+        </form>
+      </td>
+      <td style="display:flex;gap:.3rem">
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/test">
+          <button class="btn sm sec">Test</button></form>
+        <form class="il" method="post" action="/settings/webhook/{{nid}}/delete"
+              onsubmit="return confirm('Löschen?')">
+          <button class="btn sm danger">✕</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem;margin-bottom:.75rem">Keine Webhooks konfiguriert.</p>
+  {% endif %}
+  <form method="post" action="/settings/webhook/new">
+    <div class="row" style="flex-wrap:wrap;gap:.5rem">
+      <div style="flex:2"><label>URL *</label>
+        <input type="text" name="url" placeholder="https://..." style="margin:0"></div>
+      <div><label>Event</label>
+        <select name="event" style="width:160px;margin:0">
+          <option value="issue_all">Alle Issue-Events</option>
+          <option value="issue_created">Issue angelegt</option>
+          <option value="issue_status_changed">Status geändert</option>
+        </select></div>
+      <div style="flex:1"><label>Beschreibung</label>
+        <input type="text" name="description" placeholder="z.B. Teams Wartung" style="margin:0"></div>
+      <div style="align-self:flex-end">
+        <button class="btn sm" type="submit">+ Webhook</button></div>
+    </div>
+  </form>
+</div>
+""")
+    return render_template_string(T,
+        sections=[
+            ("documents", "Dokumente", sorted(defs_docs.items())),
+            ("equipments", "Equipment",  sorted(defs_eqs.items())),
+        ],
+        webhooks=sorted(get_db().list_nodes("webhooks").items()),
+        field_types=FIELD_TYPES)
+
+
+@app.route("/settings/field/new", methods=["POST"])
+def settings_field_new():
+    entity_type = request.form.get("entity_type", "")
+    name        = request.form.get("name", "").strip().lower().replace(" ", "_")
+    label       = request.form.get("label", "").strip()
+    field_type  = request.form.get("field_type", "text")
+    options     = request.form.get("options", "").strip()
+    required    = request.form.get("required", "false") == "true"
+
+    if not name or not label:
+        flash("Feldname und Label sind Pflicht.", "err")
+        return redirect(url_for("settings"))
+
+    db  = get_db()
+    nid = db.next_id("field_definitions", prefix="FD-", padding=4)
+    db.create_node("field_definitions", nid, {
+        "entity_type": entity_type, "name": name, "label": label,
+        "field_type": field_type, "options": options, "required": required,
+    })
+    flash(f"Feld '{name}' für {SETTINGS_ENTITIES.get(entity_type, entity_type)} hinzugefügt.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/field/<nid>/delete", methods=["POST"])
+def settings_field_delete(nid):
+    get_db().soft_delete("field_definitions", nid)
+    flash("Felddefinition gelöscht.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/new", methods=["POST"])
+def settings_webhook_new():
+    url  = request.form.get("url","").strip()
+    ev   = request.form.get("event","issue_all")
+    desc = request.form.get("description","").strip()
+    if not url:
+        flash("URL ist Pflicht.", "err")
+        return redirect(url_for("settings"))
+    db  = get_db()
+    nid = db.next_id("webhooks", prefix="WHK-", padding=4)
+    db.create_node("webhooks", nid, {"url": url, "event": ev,
+                                     "description": desc, "active": True})
+    flash(f"Webhook {nid} angelegt.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/toggle", methods=["POST"])
+def settings_webhook_toggle(nid):
+    db   = get_db()
+    data = db.get_node(f"webhooks/{nid}")
+    if data:
+        db.update_node("webhooks", nid, {"active": not data.get("active", True)})
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/delete", methods=["POST"])
+def settings_webhook_delete(nid):
+    get_db().soft_delete("webhooks", nid)
+    flash("Webhook gelöscht.")
+    return redirect(url_for("settings"))
+
+
+@app.route("/settings/webhook/<nid>/test", methods=["POST"])
+def settings_webhook_test(nid):
+    db   = get_db()
+    data = db.get_node(f"webhooks/{nid}")
+    if not data:
+        flash("Webhook nicht gefunden.", "err")
+        return redirect(url_for("settings"))
+    try:
+        payload = json.dumps({"event": "test", "source": "pDMS", "message": "Test-Ping"}).encode()
+        req = _urllib.Request(data["url"], data=payload,
+                  headers={"Content-Type": "application/json"}, method="POST")
+        _urllib.urlopen(req, timeout=5)
+        flash(f"Test-Ping an {data['url']} gesendet.")
+    except Exception as e:
+        flash(f"Fehler: {e}", "err")
+    return redirect(url_for("settings"))
+
+
+# =============================================================================
+# ISSUES
+# =============================================================================
+
+@app.route("/issues")
+def issues_list():
+    db      = get_db()
+    typ     = request.args.get("issue_type", "")
+    status  = request.args.get("status", "")
+    prio    = request.args.get("priority", "")
+    all_iss = db.list_nodes("issues")
+    if typ:    all_iss = {k:v for k,v in all_iss.items() if v.get("issue_type")==typ}
+    if status: all_iss = {k:v for k,v in all_iss.items() if v.get("status")==status}
+    if prio:   all_iss = {k:v for k,v in all_iss.items() if v.get("priority")==prio}
+    iss_sorted = sorted(all_iss.items(), key=lambda x: (
+        {"HOCH":0,"MITTEL":1,"NIEDRIG":2}.get(x[1].get("priority","NIEDRIG"),1),
+        x[1].get("due_date","9999")))
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Issues</h1>
+</div>
+<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem">
+  <form method="get" style="display:flex;gap:.6rem;align-items:flex-end;flex-wrap:wrap">
+    <div><label>Typ</label>
+      <select name="issue_type" style="width:150px;margin:0">
+        <option value="">Alle</option>
+        {% for k,v in itypes.items() %}<option value="{{k}}" {% if k==typ %}selected{% endif %}>{{v}}</option>{% endfor %}
+      </select></div>
+    <div><label>Status</label>
+      <select name="status" style="width:130px;margin:0">
+        <option value="">Alle</option>
+        {% for k in istatus.keys() %}<option value="{{k}}" {% if k==status %}selected{% endif %}>{{k}}</option>{% endfor %}
+      </select></div>
+    <div><label>Priorität</label>
+      <select name="priority" style="width:110px;margin:0">
+        <option value="">Alle</option>
+        {% for k in iprio.keys() %}<option value="{{k}}" {% if k==prio %}selected{% endif %}>{{k}}</option>{% endfor %}
+      </select></div>
+    <button class="btn sm" type="submit">Filtern</button>
+    <a class="btn sm sec" href="/issues">Reset</a>
+  </form>
+</div>
+{% if iss %}
+<table>
+  <tr><th class="srt" onclick="srt(this)">Nr</th><th class="srt" onclick="srt(this)">Titel</th><th class="srt" onclick="srt(this)">Typ</th><th class="srt" onclick="srt(this)">Prio</th><th class="srt" onclick="srt(this)">Status</th><th class="srt" onclick="srt(this)">Verknüpft</th><th class="srt" onclick="srt(this)">Fällig</th></tr>
+  {% for nid,i in iss %}
+  <tr>
+    <td><a href="/issue/issues/{{nid}}"><strong>{{nid}}</strong></a></td>
+    <td>{{i.title[:45]}}</td>
+    <td><span class="badge">{{itypes.get(i.issue_type, i.issue_type)}}</span></td>
+    <td><span class="badge" style="background:{{iprio.get(i.priority,'#888')}};color:#fff">{{i.priority}}</span></td>
+    <td><span class="badge" style="background:{{istatus.get(i.status,'#888')}};color:#fff">{{i.status}}</span></td>
+    <td style="font-size:.8rem;color:#666">{{i.get('linked_ref','').split('/')[-1]}}</td>
+    <td style="font-size:.8rem;color:#999">{{i.get('due_date','')}}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="card"><p style="color:#999">Keine Issues gefunden.</p></div>
+{% endif %}
+""")
+    return render_template_string(T, iss=iss_sorted, typ=typ, status=status, prio=prio,
+                                  itypes=ISSUE_TYPES, istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
+
+
+@app.route("/issue/<path:ref>")
+def issue_detail(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Issue nicht gefunden.", "err")
+        return redirect(url_for("issues_list"))
+    nid        = ref.split("/",1)[1]
+    next_st    = ISSUE_STATUS_FLOW.get(data.get("status","OFFEN"))
+    linked     = db.get_node(data.get("linked_ref","")) if data.get("linked_ref") else None
+    T = tmpl("""
+<div style="margin-bottom:.5rem"><a href="/issues">← Issues</a></div>
+<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1rem">
+  <h1 style="margin:0">{{nid}}</h1>
+  <span class="badge" style="background:{{istatus[data.status]}};color:#fff">{{data.status}}</span>
+  <span class="badge" style="background:{{iprio.get(data.priority,'#888')}};color:#fff">{{data.priority}}</span>
+  <span class="badge">{{itypes.get(data.issue_type,data.issue_type)}}</span>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+<div>
+<div class="card">
+  <h2>Details</h2>
+  <div class="kv">
+    <span class="k">Titel</span><span class="v">{{data.title}}</span>
+    <span class="k">Beschreibung</span><span class="v">{{data.get('description','—')}}</span>
+    <span class="k">Fälligkeit</span><span class="v">{{data.get('due_date','—')}}</span>
+    <span class="k">Erstellt am</span><span class="v">{{data.created_at[:10]}}</span>
+  </div>
+  <div style="margin-top:.75rem;display:flex;gap:.5rem">
+    {% if next_st %}
+    <form class="il" method="post" action="/issue/{{ref}}/status">
+      <input type="hidden" name="new_status" value="{{next_st}}">
+      <button class="btn {% if next_st=='ERLEDIGT' %}sec{% endif %}">→ {{next_st}}</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+</div>
+<div>
+{% if linked %}
+<div class="card">
+  <h2>Verknüpftes Objekt</h2>
+  <div class="kv">
+    <span class="k">Ref</span>
+    <span class="v"><a href="/{% if 'equipment' in data.linked_ref %}equipment{% else %}document{% endif %}/{{data.linked_ref}}">
+      {{data.linked_ref}}</a></span>
+    <span class="k">Name</span>
+    <span class="v">{{linked.get('title') or linked.get('description','')}}</span>
+  </div>
+</div>
+{% endif %}
+</div>
+</div>
+""")
+    return render_template_string(T, ref=ref, nid=nid, data=data, linked=linked,
+                                  next_st=next_st, itypes=ISSUE_TYPES,
+                                  istatus=ISSUE_STATUS, iprio=ISSUE_PRIORITY)
+
+
+@app.route("/issue/<path:ref>/status", methods=["POST"])
+def issue_status(ref):
+    parts = ref.split("/",1)
+    if len(parts) != 2:
+        return redirect(url_for("issues_list"))
+    col, nid   = parts
+    new_status = request.form.get("new_status","")
+    db         = get_db()
+    data       = db.get_node(ref)
+    if not data:
+        flash("Issue nicht gefunden.", "err")
+        return redirect(url_for("issues_list"))
+    cur = data.get("status","OFFEN")
+    if ISSUE_STATUS_FLOW.get(cur) != new_status:
+        flash(f"Übergang {cur}→{new_status} nicht erlaubt.", "err")
+    else:
+        db.update_node(col, nid, {"status": new_status, "changed_at": now()})
+        fire_webhooks("issue_status_changed",
+                      {"ref": ref, "old_status": cur, "new_status": new_status,
+                       "title": data.get("title",""), "linked_ref": data.get("linked_ref","")})
+        flash(f"Status auf {new_status} gesetzt.")
+    return redirect(url_for("issue_detail", ref=ref))
+
+
+@app.route("/node/<path:linked_ref>/issue/new", methods=["POST"])
+def issue_new(linked_ref):
+    title    = request.form.get("title","").strip()
+    itype    = request.form.get("issue_type","WARTUNG")
+    priority = request.form.get("priority","MITTEL")
+    due_date = request.form.get("due_date","").strip()
+    desc     = request.form.get("description","").strip()
+    if not title:
+        flash("Titel ist Pflicht.", "err")
+        return redirect(request.referrer or url_for("issues_list"))
+    db  = get_db()
+    t   = now()
+    nid = db.next_id("issues", prefix="ISS-", padding=5)
+    db.create_node("issues", nid, {
+        "title": title, "issue_type": itype, "status": "OFFEN",
+        "priority": priority, "description": desc,
+        "due_date": due_date, "linked_ref": linked_ref,
+        "created_by": DEFAULT_USER, "created_at": t, "changed_at": t,
+    })
+    issue_ref = f"issues/{nid}"
+    db.create_edge(linked_ref, issue_ref, "has_issue")
+    fire_webhooks("issue_created", {
+        "ref": issue_ref, "title": title, "issue_type": itype,
+        "priority": priority, "due_date": due_date, "linked_ref": linked_ref,
+    })
+    flash(f"Issue {nid} angelegt.")
+    return redirect(request.referrer or url_for("issues_list"))
+
+
+@app.route("/issue/<path:ref>/ics")
+def issue_ics(ref):
+    db   = get_db()
+    data = db.get_node(ref)
+    if not data:
+        flash("Issue nicht gefunden.", "err")
+        return redirect(url_for("issues_list"))
+    nid      = ref.split("/",1)[1]
+    due      = (data.get("due_date","") or "").replace("-","")
+    dt_start = due if due else datetime.now(timezone.utc).strftime("%Y%m%d")
+    ics = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//pDMS//Issues//DE\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"UID:{nid}@pdms\r\n"
+        f"SUMMARY:[pDMS] {data['title']}\r\n"
+        f"DTSTART;VALUE=DATE:{dt_start}\r\n"
+        f"DESCRIPTION:{ISSUE_TYPES.get(data.get('issue_type',''),'')} – "
+        f"{data.get('description','').replace(chr(10),' ')}\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    return Response(ics, mimetype="text/calendar",
+        headers={"Content-Disposition": f"attachment; filename={nid}.ics"})
+
+
+@app.route("/reports")
+def reports():
+    db    = get_db()
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    issues_all = db.list_nodes("issues")
+    eqs_all    = db.list_nodes("equipments")
+    docs_all   = db.list_nodes("documents")
+
+    # Offene Issues nach Priorität
+    open_issues = {k: v for k, v in issues_all.items() if v.get("status") != "ERLEDIGT"}
+    by_prio = {"HOCH": 0, "MITTEL": 0, "NIEDRIG": 0}
+    for v in open_issues.values():
+        p = v.get("priority", "NIEDRIG")
+        by_prio[p] = by_prio.get(p, 0) + 1
+
+    # Überfällige Issues
+    overdue = sorted(
+        [(k, v) for k, v in open_issues.items()
+         if v.get("due_date") and v["due_date"] < today],
+        key=lambda x: x[1].get("due_date", "")
+    )
+
+    # Equipment nach Status
+    eq_by_status = {}
+    for v in eqs_all.values():
+        s = v.get("status", "AKTIV")
+        eq_by_status[s] = eq_by_status.get(s, 0) + 1
+
+    # Dokumente nach Status
+    doc_by_status = {}
+    for v in docs_all.values():
+        s = v.get("status", "WK")
+        doc_by_status[s] = doc_by_status.get(s, 0) + 1
+
+    # Offene Issues nach Kostenstelle (über Equipment)
+    issues_by_cc = {}
+    for v in open_issues.values():
+        eq_ref = v.get("linked_ref", "")
+        if eq_ref.startswith("equipments/"):
+            eq = db.get_node(eq_ref)
+            cc = (eq or {}).get("cost_center", "—")
+        else:
+            cc = "—"
+        issues_by_cc[cc] = issues_by_cc.get(cc, 0) + 1
+    issues_by_cc_sorted = sorted(issues_by_cc.items(), key=lambda x: -x[1])
+
+    T = tmpl("""
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">
+  <h1 style="margin:0">Reports</h1>
+  <span style="color:#999;font-size:.85rem">Stand: {{today}}</span>
+</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1rem;margin-bottom:1rem">
+
+<div class="card">
+  <h2>Equipment nach Status</h2>
+  <table>
+    <tr><th class="srt" onclick="srt(this)">Status</th><th class="srt" onclick="srt(this)">Anzahl</th></tr>
+    {% for s,cnt in eq_by_status.items() %}
+    <tr>
+      <td><span class="badge" style="background:{{eq_st_col.get(s,'#888')}};color:#fff">{{s}}</span></td>
+      <td><strong>{{cnt}}</strong></td>
+    </tr>
+    {% endfor %}
+    <tr style="border-top:2px solid #eee">
+      <td style="color:#666">Gesamt</td><td><strong>{{eq_total}}</strong></td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Dokumente nach Status</h2>
+  <table>
+    <tr><th class="srt" onclick="srt(this)">Status</th><th class="srt" onclick="srt(this)">Anzahl</th></tr>
+    {% for s,cnt in doc_by_status.items() %}
+    <tr>
+      <td><span class="badge" style="background:{{doc_st_col.get(s,'#888')}};color:#fff">{{s}}</span></td>
+      <td><strong>{{cnt}}</strong></td>
+    </tr>
+    {% endfor %}
+    <tr style="border-top:2px solid #eee">
+      <td style="color:#666">Gesamt</td><td><strong>{{doc_total}}</strong></td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Offene Issues nach Priorität</h2>
+  <table>
+    <tr><th class="srt" onclick="srt(this)">Priorität</th><th class="srt" onclick="srt(this)">Anzahl</th></tr>
+    {% for p,cnt in by_prio.items() %}
+    <tr>
+      <td><span class="badge" style="background:{{iprio.get(p,'#888')}};color:#fff">{{p}}</span></td>
+      <td><strong>{{cnt}}</strong></td>
+    </tr>
+    {% endfor %}
+    <tr style="border-top:2px solid #eee">
+      <td style="color:#666">Offen gesamt</td><td><strong>{{open_total}}</strong></td>
+    </tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Offene Issues nach Kostenstelle</h2>
+  {% if issues_by_cc %}
+  <table>
+    <tr><th class="srt" onclick="srt(this)">Kostenstelle</th><th class="srt" onclick="srt(this)">Issues</th></tr>
+    {% for cc,cnt in issues_by_cc %}
+    <tr><td>{{cc}}</td><td><strong>{{cnt}}</strong></td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p style="color:#999;font-size:.85rem">Keine offenen Issues.</p>
+  {% endif %}
+</div>
+
+</div>
+
+{% if overdue %}
+<div class="card">
+  <h2 style="color:#e74c3c">Überfällige Issues ({{overdue|length}})</h2>
+  <table>
+    <tr><th class="srt" onclick="srt(this)">Nr</th><th class="srt" onclick="srt(this)">Titel</th><th class="srt" onclick="srt(this)">Prio</th><th class="srt" onclick="srt(this)">Fällig</th><th class="srt" onclick="srt(this)">Verknüpft</th></tr>
+    {% for nid,i in overdue %}
+    <tr>
+      <td><a href="/issue/issues/{{nid}}"><strong>{{nid}}</strong></a></td>
+      <td>{{i.title[:50]}}</td>
+      <td><span class="badge" style="background:{{iprio.get(i.priority,'#888')}};color:#fff">{{i.priority}}</span></td>
+      <td style="color:#e74c3c;font-weight:600">{{i.get('due_date','')}}</td>
+      <td style="font-size:.8rem;color:#666">{{i.get('linked_ref','').split('/')[-1]}}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card"><p style="color:#2a9d60;font-weight:600">Keine überfälligen Issues.</p></div>
+{% endif %}
+""")
+    return render_template_string(T,
+        today=today, by_prio=by_prio, overdue=overdue,
+        eq_by_status=eq_by_status, doc_by_status=doc_by_status,
+        issues_by_cc=issues_by_cc_sorted,
+        eq_total=len(eqs_all), doc_total=len(docs_all), open_total=len(open_issues),
+        eq_st_col=EQ_STATUS, doc_st_col=STATUS_COLOR,
+        iprio=ISSUE_PRIORITY)
+
+
+@app.route("/obj-link/new", methods=["POST"])
+def obj_link_new():
+    source_ref = request.form.get("source_ref", "").strip()
+    target_ref = request.form.get("target_ref", "").strip()
+    db = get_db()
+    if not source_ref or not target_ref:
+        flash("Quelle und Ziel sind Pflicht.", "err")
+    elif not db.get_node(source_ref) or not db.get_node(target_ref):
+        flash("Objekt nicht gefunden.", "err")
+    elif source_ref == target_ref:
+        flash("Ein Objekt kann nicht mit sich selbst verknüpft werden.", "err")
+    else:
+        t = now()
+        db.create_edge(source_ref, target_ref, "object_link",
+                       meta={"linked_at": t, "linked_by": DEFAULT_USER})
+        flash(f"Verknüpfung angelegt.")
+    return redirect(request.referrer or "/")
+
+
+@app.route("/node/<path:ref>/logbook/new", methods=["POST"])
+def logbook_new(ref):
+    text  = request.form.get("text", "").strip()
+    entry_date = request.form.get("entry_date", "").strip()
+    if not text:
+        flash("Text ist Pflicht.", "err")
+        return redirect(request.referrer or "/")
+    db  = get_db()
+    t   = now()
+    if not entry_date:
+        entry_date = t[:10]
+    nid = db.next_id("logbook", prefix="LOG-", padding=5)
+    db.create_node("logbook", nid, {
+        "entry_date": entry_date, "text": text,
+        "ref": ref, "created_by": DEFAULT_USER, "created_at": t,
+    })
+    db.create_edge(ref, f"logbook/{nid}", "has_logbook")
+    flash(f"Logbucheintrag {nid} angelegt.")
+    return redirect(request.referrer or "/")
+
+
+@app.route("/logbook/<nid>/delete", methods=["POST"])
+def logbook_delete(nid):
+    db = get_db()
+    db.soft_delete("logbook", nid)
+    flash("Eintrag gelöscht.")
+    return redirect(request.referrer or "/")
+
+
+if __name__ == "__main__":
+    seed_if_empty()
+    print("pDMS läuft auf http://127.0.0.1:5001")
+    app.run(debug=True, port=5001)
