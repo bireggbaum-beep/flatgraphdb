@@ -88,6 +88,10 @@ class FlatGraphDB:
         self._dirty_nodes  = {}      # {collection: set(node_ids)} — pending temp-file writes
         self._dirty_edges  = set()   # rel_types with pending edge writes
         self._transaction_depth = 0  # >0 = active transaction, writes are buffered
+        # RMW delta tracking — required for correct multi-process merges
+        self._purged_nodes   = {}    # {collection: set(node_ids)} — permanently deleted this session
+        self._edge_additions = {}    # {rel_type: {edge_id: edge_data}} — edges created this session
+        self._edge_deletions = {}    # {rel_type: set(edge_ids)} — edges deleted this session
         self._initialize_cache()
 
     # ------------------------------------------------------------------
@@ -104,7 +108,24 @@ class FlatGraphDB:
             self._dirty_edges.add(rel_type)
             return
         self._dirty_edges.discard(rel_type)
-        self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+        self._flush_edge_type(rel_type)
+
+    def _flush_edge_type(self, rel_type):
+        """RMW for a single edge file: read current disk state, apply our delta, write back."""
+        new     = self._edge_additions.get(rel_type, {})
+        deleted = self._edge_deletions.get(rel_type, set())
+        if not new and not deleted:
+            return
+        with self._acquire_lock():
+            disk_edges = self._load_json_from_disk(self._edges_file(rel_type))
+            for eid in deleted:
+                disk_edges.pop(eid, None)
+            disk_edges.update(new)
+            self._save_json_atomic(self._edges_file(rel_type), disk_edges)
+        # Clear deltas only after a successful write
+        self._edge_additions.pop(rel_type, None)
+        self._edge_deletions.pop(rel_type, None)
+        self._cache["edges"][rel_type] = disk_edges
 
     @staticmethod
     def _translate_legacy_edge(edge):
@@ -222,14 +243,15 @@ class FlatGraphDB:
             return  # buffered until commit
         self._dirty_nodes.pop(collection_name, None)
         temp_path = self._temp_file(collection_name)
-        temp_data = self._load_json_from_disk(temp_path)
         col_data = self._cache["nodes"].get(collection_name, {})
-        for nid in dirty_ids:
-            if nid in col_data:
-                temp_data[nid] = col_data[nid]
-            else:
-                temp_data.pop(nid, None)
         with self._acquire_lock():
+            # Read inside the lock to avoid TOCTOU races with other processes
+            temp_data = self._load_json_from_disk(temp_path)
+            for nid in dirty_ids:
+                if nid in col_data:
+                    temp_data[nid] = col_data[nid]
+                else:
+                    temp_data.pop(nid, None)
             self._save_json_atomic(temp_path, temp_data)
 
     def _flush_pending_writes(self):
@@ -239,17 +261,17 @@ class FlatGraphDB:
             if not dirty_ids:
                 continue
             temp_path = self._temp_file(collection_name)
-            temp_data = self._load_json_from_disk(temp_path)
             col_data = self._cache["nodes"].get(collection_name, {})
-            for nid in dirty_ids:
-                if nid in col_data:
-                    temp_data[nid] = col_data[nid]
-                else:
-                    temp_data.pop(nid, None)
             with self._acquire_lock():
+                temp_data = self._load_json_from_disk(temp_path)
+                for nid in dirty_ids:
+                    if nid in col_data:
+                        temp_data[nid] = col_data[nid]
+                    else:
+                        temp_data.pop(nid, None)
                 self._save_json_atomic(temp_path, temp_data)
         for rel_type in list(self._dirty_edges):
-            self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+            self._flush_edge_type(rel_type)
         self._dirty_edges.clear()
 
     def flush(self):
@@ -271,9 +293,12 @@ class FlatGraphDB:
             return
 
         # Snapshot for rollback
-        snap_nodes    = copy.deepcopy(self._cache["nodes"])
-        snap_edges    = copy.deepcopy(self._cache["edges"])
-        snap_edge_idx = copy.deepcopy(self._edge_type_index)
+        snap_nodes      = copy.deepcopy(self._cache["nodes"])
+        snap_edges      = copy.deepcopy(self._cache["edges"])
+        snap_edge_idx   = copy.deepcopy(self._edge_type_index)
+        snap_purged     = copy.deepcopy(self._purged_nodes)
+        snap_edge_add   = copy.deepcopy(self._edge_additions)
+        snap_edge_del   = copy.deepcopy(self._edge_deletions)
 
         self._transaction_depth = 1
         try:
@@ -285,18 +310,35 @@ class FlatGraphDB:
             self._cache["nodes"]   = snap_nodes
             self._cache["edges"]   = snap_edges
             self._edge_type_index  = snap_edge_idx
+            self._purged_nodes     = snap_purged
+            self._edge_additions   = snap_edge_add
+            self._edge_deletions   = snap_edge_del
             self._dirty_nodes.clear()
             self._dirty_edges.clear()
             self._dirty_index.update(snap_nodes.keys())
             raise
 
     def _persist_collection_full(self, collection_name):
-        """Write the full collection to the base file and remove the temp-file (GC compaction)."""
-        path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
-        self._save_json_atomic(path, self._cache["nodes"].get(collection_name, {}))
+        """Compact a collection: RMW merge under lock, write base file, remove temp file."""
+        path      = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
         temp_path = self._temp_file(collection_name)
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        our_ram   = self._cache["nodes"].get(collection_name, {})
+        purged    = self._purged_nodes.pop(collection_name, set())
+        with self._acquire_lock():
+            # Read fresh disk state: base file + any pending temp entries from other processes
+            disk_base = self._load_json_from_disk(path)
+            disk_temp = self._load_json_from_disk(temp_path)
+            merged = {**disk_base, **disk_temp}
+            # Our RAM wins for nodes we know about
+            merged.update(our_ram)
+            # Remove nodes the GC permanently deleted this session
+            for nid in purged:
+                merged.pop(nid, None)
+            self._save_json_atomic(path, merged)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        # Keep local RAM in sync with the authoritative merged state
+        self._cache["nodes"][collection_name] = merged
         self._dirty_nodes.pop(collection_name, None)
 
     def _validate_node(self, collection_name, data):
@@ -670,6 +712,7 @@ class FlatGraphDB:
 
         self._cache["edges"].setdefault(rel_type, {})[edge_id] = edge_data
         self._edge_type_index[edge_id] = rel_type
+        self._edge_additions.setdefault(rel_type, {})[edge_id] = edge_data
         self._persist_edge_type(rel_type)
         return edge_id
 
@@ -687,6 +730,12 @@ class FlatGraphDB:
         if rel_type and edge_id in self._cache["edges"].get(rel_type, {}):
             del self._cache["edges"][rel_type][edge_id]
             del self._edge_type_index[edge_id]
+            # If the edge was added this session it never reached disk — just cancel the addition.
+            # Otherwise record it as a deletion so _flush_edge_type removes it from disk.
+            if edge_id in self._edge_additions.get(rel_type, {}):
+                del self._edge_additions[rel_type][edge_id]
+            else:
+                self._edge_deletions.setdefault(rel_type, set()).add(edge_id)
             self._persist_edge_type(rel_type)
             return True
         return False
@@ -993,6 +1042,10 @@ class MaintenanceEngine(FlatGraphDB):
             for eid in to_remove:
                 del bucket[eid]
                 self._edge_type_index.pop(eid, None)
+                if eid in self._edge_additions.get(rel_type, {}):
+                    del self._edge_additions[rel_type][eid]
+                else:
+                    self._edge_deletions.setdefault(rel_type, set()).add(eid)
                 dirty_types.add(rel_type)
                 count += 1
         for rel_type in dirty_types:
@@ -1031,6 +1084,7 @@ class MaintenanceEngine(FlatGraphDB):
 
         # remove node permanently (LAST step → idempotency)
         del self._cache["nodes"][collection_name][node_id]
+        self._purged_nodes.setdefault(collection_name, set()).add(node_id)
         self._dirty_nodes.pop(collection_name, None)  # no temp-write for deleted nodes
         self._mark_index_dirty(collection_name)
         return asset_status
