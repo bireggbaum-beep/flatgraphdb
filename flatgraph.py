@@ -49,21 +49,35 @@ _INTERNAL_COLLECTIONS  = {"_audit_log"}
 # =============================================================================
 
 class FlatGraphDB:
-    def __init__(self, root_dir, schemas=None, file_lock=False, audit=False, webhooks=None):
+    def __init__(self, root_dir, schemas=None, edge_constraints=None,
+                 file_lock=False, audit=False, webhooks=None):
         """
         Initialize the graph engine.
 
         :param root_dir:   Root directory of the database (created if it does not exist).
-        :param schemas:    Optional dict {collection_name: {field: expected_type}} for
-                           type-checked collections.
+        :param schemas:    Optional dict {collection_name: {field: spec}} for type-checked
+                           collections. Three spec forms are supported:
+                             str / int / float / bool / list
+                               Plain Python type — field is required, value must be that type.
+                             {"type": str|list, "options": [...]}
+                               Enum — field is required; for str the value must be one of the
+                               options; for list every element must be in options.
+                             {"type": "link", "target": "collection_name"}
+                               Node reference — field is optional; when present the value must
+                               be a valid, non-deleted node ref in the target collection.
         :param file_lock:  Enable file-level locking for multi-process safety (fcntl/msvcrt).
         :param audit:      Automatically write audit entries to _audit_log on every write.
         :param webhooks:   List of hook configs fired on node events (non-blocking HTTP POST):
                            [{"url": "https://...", "events": "*", "collections": "*"}]
                            events / collections: "*" = all, or a list e.g. ["create_node"]
+        :param edge_constraints: Optional dict {rel_type: [(source_collection, target_collection), ...]}
+                                 restricting which collection pairs are valid for each edge type.
+                                 Example: {"gehört-zu-plant": [("equipment", "plant"),
+                                                               ("software",   "plant")]}
         """
         self.root = root_dir
         self.schemas = schemas or {}
+        self.edge_constraints = edge_constraints or {}
         self.file_lock = file_lock
         self.audit = audit
         self.webhooks = webhooks or []
@@ -346,13 +360,83 @@ class FlatGraphDB:
         if collection_name not in self.schemas:
             return
         schema = self.schemas[collection_name]
-        for field, expected_type in schema.items():
-            if field not in data:
-                raise ValueError(f"Required field '{field}' missing in collection '{collection_name}'.")
-            if not isinstance(data[field], expected_type):
-                raise TypeError(
-                    f"Field '{field}' must be of type {expected_type.__name__}."
-                )
+        for field, spec in schema.items():
+            # --- plain Python type (existing behaviour, fully backward-compatible) ---
+            if isinstance(spec, type):
+                if field not in data:
+                    raise ValueError(
+                        f"Required field '{field}' missing in collection '{collection_name}'."
+                    )
+                if not isinstance(data[field], spec):
+                    raise TypeError(
+                        f"Field '{field}' must be of type {spec.__name__}."
+                    )
+                continue
+
+            if not isinstance(spec, dict):
+                raise ValueError(f"Invalid schema spec for field '{field}': {spec!r}")
+
+            field_type = spec.get("type")
+
+            # --- enum: {"type": str|list, "options": [...]} ---
+            if field_type in (str, list):
+                if field not in data:
+                    raise ValueError(
+                        f"Required field '{field}' missing in collection '{collection_name}'."
+                    )
+                value = data[field]
+                if not isinstance(value, field_type):
+                    name = field_type.__name__
+                    raise TypeError(f"Field '{field}' must be of type {name}.")
+                options = spec.get("options")
+                if options is not None:
+                    items = value if isinstance(value, list) else [value]
+                    for item in items:
+                        if item not in options:
+                            raise ValueError(
+                                f"Field '{field}': '{item}' is not an allowed value. "
+                                f"Allowed: {options}"
+                            )
+                continue
+
+            # --- link: {"type": "link", "target": "collection_name"} ---
+            if field_type == "link":
+                value = data.get(field)
+                if value is None:
+                    continue  # link fields are optional
+                target_col = spec.get("target")
+                if not self._node_ref_exists(value, expected_collection=target_col):
+                    hint = f" in collection '{target_col}'" if target_col else ""
+                    raise ValueError(
+                        f"Field '{field}': referenced node '{value}' does not exist{hint}."
+                    )
+                continue
+
+            raise ValueError(f"Unknown schema type '{field_type}' for field '{field}'.")
+
+    def _node_ref_exists(self, ref, expected_collection=None):
+        """Return True if ref points to an existing, non-deleted node."""
+        if not isinstance(ref, str) or "/" not in ref:
+            return False
+        col, nid = ref.split("/", 1)
+        if expected_collection and col != expected_collection:
+            return False
+        node = self._cache["nodes"].get(col, {}).get(nid)
+        return node is not None and not self._is_deleted(node)
+
+    def _validate_edge(self, source_ref, target_ref, rel_type):
+        """Check source/target collections against declared edge_constraints (if any)."""
+        allowed = self.edge_constraints.get(rel_type)
+        if allowed is None:
+            return  # no constraint declared for this rel_type
+        src_col = source_ref.split("/", 1)[0] if "/" in source_ref else source_ref
+        tgt_col = target_ref.split("/", 1)[0] if "/" in target_ref else target_ref
+        if (src_col, tgt_col) not in [tuple(p) for p in allowed]:
+            raise ValueError(
+                f"Edge type '{rel_type}' does not allow "
+                f"'{src_col}' → '{tgt_col}'. "
+                f"Allowed pairs: {[list(p) for p in allowed]}"
+            )
 
     def _is_deleted(self, node_data):
         return node_data is not None and "_deletion_flag" in node_data
@@ -696,6 +780,7 @@ class FlatGraphDB:
             raise ValueError(f"Source node '{source_ref}' does not exist or is soft-deleted.")
         if self.get_node(target_ref) is None:
             raise ValueError(f"Target node '{target_ref}' does not exist or is soft-deleted.")
+        self._validate_edge(source_ref, target_ref, rel_type)
 
         edge_id = f"link_{uuid.uuid4().hex[:12]}"
         edge_data = {
