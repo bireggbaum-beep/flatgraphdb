@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Trellis — {{ project_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="brand">trellis</span>
+      <span class="project">{{ project_name }}</span>
+    </div>
+    <div class="topbar-right">
+      <span class="settings" title="Einstellungen">⚙</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <aside class="col col-types">
+      {% include "_sidebar.html" %}
+    </aside>
+
+    <section class="col col-list" id="col-list">
+      {% include "_list.html" %}
+    </section>
+
+    <aside class="col col-inspector" id="col-inspector">
+      {% include "_inspector.html" %}
+    </aside>
+  </main>
+</body>
+</html>

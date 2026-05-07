@@ -1,0 +1,112 @@
+{% if form_spec %}
+{% include "_form_create.html" %}
+{% elif inspector %}
+{% set node = inspector.node %}
+{% set spec = inspector.type_spec %}
+
+<header class="inspector-header">
+  <div class="inspector-title">
+    <h2>{{ node.name or inspector.ref }}</h2>
+    {% if inspector.is_stub %}<span class="dot dot-stub" title="Stub"></span>{% endif %}
+  </div>
+  <div class="inspector-meta">
+    <code class="ref">{{ inspector.ref }}</code>
+    <span class="muted">·</span>
+    <span class="type-label">{{ inspector.type }}</span>
+  </div>
+  {% if spec.description %}
+  <p class="muted small">{{ spec.description }}</p>
+  {% endif %}
+</header>
+
+<section class="inspector-section">
+  <h3>Felder</h3>
+  <dl class="kv">
+    {% for f in spec.fields %}
+    <dt>{{ f.name }}{% if f.required %}<span class="req">*</span>{% endif %}</dt>
+    <dd>{% if node[f.name] is defined and node[f.name] != none and node[f.name] != "" %}{{ node[f.name] }}{% else %}<span class="muted">—</span>{% endif %}</dd>
+    {% endfor %}
+    {% if spec.statuses or node.current_status %}
+    <dt>current_status</dt>
+    <dd>
+      {% if node.current_status %}
+      <span class="status-pill">{{ node.current_status }}</span>
+      {% else %}
+      <span class="muted">—</span>
+      {% endif %}
+    </dd>
+    {% endif %}
+  </dl>
+</section>
+
+{% if inspector.structural_out %}
+<section class="inspector-section">
+  <h3>Strukturelle Verbindungen (ausgehend)</h3>
+  {% for et, edges in inspector.structural_out.items() %}
+  <div class="edge-group">
+    <div class="edge-group-label">{{ et }}</div>
+    <ul class="edge-list">
+      {% for e in edges %}
+      <li><code class="ref">{{ e.other }}</code></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if inspector.structural_in %}
+<section class="inspector-section">
+  <h3>Strukturelle Verbindungen (eingehend)</h3>
+  {% for et, edges in inspector.structural_in.items() %}
+  <div class="edge-group">
+    <div class="edge-group-label">{{ et }}</div>
+    <ul class="edge-list">
+      {% for e in edges %}
+      <li><code class="ref">{{ e.other }}</code></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="inspector-section">
+  <h3>Voraussetzungen (ausgehend)</h3>
+  {% if inspector.contracts_out %}
+  <ul class="contract-list">
+    {% for c in inspector.contracts_out %}
+    <li class="contract">
+      <code class="ref">{{ c.target }}</code>
+      <span class="muted">muss</span>
+      <span class="status-pill">{{ c.required_status }}</span>
+      {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted small">— keine —</p>
+  {% endif %}
+</section>
+
+{% if inspector.contracts_in %}
+<section class="inspector-section">
+  <h3>Voraussetzungen für andere (eingehend)</h3>
+  <ul class="contract-list">
+    {% for c in inspector.contracts_in %}
+    <li class="contract">
+      <code class="ref">{{ c.source }}</code>
+      <span class="muted">braucht uns in</span>
+      <span class="status-pill">{{ c.required_status }}</span>
+      {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% else %}
+<div class="placeholder">
+  <p class="muted">Wähle einen Knoten aus der Liste.</p>
+</div>
+{% endif %}

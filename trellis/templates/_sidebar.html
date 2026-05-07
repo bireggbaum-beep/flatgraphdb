@@ -1,0 +1,24 @@
+<nav class="sidebar">
+  <div class="sidebar-section">
+    <h3 class="sidebar-title">Typen</h3>
+    <ul class="type-list">
+      {% for t in type_names %}
+      <li class="type-item {% if t == selected_type %}is-selected{% endif %}">
+        <a href="/types/{{ t }}"
+           hx-get="/types/{{ t }}"
+           hx-target="#col-list"
+           hx-swap="innerHTML"
+           hx-push-url="true">
+          {{ t }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="sidebar-section sidebar-bottom">
+    <button class="btn-tiny" type="button" disabled title="Folgt in Etappe 3">
+      + Typ anlegen
+    </button>
+  </div>
+</nav>

@@ -1,0 +1,61 @@
+{% if not selected_type %}
+<div class="placeholder">
+  <p>Wähle links einen Typ.</p>
+</div>
+{% else %}
+<header class="list-header">
+  <div class="list-title">
+    <h2>{{ selected_type }}</h2>
+    <span class="muted">{{ nodes|length }}</span>
+  </div>
+  <div class="list-actions">
+    <a class="btn-primary"
+       href="/new/{{ selected_type }}"
+       hx-get="/new/{{ selected_type }}"
+       hx-target="#col-inspector"
+       hx-swap="innerHTML"
+       hx-push-url="false">
+      + Neu
+    </a>
+  </div>
+</header>
+
+{% if not nodes %}
+<div class="placeholder">
+  <p class="muted">Noch nichts angelegt.</p>
+</div>
+{% else %}
+<table class="node-table">
+  <thead>
+    <tr>
+      <th class="col-name">Name</th>
+      <th class="col-id">ID</th>
+      <th class="col-status">Status</th>
+      <th class="col-stub" title="Stub: Pflicht-Kanten unvollständig"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for n in nodes %}
+    <tr class="node-row {% if n.ref == selected_ref %}is-selected{% endif %}"
+        hx-get="/nodes/{{ n.ref }}"
+        hx-target="#col-inspector"
+        hx-swap="innerHTML"
+        hx-trigger="click">
+      <td class="col-name">{{ n.name }}</td>
+      <td class="col-id"><code>{{ n.id }}</code></td>
+      <td class="col-status">
+        {% if n.current_status %}
+        <span class="status-pill">{{ n.current_status }}</span>
+        {% else %}
+        <span class="muted">—</span>
+        {% endif %}
+      </td>
+      <td class="col-stub">
+        {% if n.is_stub %}<span class="dot dot-stub" title="Stub"></span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}

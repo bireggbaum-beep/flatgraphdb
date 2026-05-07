@@ -1,0 +1,96 @@
+<header class="inspector-header">
+  <div class="inspector-title">
+    <h2>Neu: {{ form_spec.name }}</h2>
+  </div>
+  {% if form_spec.description %}
+  <p class="muted small">{{ form_spec.description }}</p>
+  {% endif %}
+</header>
+
+{% if form_error %}
+<div class="form-error">{{ form_error }}</div>
+{% endif %}
+
+<form class="node-form"
+      method="post"
+      action="/new/{{ form_spec.name }}"
+      hx-post="/new/{{ form_spec.name }}"
+      hx-target="#col-inspector"
+      hx-swap="innerHTML">
+
+  <section class="form-section">
+    <h3>Felder</h3>
+    {% for f in form_spec.fields %}
+    <div class="form-row">
+      <label for="field__{{ f.name }}">
+        {{ f.name }}{% if f.required %}<span class="req">*</span>{% endif %}
+      </label>
+      {% if f.type == "text" %}
+      <textarea id="field__{{ f.name }}" name="field__{{ f.name }}" rows="3"></textarea>
+      {% elif f.type == "bool" %}
+      <input id="field__{{ f.name }}" name="field__{{ f.name }}" type="checkbox" value="true">
+      {% else %}
+      <input id="field__{{ f.name }}" name="field__{{ f.name }}"
+             type="{% if f.type in ('int','float') %}number{% else %}text{% endif %}"
+             {% if f.type == "float" %}step="any"{% endif %}>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if form_spec.statuses %}
+    <div class="form-row">
+      <label for="current_status">current_status</label>
+      <input id="current_status" name="current_status" type="text"
+             list="status-list" autocomplete="off">
+      <datalist id="status-list">
+        {% for s in form_spec.statuses %}
+        <option value="{{ s }}">{% endfor %}
+      </datalist>
+      <span class="hint">Vorschläge aus types.yaml — neue Werte sind erlaubt.</span>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if form_spec.pflicht_kanten %}
+  <section class="form-section">
+    <h3>Pflicht-Kanten</h3>
+    {% for pk in form_spec.pflicht_kanten %}
+    <div class="form-row">
+      <label for="pk__{{ pk.typ }}">
+        {{ pk.typ }}
+        <span class="hint">
+          → {{ pk.ziel_typen|join(", ") }}
+          ({{ "genau eine" if pk.anzahl == "genau_eine" else "≥ 1" }})
+        </span>
+      </label>
+      {% if pk.anzahl == "genau_eine" %}
+      <select id="pk__{{ pk.typ }}" name="pk__{{ pk.typ }}">
+        <option value="">— offen lassen (Stub) —</option>
+        {% for opt in candidates[pk.typ] %}
+        <option value="{{ opt.ref }}">{{ opt.name }} <span>({{ opt.type }})</span></option>
+        {% endfor %}
+      </select>
+      {% else %}
+      <select id="pk__{{ pk.typ }}" name="pk__{{ pk.typ }}" multiple size="4">
+        {% for opt in candidates[pk.typ] %}
+        <option value="{{ opt.ref }}">{{ opt.name }} ({{ opt.type }})</option>
+        {% endfor %}
+      </select>
+      <span class="hint">Strg/Cmd-Klick für mehrfache Auswahl. Leer lassen → Stub.</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <div class="form-actions">
+    <button type="submit" class="btn-primary">Anlegen</button>
+    <a class="btn-cancel"
+       href="/types/{{ form_spec.name }}"
+       hx-get="/nodes/__cancel__/__cancel__"
+       hx-disable="true"
+       onclick="document.getElementById('col-inspector').innerHTML='<div class=\'placeholder\'><p class=\'muted\'>Wähle einen Knoten aus der Liste.</p></div>'; return false;">
+      Abbrechen
+    </a>
+  </div>
+</form>
