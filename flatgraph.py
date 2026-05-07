@@ -50,7 +50,8 @@ _INTERNAL_COLLECTIONS  = {"_audit_log"}
 
 class FlatGraphDB:
     def __init__(self, root_dir, schemas=None, edge_constraints=None,
-                 file_lock=False, audit=False, webhooks=None):
+                 file_lock=False, audit=False, webhooks=None,
+                 longtext_threshold=None):
         """
         Initialize the graph engine.
 
@@ -74,6 +75,10 @@ class FlatGraphDB:
                                  restricting which collection pairs are valid for each edge type.
                                  Example: {"gehört-zu-plant": [("equipment", "plant"),
                                                                ("software",   "plant")]}
+        :param longtext_threshold: If set (int), string fields longer than this many characters
+                                   are automatically offloaded to vault_text/ as plain-text files.
+                                   The node field stores an "@vault_text/..." reference instead.
+                                   Use get_node_full() to resolve references back to full text.
         """
         self.root = root_dir
         self.schemas = schemas or {}
@@ -81,15 +86,17 @@ class FlatGraphDB:
         self.file_lock = file_lock
         self.audit = audit
         self.webhooks = webhooks or []
+        self.longtext_threshold = longtext_threshold
         self._lock_path = os.path.join(root_dir, ".flatgraph.lock")
         self._audit_writing = False  # prevents recursive audit entries
 
         self.dirs = {
-            "nodes": os.path.join(root_dir, "datenbank", "nodes"),
-            "edges": os.path.join(root_dir, "datenbank", "edges"),
-            "index": os.path.join(root_dir, "datenbank", "index"),
-            "vault": os.path.join(root_dir, "vault"),
-            "vault_archive": os.path.join(root_dir, "vault_archive"),
+            "nodes":        os.path.join(root_dir, "datenbank", "nodes"),
+            "edges":        os.path.join(root_dir, "datenbank", "edges"),
+            "index":        os.path.join(root_dir, "datenbank", "index"),
+            "vault":        os.path.join(root_dir, "vault"),
+            "vault_archive":os.path.join(root_dir, "vault_archive"),
+            "vault_text":   os.path.join(root_dir, "vault_text"),
         }
         for path in self.dirs.values():
             os.makedirs(path, exist_ok=True)
@@ -442,6 +449,49 @@ class FlatGraphDB:
         return node_data is not None and "_deletion_flag" in node_data
 
     # ------------------------------------------------------------------
+    # Internal helpers — vault_text
+    # ------------------------------------------------------------------
+
+    _VAULT_TEXT_PREFIX = "@vault_text/"
+
+    def _vt_path(self, collection_name, node_id, field):
+        """Return the vault_text filepath for a given node field."""
+        safe = re.sub(r"[^\w\-]", "_", f"{collection_name}__{node_id}__{field}")
+        return os.path.join(self.dirs["vault_text"], f"{safe}.txt")
+
+    def _offload_longtexts(self, collection_name, node_id, data):
+        """
+        If longtext_threshold is set, replace any string value that exceeds
+        the threshold with an @vault_text/ reference. Modifies data in-place.
+        """
+        if not self.longtext_threshold:
+            return
+        for field, value in list(data.items()):
+            if field.startswith("_"):
+                continue
+            if isinstance(value, str) and len(value) > self.longtext_threshold:
+                path = self._vt_path(collection_name, node_id, field)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(value)
+                data[field] = f"{self._VAULT_TEXT_PREFIX}{os.path.relpath(path, self.root)}"
+
+    def _resolve_longtexts(self, data):
+        """Return a copy of data with all @vault_text/ references resolved to their text."""
+        resolved = {}
+        for field, value in data.items():
+            if isinstance(value, str) and value.startswith(self._VAULT_TEXT_PREFIX):
+                rel = value[len(self._VAULT_TEXT_PREFIX):]
+                abs_path = os.path.join(self.root, rel)
+                try:
+                    with open(abs_path, "r", encoding="utf-8") as f:
+                        resolved[field] = f.read()
+                except OSError:
+                    resolved[field] = value  # keep reference if file missing
+            else:
+                resolved[field] = value
+        return resolved
+
+    # ------------------------------------------------------------------
     # Internal helpers — field index
     # ------------------------------------------------------------------
 
@@ -524,7 +574,9 @@ class FlatGraphDB:
                 f"Use update_node() to modify existing nodes."
             )
 
-        self._cache["nodes"][collection_name][node_id] = copy.deepcopy(data)
+        stored = copy.deepcopy(data)
+        self._offload_longtexts(collection_name, node_id, stored)
+        self._cache["nodes"][collection_name][node_id] = stored
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
@@ -563,6 +615,17 @@ class FlatGraphDB:
         raw = self._cache["nodes"].get(col, {}).get(n_id)
         return copy.deepcopy(raw) if raw is not None else None
 
+    def get_node_full(self, node_ref):
+        """
+        Like get_node, but resolves all @vault_text/ references in the returned dict,
+        replacing them with the full text content from disk.
+        Returns None if the node does not exist or is soft-deleted.
+        """
+        data = self.get_node(node_ref)
+        if data is None:
+            return None
+        return self._resolve_longtexts(data)
+
     def update_node(self, collection_name, node_id, update_data):
         """
         Update fields of an existing node.
@@ -583,6 +646,7 @@ class FlatGraphDB:
             if not all(k.startswith("_") for k in update_data):
                 raise
 
+        self._offload_longtexts(collection_name, node_id, update_data)
         col_cache[node_id].update(update_data)
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
@@ -748,6 +812,108 @@ class FlatGraphDB:
         if padding > 0:
             return f"{prefix}{str(next_num).zfill(padding)}"
         return f"{prefix}{next_num}"
+
+    # ------------------------------------------------------------------
+    # OEFFENTLICHE API - IMPORT / EXPORT
+    # ------------------------------------------------------------------
+
+    def _import_records(self, collection_name, records, id_field, field_map, on_conflict):
+        """Shared core for import_json / import_csv."""
+        if on_conflict not in ("error", "skip", "overwrite"):
+            raise ValueError(f"on_conflict must be 'error', 'skip', or 'overwrite'; got '{on_conflict}'")
+        imported = skipped = 0
+        with self.transaction():
+            for raw in records:
+                # apply field_map (rename keys)
+                if field_map:
+                    row = {field_map.get(k, k): v for k, v in raw.items()}
+                    src_id_key = field_map.get(id_field, id_field)
+                else:
+                    row = dict(raw)
+                    src_id_key = id_field
+                node_id = str(row.get(src_id_key) or raw.get(id_field, ""))
+                if not node_id:
+                    raise ValueError(f"id_field '{id_field}' missing or empty in record: {raw}")
+                exists = node_id in self._cache["nodes"].get(collection_name, {})
+                if exists:
+                    if on_conflict == "error":
+                        raise KeyError(f"Node '{node_id}' already exists in '{collection_name}'.")
+                    if on_conflict == "skip":
+                        skipped += 1
+                        continue
+                    self.update_node(collection_name, node_id, row)
+                else:
+                    self.create_node(collection_name, node_id, row)
+                imported += 1
+        return {"imported": imported, "skipped": skipped}
+
+    def import_json(self, collection_name, filepath, id_field,
+                    field_map=None, on_conflict="error"):
+        """
+        Import nodes from a JSON file into a collection.
+
+        The file may contain either a list of dicts or a dict of dicts
+        (values are treated as records).
+
+        :param id_field:    Field name in the source data whose value becomes the node ID.
+        :param field_map:   Optional {source_field: target_field} rename map.
+        :param on_conflict: 'error' (default) | 'skip' | 'overwrite'
+        :return: {"imported": n, "skipped": n}
+        """
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        records = data if isinstance(data, list) else list(data.values())
+        return self._import_records(collection_name, records, id_field, field_map, on_conflict)
+
+    def import_csv(self, collection_name, filepath, id_field,
+                   field_map=None, on_conflict="error"):
+        """
+        Import nodes from a CSV file into a collection.
+
+        :param id_field:    Column name whose value becomes the node ID.
+        :param field_map:   Optional {source_column: target_field} rename map.
+        :param on_conflict: 'error' (default) | 'skip' | 'overwrite'
+        :return: {"imported": n, "skipped": n}
+        """
+        import csv
+        with open(filepath, "r", encoding="utf-8", newline="") as f:
+            records = list(csv.DictReader(f))
+        return self._import_records(collection_name, records, id_field, field_map, on_conflict)
+
+    def export_json(self, collection_name, filepath):
+        """
+        Export all nodes of a collection to a JSON file.
+        Format: {"node_id": {fields...}, ...}
+        """
+        nodes = self.list_nodes(collection_name)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(nodes, f, indent=2, ensure_ascii=False)
+
+    def export_csv(self, collection_name, filepath, fields=None):
+        """
+        Export all nodes of a collection to a CSV file.
+
+        :param fields: Optional list of field names to include (all fields if None).
+                       The node ID is always written as the first column '_id'.
+        """
+        import csv
+        nodes = self.list_nodes(collection_name)
+        if not nodes:
+            with open(filepath, "w", encoding="utf-8", newline="") as f:
+                pass
+            return
+        if fields is None:
+            seen = {}
+            for data in nodes.values():
+                for k in data:
+                    seen.setdefault(k, None)
+            fields = [k for k in seen if not k.startswith("_")]
+        with open(filepath, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["_id"] + list(fields),
+                                    extrasaction="ignore")
+            writer.writeheader()
+            for node_id, data in nodes.items():
+                writer.writerow({"_id": node_id, **{k: data.get(k, "") for k in fields}})
 
     def soft_delete(self, collection_name, node_id, keep_asset=True):
         """Mark a node for deletion by the garbage collector."""
@@ -1017,7 +1183,8 @@ class MaintenanceEngine(FlatGraphDB):
         Run the full garbage collection cycle.
         :return: statistics dict
         """
-        stats = {"scanned": 0, "edges_removed": 0, "nodes_purged": 0, "assets_archived": 0, "assets_kept": 0}
+        stats = {"scanned": 0, "edges_removed": 0, "nodes_purged": 0,
+                 "assets_archived": 0, "assets_kept": 0, "vault_text_orphans": 0}
 
         # --- PHASE A: Scanner ---
         to_delete = self._scan_for_deletions()
@@ -1026,6 +1193,8 @@ class MaintenanceEngine(FlatGraphDB):
         if not to_delete:
             if verbose:
                 print("[GC] No objects marked for deletion.")
+            stats["vault_text_orphans"] = self._collect_vault_text_orphans(verbose)
+            self._write_maintenance_log(stats)
             return stats
 
         if verbose:
@@ -1061,8 +1230,39 @@ class MaintenanceEngine(FlatGraphDB):
             if os.path.exists(self._temp_file(col)):
                 self._persist_collection_full(col)
 
+        # vault_text orphan cleanup: remove .txt files with no live node reference
+        stats["vault_text_orphans"] = self._collect_vault_text_orphans(verbose)
+
         self._write_maintenance_log(stats)
         return stats
+
+    def _collect_vault_text_orphans(self, verbose=False):
+        """Remove vault_text/ files that are no longer referenced by any live node."""
+        vt_dir = self.dirs["vault_text"]
+        if not os.path.isdir(vt_dir):
+            return 0
+        # Build set of all @vault_text/ references currently in the cache
+        live_refs = set()
+        prefix = FlatGraphDB._VAULT_TEXT_PREFIX
+        for col_data in self._cache["nodes"].values():
+            for node_data in col_data.values():
+                if self._is_deleted(node_data):
+                    continue
+                for value in node_data.values():
+                    if isinstance(value, str) and value.startswith(prefix):
+                        rel = value[len(prefix):]
+                        live_refs.add(os.path.normpath(os.path.join(self.root, rel)))
+        removed = 0
+        for filename in os.listdir(vt_dir):
+            if not filename.endswith(".txt"):
+                continue
+            filepath = os.path.normpath(os.path.join(vt_dir, filename))
+            if filepath not in live_refs:
+                os.remove(filepath)
+                removed += 1
+        if verbose and removed:
+            print(f"[GC] {removed} vault_text orphan(s) removed.")
+        return removed
 
     # ------------------------------------------------------------------
     # Interne Phasen
