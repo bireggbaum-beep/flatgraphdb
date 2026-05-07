@@ -532,10 +532,14 @@ class FlatGraphDB:
         self._fire_hooks("create_node", collection_name, node_id)
         return f"{collection_name}/{node_id}"
 
-    def get_node(self, node_ref):
+    def get_node(self, node_ref, readonly=False):
         """
         Read a node from the RAM cache.
         Returns None if the node does not exist or is soft-deleted.
+
+        :param readonly: If True, return a direct reference to the cached dict instead of a
+                         deep copy. Faster for display-only use — caller must never mutate
+                         the returned dict.
         """
         try:
             col, n_id = node_ref.split("/", 1)
@@ -544,7 +548,7 @@ class FlatGraphDB:
 
         node_data = self._cache["nodes"].get(col, {}).get(n_id)
         if node_data and not self._is_deleted(node_data):
-            return copy.deepcopy(node_data)
+            return node_data if readonly else copy.deepcopy(node_data)
         return None
 
     def get_node_raw(self, node_ref):
@@ -589,15 +593,19 @@ class FlatGraphDB:
             self._fire_hooks("update_node", collection_name, node_id)
         return True
 
-    def list_nodes(self, collection_name, include_deleted=False):
+    def list_nodes(self, collection_name, include_deleted=False, readonly=False):
         """
         Return all nodes of a collection as dict {node_id: data}.
         Soft-deleted entries are excluded by default.
+
+        :param readonly: If True, values are direct cache references (no deep copy).
+                         Faster for display/reporting — caller must never mutate the dicts.
         """
         col = self._cache["nodes"].get(collection_name, {})
+        _copy = (lambda d: d) if readonly else copy.deepcopy
         if include_deleted:
-            return {nid: copy.deepcopy(data) for nid, data in col.items()}
-        return {nid: copy.deepcopy(data) for nid, data in col.items() if not self._is_deleted(data)}
+            return {nid: _copy(data) for nid, data in col.items()}
+        return {nid: _copy(data) for nid, data in col.items() if not self._is_deleted(data)}
 
     def list_collections(self):
         """Return names of all known node collections (internal collections excluded)."""
@@ -658,7 +666,7 @@ class FlatGraphDB:
                     pass
             threading.Thread(target=_send, daemon=True).start()
 
-    def find_nodes(self, collection_name, match):
+    def find_nodes(self, collection_name, match, readonly=False):
         """
         Search nodes by field values. Supports three matching modes per field:
 
@@ -667,10 +675,13 @@ class FlatGraphDB:
           Predicate   {"title": lambda v: ...}    -> arbitrary logic, linear scan
 
         Multiple fields are AND-combined.
+
+        :param readonly: If True, values are direct cache references (no deep copy).
+                         Faster for display/reporting — caller must never mutate the dicts.
         :return: {node_id: node_data}
         """
         if not match:
-            return self.list_nodes(collection_name)
+            return self.list_nodes(collection_name, readonly=readonly)
 
         result_ids = None
 
@@ -700,8 +711,9 @@ class FlatGraphDB:
             return {}
 
         nodes = self._cache["nodes"].get(collection_name, {})
+        _copy = (lambda d: d) if readonly else copy.deepcopy
         return {
-            nid: copy.deepcopy(nodes[nid])
+            nid: _copy(nodes[nid])
             for nid in result_ids
             if nid in nodes and not self._is_deleted(nodes[nid])
         }
