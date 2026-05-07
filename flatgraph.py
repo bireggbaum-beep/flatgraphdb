@@ -49,33 +49,54 @@ _INTERNAL_COLLECTIONS  = {"_audit_log"}
 # =============================================================================
 
 class FlatGraphDB:
-    def __init__(self, root_dir, schemas=None, file_lock=False, audit=False, webhooks=None):
+    def __init__(self, root_dir, schemas=None, edge_constraints=None,
+                 file_lock=False, audit=False, webhooks=None,
+                 longtext_threshold=None):
         """
         Initialize the graph engine.
 
         :param root_dir:   Root directory of the database (created if it does not exist).
-        :param schemas:    Optional dict {collection_name: {field: expected_type}} for
-                           type-checked collections.
+        :param schemas:    Optional dict {collection_name: {field: spec}} for type-checked
+                           collections. Three spec forms are supported:
+                             str / int / float / bool / list
+                               Plain Python type — field is required, value must be that type.
+                             {"type": str|list, "options": [...]}
+                               Enum — field is required; for str the value must be one of the
+                               options; for list every element must be in options.
+                             {"type": "link", "target": "collection_name"}
+                               Node reference — field is optional; when present the value must
+                               be a valid, non-deleted node ref in the target collection.
         :param file_lock:  Enable file-level locking for multi-process safety (fcntl/msvcrt).
         :param audit:      Automatically write audit entries to _audit_log on every write.
         :param webhooks:   List of hook configs fired on node events (non-blocking HTTP POST):
                            [{"url": "https://...", "events": "*", "collections": "*"}]
                            events / collections: "*" = all, or a list e.g. ["create_node"]
+        :param edge_constraints: Optional dict {rel_type: [(source_collection, target_collection), ...]}
+                                 restricting which collection pairs are valid for each edge type.
+                                 Example: {"gehört-zu-plant": [("equipment", "plant"),
+                                                               ("software",   "plant")]}
+        :param longtext_threshold: If set (int), string fields longer than this many characters
+                                   are automatically offloaded to vault_text/ as plain-text files.
+                                   The node field stores an "@vault_text/..." reference instead.
+                                   Use get_node_full() to resolve references back to full text.
         """
         self.root = root_dir
         self.schemas = schemas or {}
+        self.edge_constraints = edge_constraints or {}
         self.file_lock = file_lock
         self.audit = audit
         self.webhooks = webhooks or []
+        self.longtext_threshold = longtext_threshold
         self._lock_path = os.path.join(root_dir, ".flatgraph.lock")
         self._audit_writing = False  # prevents recursive audit entries
 
         self.dirs = {
-            "nodes": os.path.join(root_dir, "datenbank", "nodes"),
-            "edges": os.path.join(root_dir, "datenbank", "edges"),
-            "index": os.path.join(root_dir, "datenbank", "index"),
-            "vault": os.path.join(root_dir, "vault"),
-            "vault_archive": os.path.join(root_dir, "vault_archive"),
+            "nodes":        os.path.join(root_dir, "datenbank", "nodes"),
+            "edges":        os.path.join(root_dir, "datenbank", "edges"),
+            "index":        os.path.join(root_dir, "datenbank", "index"),
+            "vault":        os.path.join(root_dir, "vault"),
+            "vault_archive":os.path.join(root_dir, "vault_archive"),
+            "vault_text":   os.path.join(root_dir, "vault_text"),
         }
         for path in self.dirs.values():
             os.makedirs(path, exist_ok=True)
@@ -88,6 +109,10 @@ class FlatGraphDB:
         self._dirty_nodes  = {}      # {collection: set(node_ids)} — pending temp-file writes
         self._dirty_edges  = set()   # rel_types with pending edge writes
         self._transaction_depth = 0  # >0 = active transaction, writes are buffered
+        # RMW delta tracking — required for correct multi-process merges
+        self._purged_nodes   = {}    # {collection: set(node_ids)} — permanently deleted this session
+        self._edge_additions = {}    # {rel_type: {edge_id: edge_data}} — edges created this session
+        self._edge_deletions = {}    # {rel_type: set(edge_ids)} — edges deleted this session
         self._initialize_cache()
 
     # ------------------------------------------------------------------
@@ -104,7 +129,24 @@ class FlatGraphDB:
             self._dirty_edges.add(rel_type)
             return
         self._dirty_edges.discard(rel_type)
-        self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+        self._flush_edge_type(rel_type)
+
+    def _flush_edge_type(self, rel_type):
+        """RMW for a single edge file: read current disk state, apply our delta, write back."""
+        new     = self._edge_additions.get(rel_type, {})
+        deleted = self._edge_deletions.get(rel_type, set())
+        if not new and not deleted:
+            return
+        with self._acquire_lock():
+            disk_edges = self._load_json_from_disk(self._edges_file(rel_type))
+            for eid in deleted:
+                disk_edges.pop(eid, None)
+            disk_edges.update(new)
+            self._save_json_atomic(self._edges_file(rel_type), disk_edges)
+        # Clear deltas only after a successful write
+        self._edge_additions.pop(rel_type, None)
+        self._edge_deletions.pop(rel_type, None)
+        self._cache["edges"][rel_type] = disk_edges
 
     @staticmethod
     def _translate_legacy_edge(edge):
@@ -222,14 +264,15 @@ class FlatGraphDB:
             return  # buffered until commit
         self._dirty_nodes.pop(collection_name, None)
         temp_path = self._temp_file(collection_name)
-        temp_data = self._load_json_from_disk(temp_path)
         col_data = self._cache["nodes"].get(collection_name, {})
-        for nid in dirty_ids:
-            if nid in col_data:
-                temp_data[nid] = col_data[nid]
-            else:
-                temp_data.pop(nid, None)
         with self._acquire_lock():
+            # Read inside the lock to avoid TOCTOU races with other processes
+            temp_data = self._load_json_from_disk(temp_path)
+            for nid in dirty_ids:
+                if nid in col_data:
+                    temp_data[nid] = col_data[nid]
+                else:
+                    temp_data.pop(nid, None)
             self._save_json_atomic(temp_path, temp_data)
 
     def _flush_pending_writes(self):
@@ -239,17 +282,17 @@ class FlatGraphDB:
             if not dirty_ids:
                 continue
             temp_path = self._temp_file(collection_name)
-            temp_data = self._load_json_from_disk(temp_path)
             col_data = self._cache["nodes"].get(collection_name, {})
-            for nid in dirty_ids:
-                if nid in col_data:
-                    temp_data[nid] = col_data[nid]
-                else:
-                    temp_data.pop(nid, None)
             with self._acquire_lock():
+                temp_data = self._load_json_from_disk(temp_path)
+                for nid in dirty_ids:
+                    if nid in col_data:
+                        temp_data[nid] = col_data[nid]
+                    else:
+                        temp_data.pop(nid, None)
                 self._save_json_atomic(temp_path, temp_data)
         for rel_type in list(self._dirty_edges):
-            self._save_json_atomic(self._edges_file(rel_type), self._cache["edges"].get(rel_type, {}))
+            self._flush_edge_type(rel_type)
         self._dirty_edges.clear()
 
     def flush(self):
@@ -271,9 +314,12 @@ class FlatGraphDB:
             return
 
         # Snapshot for rollback
-        snap_nodes    = copy.deepcopy(self._cache["nodes"])
-        snap_edges    = copy.deepcopy(self._cache["edges"])
-        snap_edge_idx = copy.deepcopy(self._edge_type_index)
+        snap_nodes      = copy.deepcopy(self._cache["nodes"])
+        snap_edges      = copy.deepcopy(self._cache["edges"])
+        snap_edge_idx   = copy.deepcopy(self._edge_type_index)
+        snap_purged     = copy.deepcopy(self._purged_nodes)
+        snap_edge_add   = copy.deepcopy(self._edge_additions)
+        snap_edge_del   = copy.deepcopy(self._edge_deletions)
 
         self._transaction_depth = 1
         try:
@@ -285,18 +331,35 @@ class FlatGraphDB:
             self._cache["nodes"]   = snap_nodes
             self._cache["edges"]   = snap_edges
             self._edge_type_index  = snap_edge_idx
+            self._purged_nodes     = snap_purged
+            self._edge_additions   = snap_edge_add
+            self._edge_deletions   = snap_edge_del
             self._dirty_nodes.clear()
             self._dirty_edges.clear()
             self._dirty_index.update(snap_nodes.keys())
             raise
 
     def _persist_collection_full(self, collection_name):
-        """Write the full collection to the base file and remove the temp-file (GC compaction)."""
-        path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
-        self._save_json_atomic(path, self._cache["nodes"].get(collection_name, {}))
+        """Compact a collection: RMW merge under lock, write base file, remove temp file."""
+        path      = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
         temp_path = self._temp_file(collection_name)
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        our_ram   = self._cache["nodes"].get(collection_name, {})
+        purged    = self._purged_nodes.pop(collection_name, set())
+        with self._acquire_lock():
+            # Read fresh disk state: base file + any pending temp entries from other processes
+            disk_base = self._load_json_from_disk(path)
+            disk_temp = self._load_json_from_disk(temp_path)
+            merged = {**disk_base, **disk_temp}
+            # Our RAM wins for nodes we know about
+            merged.update(our_ram)
+            # Remove nodes the GC permanently deleted this session
+            for nid in purged:
+                merged.pop(nid, None)
+            self._save_json_atomic(path, merged)
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        # Keep local RAM in sync with the authoritative merged state
+        self._cache["nodes"][collection_name] = merged
         self._dirty_nodes.pop(collection_name, None)
 
     def _validate_node(self, collection_name, data):
@@ -304,16 +367,129 @@ class FlatGraphDB:
         if collection_name not in self.schemas:
             return
         schema = self.schemas[collection_name]
-        for field, expected_type in schema.items():
-            if field not in data:
-                raise ValueError(f"Required field '{field}' missing in collection '{collection_name}'.")
-            if not isinstance(data[field], expected_type):
-                raise TypeError(
-                    f"Field '{field}' must be of type {expected_type.__name__}."
-                )
+        for field, spec in schema.items():
+            # --- plain Python type (existing behaviour, fully backward-compatible) ---
+            if isinstance(spec, type):
+                if field not in data:
+                    raise ValueError(
+                        f"Required field '{field}' missing in collection '{collection_name}'."
+                    )
+                if not isinstance(data[field], spec):
+                    raise TypeError(
+                        f"Field '{field}' must be of type {spec.__name__}."
+                    )
+                continue
+
+            if not isinstance(spec, dict):
+                raise ValueError(f"Invalid schema spec for field '{field}': {spec!r}")
+
+            field_type = spec.get("type")
+
+            # --- enum: {"type": str|list, "options": [...]} ---
+            if field_type in (str, list):
+                if field not in data:
+                    raise ValueError(
+                        f"Required field '{field}' missing in collection '{collection_name}'."
+                    )
+                value = data[field]
+                if not isinstance(value, field_type):
+                    name = field_type.__name__
+                    raise TypeError(f"Field '{field}' must be of type {name}.")
+                options = spec.get("options")
+                if options is not None:
+                    items = value if isinstance(value, list) else [value]
+                    for item in items:
+                        if item not in options:
+                            raise ValueError(
+                                f"Field '{field}': '{item}' is not an allowed value. "
+                                f"Allowed: {options}"
+                            )
+                continue
+
+            # --- link: {"type": "link", "target": "collection_name"} ---
+            if field_type == "link":
+                value = data.get(field)
+                if value is None:
+                    continue  # link fields are optional
+                target_col = spec.get("target")
+                if not self._node_ref_exists(value, expected_collection=target_col):
+                    hint = f" in collection '{target_col}'" if target_col else ""
+                    raise ValueError(
+                        f"Field '{field}': referenced node '{value}' does not exist{hint}."
+                    )
+                continue
+
+            raise ValueError(f"Unknown schema type '{field_type}' for field '{field}'.")
+
+    def _node_ref_exists(self, ref, expected_collection=None):
+        """Return True if ref points to an existing, non-deleted node."""
+        if not isinstance(ref, str) or "/" not in ref:
+            return False
+        col, nid = ref.split("/", 1)
+        if expected_collection and col != expected_collection:
+            return False
+        node = self._cache["nodes"].get(col, {}).get(nid)
+        return node is not None and not self._is_deleted(node)
+
+    def _validate_edge(self, source_ref, target_ref, rel_type):
+        """Check source/target collections against declared edge_constraints (if any)."""
+        allowed = self.edge_constraints.get(rel_type)
+        if allowed is None:
+            return  # no constraint declared for this rel_type
+        src_col = source_ref.split("/", 1)[0] if "/" in source_ref else source_ref
+        tgt_col = target_ref.split("/", 1)[0] if "/" in target_ref else target_ref
+        if (src_col, tgt_col) not in [tuple(p) for p in allowed]:
+            raise ValueError(
+                f"Edge type '{rel_type}' does not allow "
+                f"'{src_col}' → '{tgt_col}'. "
+                f"Allowed pairs: {[list(p) for p in allowed]}"
+            )
 
     def _is_deleted(self, node_data):
         return node_data is not None and "_deletion_flag" in node_data
+
+    # ------------------------------------------------------------------
+    # Internal helpers — vault_text
+    # ------------------------------------------------------------------
+
+    _VAULT_TEXT_PREFIX = "@vault_text/"
+
+    def _vt_path(self, collection_name, node_id, field):
+        """Return the vault_text filepath for a given node field."""
+        safe = re.sub(r"[^\w\-]", "_", f"{collection_name}__{node_id}__{field}")
+        return os.path.join(self.dirs["vault_text"], f"{safe}.txt")
+
+    def _offload_longtexts(self, collection_name, node_id, data):
+        """
+        If longtext_threshold is set, replace any string value that exceeds
+        the threshold with an @vault_text/ reference. Modifies data in-place.
+        """
+        if not self.longtext_threshold:
+            return
+        for field, value in list(data.items()):
+            if field.startswith("_"):
+                continue
+            if isinstance(value, str) and len(value) > self.longtext_threshold:
+                path = self._vt_path(collection_name, node_id, field)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(value)
+                data[field] = f"{self._VAULT_TEXT_PREFIX}{os.path.relpath(path, self.root)}"
+
+    def _resolve_longtexts(self, data):
+        """Return a copy of data with all @vault_text/ references resolved to their text."""
+        resolved = {}
+        for field, value in data.items():
+            if isinstance(value, str) and value.startswith(self._VAULT_TEXT_PREFIX):
+                rel = value[len(self._VAULT_TEXT_PREFIX):]
+                abs_path = os.path.join(self.root, rel)
+                try:
+                    with open(abs_path, "r", encoding="utf-8") as f:
+                        resolved[field] = f.read()
+                except OSError:
+                    resolved[field] = value  # keep reference if file missing
+            else:
+                resolved[field] = value
+        return resolved
 
     # ------------------------------------------------------------------
     # Internal helpers — field index
@@ -398,7 +574,9 @@ class FlatGraphDB:
                 f"Use update_node() to modify existing nodes."
             )
 
-        self._cache["nodes"][collection_name][node_id] = copy.deepcopy(data)
+        stored = copy.deepcopy(data)
+        self._offload_longtexts(collection_name, node_id, stored)
+        self._cache["nodes"][collection_name][node_id] = stored
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
@@ -406,10 +584,14 @@ class FlatGraphDB:
         self._fire_hooks("create_node", collection_name, node_id)
         return f"{collection_name}/{node_id}"
 
-    def get_node(self, node_ref):
+    def get_node(self, node_ref, readonly=False):
         """
         Read a node from the RAM cache.
         Returns None if the node does not exist or is soft-deleted.
+
+        :param readonly: If True, return a direct reference to the cached dict instead of a
+                         deep copy. Faster for display-only use — caller must never mutate
+                         the returned dict.
         """
         try:
             col, n_id = node_ref.split("/", 1)
@@ -418,7 +600,7 @@ class FlatGraphDB:
 
         node_data = self._cache["nodes"].get(col, {}).get(n_id)
         if node_data and not self._is_deleted(node_data):
-            return copy.deepcopy(node_data)
+            return node_data if readonly else copy.deepcopy(node_data)
         return None
 
     def get_node_raw(self, node_ref):
@@ -432,6 +614,17 @@ class FlatGraphDB:
             return None
         raw = self._cache["nodes"].get(col, {}).get(n_id)
         return copy.deepcopy(raw) if raw is not None else None
+
+    def get_node_full(self, node_ref):
+        """
+        Like get_node, but resolves all @vault_text/ references in the returned dict,
+        replacing them with the full text content from disk.
+        Returns None if the node does not exist or is soft-deleted.
+        """
+        data = self.get_node(node_ref)
+        if data is None:
+            return None
+        return self._resolve_longtexts(data)
 
     def update_node(self, collection_name, node_id, update_data):
         """
@@ -453,6 +646,7 @@ class FlatGraphDB:
             if not all(k.startswith("_") for k in update_data):
                 raise
 
+        self._offload_longtexts(collection_name, node_id, update_data)
         col_cache[node_id].update(update_data)
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
@@ -463,15 +657,19 @@ class FlatGraphDB:
             self._fire_hooks("update_node", collection_name, node_id)
         return True
 
-    def list_nodes(self, collection_name, include_deleted=False):
+    def list_nodes(self, collection_name, include_deleted=False, readonly=False):
         """
         Return all nodes of a collection as dict {node_id: data}.
         Soft-deleted entries are excluded by default.
+
+        :param readonly: If True, values are direct cache references (no deep copy).
+                         Faster for display/reporting — caller must never mutate the dicts.
         """
         col = self._cache["nodes"].get(collection_name, {})
+        _copy = (lambda d: d) if readonly else copy.deepcopy
         if include_deleted:
-            return {nid: copy.deepcopy(data) for nid, data in col.items()}
-        return {nid: copy.deepcopy(data) for nid, data in col.items() if not self._is_deleted(data)}
+            return {nid: _copy(data) for nid, data in col.items()}
+        return {nid: _copy(data) for nid, data in col.items() if not self._is_deleted(data)}
 
     def list_collections(self):
         """Return names of all known node collections (internal collections excluded)."""
@@ -532,7 +730,7 @@ class FlatGraphDB:
                     pass
             threading.Thread(target=_send, daemon=True).start()
 
-    def find_nodes(self, collection_name, match):
+    def find_nodes(self, collection_name, match, readonly=False):
         """
         Search nodes by field values. Supports three matching modes per field:
 
@@ -541,10 +739,13 @@ class FlatGraphDB:
           Predicate   {"title": lambda v: ...}    -> arbitrary logic, linear scan
 
         Multiple fields are AND-combined.
+
+        :param readonly: If True, values are direct cache references (no deep copy).
+                         Faster for display/reporting — caller must never mutate the dicts.
         :return: {node_id: node_data}
         """
         if not match:
-            return self.list_nodes(collection_name)
+            return self.list_nodes(collection_name, readonly=readonly)
 
         result_ids = None
 
@@ -574,8 +775,9 @@ class FlatGraphDB:
             return {}
 
         nodes = self._cache["nodes"].get(collection_name, {})
+        _copy = (lambda d: d) if readonly else copy.deepcopy
         return {
-            nid: copy.deepcopy(nodes[nid])
+            nid: _copy(nodes[nid])
             for nid in result_ids
             if nid in nodes and not self._is_deleted(nodes[nid])
         }
@@ -610,6 +812,108 @@ class FlatGraphDB:
         if padding > 0:
             return f"{prefix}{str(next_num).zfill(padding)}"
         return f"{prefix}{next_num}"
+
+    # ------------------------------------------------------------------
+    # OEFFENTLICHE API - IMPORT / EXPORT
+    # ------------------------------------------------------------------
+
+    def _import_records(self, collection_name, records, id_field, field_map, on_conflict):
+        """Shared core for import_json / import_csv."""
+        if on_conflict not in ("error", "skip", "overwrite"):
+            raise ValueError(f"on_conflict must be 'error', 'skip', or 'overwrite'; got '{on_conflict}'")
+        imported = skipped = 0
+        with self.transaction():
+            for raw in records:
+                # apply field_map (rename keys)
+                if field_map:
+                    row = {field_map.get(k, k): v for k, v in raw.items()}
+                    src_id_key = field_map.get(id_field, id_field)
+                else:
+                    row = dict(raw)
+                    src_id_key = id_field
+                node_id = str(row.get(src_id_key) or raw.get(id_field, ""))
+                if not node_id:
+                    raise ValueError(f"id_field '{id_field}' missing or empty in record: {raw}")
+                exists = node_id in self._cache["nodes"].get(collection_name, {})
+                if exists:
+                    if on_conflict == "error":
+                        raise KeyError(f"Node '{node_id}' already exists in '{collection_name}'.")
+                    if on_conflict == "skip":
+                        skipped += 1
+                        continue
+                    self.update_node(collection_name, node_id, row)
+                else:
+                    self.create_node(collection_name, node_id, row)
+                imported += 1
+        return {"imported": imported, "skipped": skipped}
+
+    def import_json(self, collection_name, filepath, id_field,
+                    field_map=None, on_conflict="error"):
+        """
+        Import nodes from a JSON file into a collection.
+
+        The file may contain either a list of dicts or a dict of dicts
+        (values are treated as records).
+
+        :param id_field:    Field name in the source data whose value becomes the node ID.
+        :param field_map:   Optional {source_field: target_field} rename map.
+        :param on_conflict: 'error' (default) | 'skip' | 'overwrite'
+        :return: {"imported": n, "skipped": n}
+        """
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        records = data if isinstance(data, list) else list(data.values())
+        return self._import_records(collection_name, records, id_field, field_map, on_conflict)
+
+    def import_csv(self, collection_name, filepath, id_field,
+                   field_map=None, on_conflict="error"):
+        """
+        Import nodes from a CSV file into a collection.
+
+        :param id_field:    Column name whose value becomes the node ID.
+        :param field_map:   Optional {source_column: target_field} rename map.
+        :param on_conflict: 'error' (default) | 'skip' | 'overwrite'
+        :return: {"imported": n, "skipped": n}
+        """
+        import csv
+        with open(filepath, "r", encoding="utf-8", newline="") as f:
+            records = list(csv.DictReader(f))
+        return self._import_records(collection_name, records, id_field, field_map, on_conflict)
+
+    def export_json(self, collection_name, filepath):
+        """
+        Export all nodes of a collection to a JSON file.
+        Format: {"node_id": {fields...}, ...}
+        """
+        nodes = self.list_nodes(collection_name)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(nodes, f, indent=2, ensure_ascii=False)
+
+    def export_csv(self, collection_name, filepath, fields=None):
+        """
+        Export all nodes of a collection to a CSV file.
+
+        :param fields: Optional list of field names to include (all fields if None).
+                       The node ID is always written as the first column '_id'.
+        """
+        import csv
+        nodes = self.list_nodes(collection_name)
+        if not nodes:
+            with open(filepath, "w", encoding="utf-8", newline="") as f:
+                pass
+            return
+        if fields is None:
+            seen = {}
+            for data in nodes.values():
+                for k in data:
+                    seen.setdefault(k, None)
+            fields = [k for k in seen if not k.startswith("_")]
+        with open(filepath, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["_id"] + list(fields),
+                                    extrasaction="ignore")
+            writer.writeheader()
+            for node_id, data in nodes.items():
+                writer.writerow({"_id": node_id, **{k: data.get(k, "") for k in fields}})
 
     def soft_delete(self, collection_name, node_id, keep_asset=True):
         """Mark a node for deletion by the garbage collector."""
@@ -654,6 +958,7 @@ class FlatGraphDB:
             raise ValueError(f"Source node '{source_ref}' does not exist or is soft-deleted.")
         if self.get_node(target_ref) is None:
             raise ValueError(f"Target node '{target_ref}' does not exist or is soft-deleted.")
+        self._validate_edge(source_ref, target_ref, rel_type)
 
         edge_id = f"link_{uuid.uuid4().hex[:12]}"
         edge_data = {
@@ -670,6 +975,7 @@ class FlatGraphDB:
 
         self._cache["edges"].setdefault(rel_type, {})[edge_id] = edge_data
         self._edge_type_index[edge_id] = rel_type
+        self._edge_additions.setdefault(rel_type, {})[edge_id] = edge_data
         self._persist_edge_type(rel_type)
         return edge_id
 
@@ -687,6 +993,12 @@ class FlatGraphDB:
         if rel_type and edge_id in self._cache["edges"].get(rel_type, {}):
             del self._cache["edges"][rel_type][edge_id]
             del self._edge_type_index[edge_id]
+            # If the edge was added this session it never reached disk — just cancel the addition.
+            # Otherwise record it as a deletion so _flush_edge_type removes it from disk.
+            if edge_id in self._edge_additions.get(rel_type, {}):
+                del self._edge_additions[rel_type][edge_id]
+            else:
+                self._edge_deletions.setdefault(rel_type, set()).add(edge_id)
             self._persist_edge_type(rel_type)
             return True
         return False
@@ -871,7 +1183,8 @@ class MaintenanceEngine(FlatGraphDB):
         Run the full garbage collection cycle.
         :return: statistics dict
         """
-        stats = {"scanned": 0, "edges_removed": 0, "nodes_purged": 0, "assets_archived": 0, "assets_kept": 0}
+        stats = {"scanned": 0, "edges_removed": 0, "nodes_purged": 0,
+                 "assets_archived": 0, "assets_kept": 0, "vault_text_orphans": 0}
 
         # --- PHASE A: Scanner ---
         to_delete = self._scan_for_deletions()
@@ -880,6 +1193,8 @@ class MaintenanceEngine(FlatGraphDB):
         if not to_delete:
             if verbose:
                 print("[GC] No objects marked for deletion.")
+            stats["vault_text_orphans"] = self._collect_vault_text_orphans(verbose)
+            self._write_maintenance_log(stats)
             return stats
 
         if verbose:
@@ -915,8 +1230,39 @@ class MaintenanceEngine(FlatGraphDB):
             if os.path.exists(self._temp_file(col)):
                 self._persist_collection_full(col)
 
+        # vault_text orphan cleanup: remove .txt files with no live node reference
+        stats["vault_text_orphans"] = self._collect_vault_text_orphans(verbose)
+
         self._write_maintenance_log(stats)
         return stats
+
+    def _collect_vault_text_orphans(self, verbose=False):
+        """Remove vault_text/ files that are no longer referenced by any live node."""
+        vt_dir = self.dirs["vault_text"]
+        if not os.path.isdir(vt_dir):
+            return 0
+        # Build set of all @vault_text/ references currently in the cache
+        live_refs = set()
+        prefix = FlatGraphDB._VAULT_TEXT_PREFIX
+        for col_data in self._cache["nodes"].values():
+            for node_data in col_data.values():
+                if self._is_deleted(node_data):
+                    continue
+                for value in node_data.values():
+                    if isinstance(value, str) and value.startswith(prefix):
+                        rel = value[len(prefix):]
+                        live_refs.add(os.path.normpath(os.path.join(self.root, rel)))
+        removed = 0
+        for filename in os.listdir(vt_dir):
+            if not filename.endswith(".txt"):
+                continue
+            filepath = os.path.normpath(os.path.join(vt_dir, filename))
+            if filepath not in live_refs:
+                os.remove(filepath)
+                removed += 1
+        if verbose and removed:
+            print(f"[GC] {removed} vault_text orphan(s) removed.")
+        return removed
 
     # ------------------------------------------------------------------
     # Interne Phasen
@@ -938,16 +1284,18 @@ class MaintenanceEngine(FlatGraphDB):
             return []
 
         # Step 2: cascade expansion — follow all cascade_delete edges recursively.
-        # Only mark in RAM during expansion; no persist inside the loop.
-        # All affected collections are flushed after the expansion completes
-        # so the on-disk state stays consistent.
+        # Snapshot taken once before the loop: edges never change during expansion
+        # (only node _deletion_flag is written), so one pass through the snapshot
+        # is sufficient per outer iteration.
+        # All affected collections are flushed only after the full expansion so
+        # the on-disk state is never partially consistent mid-GC.
         to_delete_refs = {f"{col}/{nid}" for col, nid, _ in direct}
         dirty_collections = set()
+        edges_snapshot = [e for b in self._cache["edges"].values() for e in b.values()]
 
         changed = True
         while changed:
             changed = False
-            edges_snapshot = [e for b in self._cache["edges"].values() for e in b.values()]
             for edge in edges_snapshot:
                 if not edge.get("_cascade_delete"):
                     continue
@@ -993,6 +1341,10 @@ class MaintenanceEngine(FlatGraphDB):
             for eid in to_remove:
                 del bucket[eid]
                 self._edge_type_index.pop(eid, None)
+                if eid in self._edge_additions.get(rel_type, {}):
+                    del self._edge_additions[rel_type][eid]
+                else:
+                    self._edge_deletions.setdefault(rel_type, set()).add(eid)
                 dirty_types.add(rel_type)
                 count += 1
         for rel_type in dirty_types:
@@ -1031,6 +1383,7 @@ class MaintenanceEngine(FlatGraphDB):
 
         # remove node permanently (LAST step → idempotency)
         del self._cache["nodes"][collection_name][node_id]
+        self._purged_nodes.setdefault(collection_name, set()).add(node_id)
         self._dirty_nodes.pop(collection_name, None)  # no temp-write for deleted nodes
         self._mark_index_dirty(collection_name)
         return asset_status
