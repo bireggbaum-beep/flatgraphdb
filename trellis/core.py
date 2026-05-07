@@ -188,18 +188,13 @@ class TrellisDB:
                 f"add_contract: edge type {edge_type!r} is not a vertrag edge "
                 f"(kategorie={et.kategorie!r})"
             )
-        # Verify the required_status is at least known to the target's type —
-        # not a hard requirement (Wachstums-Axiom), but we warn-by-error if
-        # the target type has a status list and the value is not in it. For
-        # types without a declared status list we accept any string.
+        # Wachstums-Axiom: required_status is free-form. The UI offers the
+        # target type's declared statuses + already-used values as autocomplete,
+        # but typing a new value is a valid modelling action.
         target_type, _ = _split_ref(target_ref)
-        target_spec = self.config.get_type(target_type)
-        if target_spec.statuses and required_status not in target_spec.statuses:
-            raise TrellisError(
-                f"add_contract: required_status {required_status!r} is not in the "
-                f"declared statuses of type {target_type!r}: {list(target_spec.statuses)}. "
-                f"Add it to types.yaml first if you really want it."
-            )
+        self.config.get_type(target_type)  # raises if target type is unknown
+        if not isinstance(required_status, str) or not required_status:
+            raise TrellisError("add_contract: required_status must be a non-empty string")
         if not isinstance(is_blocker, bool):
             raise TrellisError("add_contract: is_blocker must be a bool")
 
@@ -344,13 +339,12 @@ class TrellisDB:
                 _check_field_type(spec, f, fields[f.name])
 
     def _validate_status(self, spec: NodeType, status: Any) -> None:
+        # Wachstums-Axiom: the `statuses` list in types.yaml is a suggestion
+        # corpus (used for autocomplete in the UI), not a hard gate. Any
+        # string is accepted at write time. The user can grow the canonical
+        # list later by editing types.yaml or via the UI editor.
         if not isinstance(status, str):
             raise TrellisError(f"type {spec.name!r}: current_status must be a string")
-        if spec.statuses and status not in spec.statuses:
-            raise TrellisError(
-                f"type {spec.name!r}: status {status!r} not in declared statuses "
-                f"{list(spec.statuses)}. Add it to types.yaml first."
-            )
 
     def _validate_pflicht_targets(
         self,

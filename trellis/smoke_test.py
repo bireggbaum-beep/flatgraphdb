@@ -127,15 +127,6 @@ def main() -> int:
             lambda: db.create_node("Equipment", {"hersteller": "Acme"}),
             "missing required field rejected",
         )
-        assert_raises(
-            TrellisError,
-            lambda: db.create_node(
-                "Phase",
-                {"name": "Bad", "current_status": "Mondphase"},
-                pflicht_kanten_targets={"betrifft": [eq_ref]},
-            ),
-            "unknown status rejected",
-        )
         # Dokument is not a permitted target type for Phase.betrifft — must reject
         # even before checking that the ref does not exist.
         assert_raises(
@@ -148,11 +139,6 @@ def main() -> int:
         )
         assert_raises(
             TrellisError,
-            lambda: db.add_contract(pq, iq, "Mondphase", True),
-            "unknown required_status rejected",
-        )
-        assert_raises(
-            TrellisError,
             lambda: db.add_contract(pq, iq, "Abgeschlossen", "yes"),
             "non-bool is_blocker rejected",
         )
@@ -161,6 +147,22 @@ def main() -> int:
             lambda: db.add_structural_edge(pq, iq, "requires"),
             "structural API refuses vertrag edge type",
         )
+
+        # --- wachstums-axiom: free-form statuses go through --------------------
+        print("\n# wachstums-axiom (statuses are suggestions, not gates)")
+        novel = db.create_node(
+            "Phase",
+            {"name": "DR Linie A", "phasen_art": "DR", "current_status": "Pausiert"},
+            pflicht_kanten_targets={"betrifft": [lin]},
+        )
+        assert_eq(db.get_node(novel)["current_status"], "Pausiert",
+                  "novel status accepted on create")
+        ok = db.update_node(novel, {"current_status": "Eingefroren"})
+        assert_true(ok, "update_node accepts a brand-new status string")
+        novel_eid = db.add_contract(pq, novel, required_status="Beliebig", is_blocker=False)
+        assert_true(bool(novel_eid), "add_contract accepts a brand-new required_status")
+        # cleanup so the rest of the test sees a stable count
+        db.remove_contract(novel_eid)
 
         # --- search / @-mention -----------------------------------------------
         print("\n# search (for @-mention)")

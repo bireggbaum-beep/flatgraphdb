@@ -27,6 +27,12 @@ folgt dem Denken.
 (transaction-basiert), explizite Fehler statt stillem Datenverlust, kein
 Halb-Feature. Lieber weniger Funktionen, dafür ohne Haken.
 
+Diese beiden Axiome sind kein Widerspruch, aber sie haben eine klare
+Arbeitsteilung: das Tool blockiert nur dort, wo Daten kaputt gehen würden
+(unbekannter Typ, gebrochene Referenzen, API-Missbrauch). Alles, was nur
+Vokabular ist (Stati, neue Vertragstexte), geht durch — die Liste in
+`types.yaml` ist Vorschlags-Korpus für Autocomplete, nicht Gate.
+
 ## Datenmodell
 
 Zwei klare Edge-Kategorien:
