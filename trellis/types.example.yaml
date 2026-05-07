@@ -1,0 +1,196 @@
+# =============================================================================
+# Trellis Type Registry
+# =============================================================================
+# This file defines the node and edge types that exist in this Trellis project.
+# It is the source of truth — both the UI ("Typen verwalten") and direct hand-
+# editing write to this file. Every change is diff-able and version-controllable.
+#
+# Wachstums-Axiom: this file grows. Add new types as you discover the need for
+# them. Existing nodes are never invalidated by such additions.
+#
+# This is an EXAMPLE file. Copy it to `types.yaml` in your project directory
+# and adapt it. The bundled example covers the typical Q&V vocabulary.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Node types
+# -----------------------------------------------------------------------------
+# Each entry declares one node type. Keys:
+#
+#   description    Free text. Shown as tooltip in the UI.
+#   id_prefix      Prefix for auto-generated IDs, e.g. "PHA-" → PHA-0001.
+#   id_padding     Zero-padding width for the numeric part. 4 → 0001.
+#   statuses       List of allowed status strings for `current_status`.
+#                  Free-form — extend whenever you discover a new state.
+#                  Old nodes carrying a status that has been removed from this
+#                  list keep their value (no silent data loss).
+#   fields         Plain data fields on the node. List of {name, type, required}.
+#                  type is one of: string, int, float, bool, text.
+#   pflicht_kanten Mandatory outgoing edges that must be set on creation.
+#                  See edge_types below for the meaning of `typ`.
+#                  anzahl: "genau_eine" | "mindestens_eine".
+# -----------------------------------------------------------------------------
+
+types:
+
+  Phase:
+    description: "Eine Projektphase (FAT, SAT, IQ, OQ, PQ, Design Review, …),
+                  konstitutiv an ein Bezugsobjekt gebunden."
+    id_prefix: PHA-
+    id_padding: 4
+    statuses:
+      - Geplant
+      - Läuft
+      - Abgeschlossen
+    fields:
+      - {name: name,     type: string, required: true}
+      - {name: phasen_art, type: string, required: false}   # IQ, OQ, FAT, …
+    pflicht_kanten:
+      - typ: betrifft
+        ziel_typen: [Equipment, System, Linie, Prozess, Produkt]
+        anzahl: genau_eine
+
+  Meilenstein:
+    description: "Ein definierter Zustandspunkt, der von einer Phase erreicht
+                  werden muss, damit eine Folgephase starten kann."
+    id_prefix: MIL-
+    id_padding: 4
+    statuses:
+      - Offen
+      - Erreicht
+    fields:
+      - {name: name, type: string, required: true}
+    pflicht_kanten:
+      - typ: gehoert_zu
+        ziel_typen: [Phase]
+        anzahl: genau_eine
+
+  Equipment:
+    description: "Physisches Equipment im Projekt."
+    id_prefix: EQ-
+    id_padding: 4
+    statuses:
+      - Aktiv
+      - Außer Betrieb
+    fields:
+      - {name: name,        type: string, required: true}
+      - {name: hersteller,  type: string, required: false}
+      - {name: seriennummer, type: string, required: false}
+
+  System:
+    description: "Logische Funktionseinheit, oft ein Cluster aus Equipments."
+    id_prefix: SYS-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+
+  Linie:
+    description: "Produktionslinie — besteht aus Equipments, produziert Produkte."
+    id_prefix: LIN-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+    pflicht_kanten:
+      - typ: produziert
+        ziel_typen: [Produkt]
+        anzahl: mindestens_eine
+      - typ: besteht_aus
+        ziel_typen: [Equipment]
+        anzahl: mindestens_eine
+
+  Prozess:
+    description: "Herstellungsprozess, fest an ein Produkt gebunden."
+    id_prefix: PRZ-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+    pflicht_kanten:
+      - typ: stellt_her
+        ziel_typen: [Produkt]
+        anzahl: genau_eine
+
+  Produkt:
+    description: "Endprodukt oder Zwischenprodukt."
+    id_prefix: PRD-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+
+  Dokument:
+    description: "Dokument im Projekt (SOP, URS, FDS, IQ-Protokoll, …)."
+    id_prefix: DOC-
+    id_padding: 4
+    statuses:
+      - Draft
+      - Signed
+      - Effective
+    fields:
+      - {name: name,    type: string, required: true}
+      - {name: dok_typ, type: string, required: false}
+
+  Taetigkeit:
+    description: "Auszuführende Tätigkeit im Rahmen einer Phase."
+    id_prefix: TAT-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+
+  Software:
+    description: "Eingesetzte Software (im Equipment/System verbaut)."
+    id_prefix: SW-
+    id_padding: 4
+    fields:
+      - {name: name,    type: string, required: true}
+      - {name: version, type: string, required: false}
+
+  Material:
+    description: "Eingesetztes Material / Roh-/Hilfsstoff."
+    id_prefix: MAT-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+
+  Training:
+    description: "Schulungs-/Qualifizierungsmaßnahme."
+    id_prefix: TRA-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+
+  Medium:
+    description: "Hilfsmedium (Druckluft, WFI, Stickstoff, …)."
+    id_prefix: MED-
+    id_padding: 4
+    fields:
+      - {name: name, type: string, required: true}
+
+
+# -----------------------------------------------------------------------------
+# Edge types
+# -----------------------------------------------------------------------------
+# Trellis distinguishes two categories of edges:
+#
+#   strukturell  Constitutive structural edges (Capacities-style link fields).
+#                No per-edge metadata. Examples: betrifft, besteht_aus,
+#                produziert, stellt_her, gehoert_zu.
+#
+#   vertrag      Contract edges with required_status + is_blocker metadata.
+#                Used for the actual readiness logic. The canonical type is
+#                `requires`, but you may invent project-specific contract
+#                edge types if needed.
+# -----------------------------------------------------------------------------
+
+edge_types:
+
+  betrifft:    {kategorie: strukturell}
+  besteht_aus: {kategorie: strukturell}
+  produziert:  {kategorie: strukturell}
+  stellt_her:  {kategorie: strukturell}
+  gehoert_zu:  {kategorie: strukturell}
+
+  requires:
+    kategorie: vertrag
+    meta_felder:
+      - required_status     # the status the target must be in
+      - is_blocker          # true → not-fulfilled = Red; false = Yellow
