@@ -1072,16 +1072,18 @@ class MaintenanceEngine(FlatGraphDB):
             return []
 
         # Step 2: cascade expansion — follow all cascade_delete edges recursively.
-        # Only mark in RAM during expansion; no persist inside the loop.
-        # All affected collections are flushed after the expansion completes
-        # so the on-disk state stays consistent.
+        # Snapshot taken once before the loop: edges never change during expansion
+        # (only node _deletion_flag is written), so one pass through the snapshot
+        # is sufficient per outer iteration.
+        # All affected collections are flushed only after the full expansion so
+        # the on-disk state is never partially consistent mid-GC.
         to_delete_refs = {f"{col}/{nid}" for col, nid, _ in direct}
         dirty_collections = set()
+        edges_snapshot = [e for b in self._cache["edges"].values() for e in b.values()]
 
         changed = True
         while changed:
             changed = False
-            edges_snapshot = [e for b in self._cache["edges"].values() for e in b.values()]
             for edge in edges_snapshot:
                 if not edge.get("_cascade_delete"):
                     continue
