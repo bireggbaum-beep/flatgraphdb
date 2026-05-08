@@ -26,13 +26,28 @@ def empty_state() -> dict[str, Any]:
     independently.
     """
     return {
-        "selected_type": None,
-        "selected_ref":  None,
-        "nodes":         [],
-        "inspector":     None,
-        "form_spec":     None,
-        "candidates":    {},
-        "form_error":    None,
+        # nav / layout
+        "selected_type":       None,
+        "selected_ref":        None,
+        "nodes":               [],
+        # inspector
+        "inspector":           None,
+        # create form
+        "form_spec":           None,
+        "candidates":          {},
+        "form_error":          None,
+        # edit form
+        "edit_node":           None,
+        "edit_ref":             None,
+        # contract editor (lives inside the inspector partial)
+        "contract_form_open":  False,
+        "contract_form_error": None,
+        "known_statuses":      [],
+        "all_type_names":      [],
+        # mention popup
+        "hits":                [],
+        "create_for":          [],
+        "query":               "",
     }
 
 
@@ -95,3 +110,54 @@ def candidates_for_pflicht(
         opts.sort(key=lambda o: (o["type"], (o["name"] or "").lower()))
         out[pk.typ] = opts
     return out
+
+
+# ---------------------------------------------------------------- mention
+
+MENTION_LIMIT = 12
+
+
+def mention_results(
+    db: TrellisDB,
+    query: str,
+    types: list[str],
+    *,
+    limit: int = MENTION_LIMIT,
+) -> dict[str, Any]:
+    """Build the data for a mention-popup partial.
+
+    `types` constrains the search; an empty list means "any type". `query`
+    is a non-empty trimmed search string. The popup also offers inline-create
+    options for every type listed (or all types if `types` is empty).
+    """
+    known = set(db.config.type_names())
+    asked = [t for t in types if t in known] or list(known)
+
+    hits: list[dict[str, Any]] = []
+    for t in asked:
+        for h in db.search(query, type_name=t, limit=limit):
+            hits.append(h)
+            if len(hits) >= limit:
+                break
+        if len(hits) >= limit:
+            break
+
+    return {
+        "query":      query,
+        "hits":       hits,
+        "create_for": asked,
+    }
+
+
+def collect_known_statuses(db: TrellisDB) -> list[str]:
+    """Union of all statuses declared in types.yaml across all types.
+
+    Drives the autocomplete corpus for current_status / required_status,
+    even when the target type's own list is short. Free-form values still
+    pass — this is a hint, not a gate.
+    """
+    seen: dict[str, None] = {}
+    for spec in db.config.types.values():
+        for s in spec.statuses:
+            seen[s] = None
+    return list(seen.keys())

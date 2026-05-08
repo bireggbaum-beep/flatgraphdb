@@ -1,0 +1,28 @@
+{# A mention-style picker. Required context vars:
+     name           form field name for the hidden ref input(s)
+     types          list of allowed target type names
+     mode           "single" or "multi"
+     selected       optional pre-filled list of {ref, name}
+   Optional:
+     placeholder    placeholder text on the input
+#}
+<div class="mention"
+     data-mention-input
+     data-name="{{ name }}"
+     data-types="{{ types|join(',') }}"
+     data-mode="{{ mode|default('single') }}"
+     data-search-url="/search"
+     data-create-url="/quick-create">
+  <span class="mention-chips">
+    {% for chip in (selected or []) %}
+    <span class="mention-chip">
+      <span class="chip-name">{{ chip.name }}</span>
+      <input type="hidden" name="{{ name }}" value="{{ chip.ref }}">
+      <button type="button" class="chip-remove">✕</button>
+    </span>
+    {% endfor %}
+  </span>
+  <input class="mention-input" type="text" autocomplete="off"
+         placeholder="{{ placeholder|default('@ Knoten suchen oder „+ Neu" anlegen') }}">
+  <div class="mention-popup"></div>
+</div>

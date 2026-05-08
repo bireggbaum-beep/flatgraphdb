@@ -1,4 +1,6 @@
-{% if form_spec %}
+{% if form_spec and edit_node %}
+{% include "_form_edit.html" %}
+{% elif form_spec %}
 {% include "_form_create.html" %}
 {% elif inspector %}
 {% set node = inspector.node %}
@@ -18,6 +20,13 @@
   <p class="muted small">{{ spec.description }}</p>
   {% endif %}
 </header>
+
+<div class="inspector-actions">
+  <button type="button" class="btn-cancel"
+          hx-get="/edit/{{ inspector.ref }}"
+          hx-target="#col-inspector"
+          hx-swap="innerHTML">Bearbeiten</button>
+</div>
 
 <section class="inspector-section">
   <h3>Felder</h3>
@@ -71,39 +80,7 @@
 </section>
 {% endif %}
 
-<section class="inspector-section">
-  <h3>Voraussetzungen (ausgehend)</h3>
-  {% if inspector.contracts_out %}
-  <ul class="contract-list">
-    {% for c in inspector.contracts_out %}
-    <li class="contract">
-      <code class="ref">{{ c.target }}</code>
-      <span class="muted">muss</span>
-      <span class="status-pill">{{ c.required_status }}</span>
-      {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted small">— keine —</p>
-  {% endif %}
-</section>
-
-{% if inspector.contracts_in %}
-<section class="inspector-section">
-  <h3>Voraussetzungen für andere (eingehend)</h3>
-  <ul class="contract-list">
-    {% for c in inspector.contracts_in %}
-    <li class="contract">
-      <code class="ref">{{ c.source }}</code>
-      <span class="muted">braucht uns in</span>
-      <span class="status-pill">{{ c.required_status }}</span>
-      {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
+{% include "_contracts_section.html" %}
 
 {% else %}
 <div class="placeholder">

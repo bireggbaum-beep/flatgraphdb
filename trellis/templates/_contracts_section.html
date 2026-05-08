@@ -1,0 +1,99 @@
+{# Contract editor — lives inside the inspector. Re-renderable on its own.
+   Required vars: inspector (with .ref, .contracts_out, .contracts_in)
+   Optional:      contract_form_open, contract_form_error,
+                  known_statuses, all_type_names
+#}
+<section class="inspector-section" id="contracts-section">
+  <h3>Voraussetzungen (ausgehend)</h3>
+
+  {% if inspector.contracts_out %}
+  <ul class="contract-list">
+    {% for c in inspector.contracts_out %}
+    <li class="contract">
+      <code class="ref">{{ c.target }}</code>
+      <span class="muted">muss</span>
+      <span class="status-pill">{{ c.required_status }}</span>
+      {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
+      <span class="contract-actions">
+        <button class="icon-btn"
+                type="button"
+                title="Voraussetzung entfernen"
+                hx-post="/contract/{{ c.edge_id }}/delete"
+                hx-vals='{"source_ref": "{{ inspector.ref }}"}'
+                hx-target="#contracts-section"
+                hx-swap="outerHTML">✕</button>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted small">— keine —</p>
+  {% endif %}
+
+  {% if contract_form_open %}
+  <form class="contract-form"
+        hx-post="/contract"
+        hx-target="#contracts-section"
+        hx-swap="outerHTML">
+    <input type="hidden" name="source_ref" value="{{ inspector.ref }}">
+
+    {% if contract_form_error %}
+    <div class="form-error">{{ contract_form_error }}</div>
+    {% endif %}
+
+    <div class="form-row">
+      <label>Ziel</label>
+      {% with name='target_ref', types=all_type_names, mode='single',
+              placeholder='@ Ziel suchen oder neu anlegen' %}
+        {% include "_mention_input.html" %}
+      {% endwith %}
+    </div>
+
+    <div class="form-row">
+      <label for="contract-required-status">muss in Status</label>
+      <input id="contract-required-status" name="required_status" type="text"
+             list="known-statuses" autocomplete="off">
+      <datalist id="known-statuses">
+        {% for s in known_statuses %}<option value="{{ s }}">{% endfor %}
+      </datalist>
+      <span class="hint">Vorschläge aus types.yaml — neue Werte sind erlaubt.</span>
+    </div>
+
+    <div class="form-row checkbox-row">
+      <input id="contract-blocker" name="is_blocker" type="checkbox" value="true" checked>
+      <label for="contract-blocker">Blocker (nicht erfüllt → Rot, sonst Gelb)</label>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn-primary">Hinzufügen</button>
+      <button type="button" class="btn-cancel"
+              hx-get="/nodes/{{ inspector.ref }}"
+              hx-target="#col-inspector"
+              hx-swap="innerHTML">Abbrechen</button>
+    </div>
+  </form>
+  {% else %}
+  <div class="section-actions">
+    <button type="button" class="btn-link"
+            hx-get="/contract/new?source={{ inspector.ref }}"
+            hx-target="#contracts-section"
+            hx-swap="outerHTML">+ Neue Voraussetzung</button>
+  </div>
+  {% endif %}
+</section>
+
+{% if inspector.contracts_in %}
+<section class="inspector-section">
+  <h3>Voraussetzungen für andere (eingehend)</h3>
+  <ul class="contract-list">
+    {% for c in inspector.contracts_in %}
+    <li class="contract">
+      <code class="ref">{{ c.source }}</code>
+      <span class="muted">braucht uns in</span>
+      <span class="status-pill">{{ c.required_status }}</span>
+      {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}

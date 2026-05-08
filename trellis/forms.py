@@ -100,3 +100,62 @@ def parse_node_form(form: Mapping[str, Any], spec: NodeType) -> dict[str, Any]:
         "current_status":  current_status,
         "pflicht_targets": pflicht_targets,
     }
+
+
+def parse_edit_form(form: Mapping[str, Any], spec: NodeType) -> dict[str, Any]:
+    """Parse the edit-form for plain fields + status. No pflicht-kanten here —
+    those have their own editors.
+
+    Returns just a dict suitable for `TrellisDB.update_node`.
+    """
+    fields: dict[str, Any] = {}
+    for f in spec.fields:
+        if f.name == "name":
+            raw = form.get(f"field__{f.name}")
+            if raw is None or raw == "":
+                raise FormError("Pflichtfeld fehlt: name")
+            fields[f.name] = coerce(raw, f.type)
+            continue
+        # Optional fields: empty string clears, missing means "do not change".
+        if f"field__{f.name}" not in form:
+            continue
+        raw = form.get(f"field__{f.name}")
+        if raw == "" or raw is None:
+            # leave field unchanged (no clear-to-empty in this MVP)
+            continue
+        fields[f.name] = coerce(raw, f.type)
+
+    raw_status = form.get("current_status")
+    if raw_status is not None and raw_status != "":
+        fields["current_status"] = str(raw_status)
+
+    return fields
+
+
+def parse_contract_form(form: Mapping[str, Any]) -> dict[str, Any]:
+    """Parse the inline new-contract form.
+
+    Required fields:
+      source_ref         the node we're editing
+      target_ref         picked via mention input (single)
+      required_status    free-form string
+    Optional:
+      is_blocker         checkbox
+    """
+    source = form.get("source_ref")
+    if not source:
+        raise FormError("source_ref fehlt")
+    target_vals = _multi(form, "target_ref")
+    if not target_vals:
+        raise FormError("Bitte ein Ziel auswählen.")
+    target = target_vals[0]
+    required_status = form.get("required_status")
+    if not required_status:
+        raise FormError("Bitte den geforderten Zustand angeben.")
+    is_blocker = bool(form.get("is_blocker"))
+    return {
+        "source_ref":      str(source),
+        "target_ref":      str(target),
+        "required_status": str(required_status),
+        "is_blocker":      is_blocker,
+    }

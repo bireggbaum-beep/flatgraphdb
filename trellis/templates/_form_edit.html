@@ -1,0 +1,64 @@
+<header class="inspector-header">
+  <div class="inspector-title">
+    <h2>Bearbeiten: {{ edit_node.name or edit_ref }}</h2>
+  </div>
+  <div class="inspector-meta">
+    <code class="ref">{{ edit_ref }}</code>
+    <span class="muted">·</span>
+    <span class="type-label">{{ form_spec.name }}</span>
+  </div>
+</header>
+
+{% if form_error %}
+<div class="form-error">{{ form_error }}</div>
+{% endif %}
+
+<form class="node-form"
+      method="post"
+      hx-post="/edit/{{ edit_ref }}"
+      hx-target="#col-inspector"
+      hx-swap="innerHTML">
+
+  <section class="form-section">
+    <h3>Felder</h3>
+    {% for f in form_spec.fields %}
+    <div class="form-row">
+      <label for="edit__{{ f.name }}">
+        {{ f.name }}{% if f.required %}<span class="req">*</span>{% endif %}
+      </label>
+      {% set val = edit_node[f.name] if edit_node[f.name] is defined else "" %}
+      {% if f.type == "text" %}
+      <textarea id="edit__{{ f.name }}" name="field__{{ f.name }}" rows="3">{{ val or "" }}</textarea>
+      {% elif f.type == "bool" %}
+      <input id="edit__{{ f.name }}" name="field__{{ f.name }}" type="checkbox" value="true"
+             {% if val %}checked{% endif %}>
+      {% else %}
+      <input id="edit__{{ f.name }}" name="field__{{ f.name }}"
+             type="{% if f.type in ('int','float') %}number{% else %}text{% endif %}"
+             {% if f.type == "float" %}step="any"{% endif %}
+             value="{{ val if val is not none else '' }}">
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="form-row">
+      <label for="edit__current_status">current_status</label>
+      <input id="edit__current_status" name="current_status" type="text"
+             list="status-list-edit" autocomplete="off"
+             value="{{ edit_node.current_status or '' }}">
+      <datalist id="status-list-edit">
+        {% for s in form_spec.statuses %}
+        <option value="{{ s }}">{% endfor %}
+      </datalist>
+      <span class="hint">Vorschläge aus types.yaml — neue Werte sind erlaubt.</span>
+    </div>
+  </section>
+
+  <div class="form-actions">
+    <button type="submit" class="btn-primary">Speichern</button>
+    <button type="button" class="btn-cancel"
+            hx-get="/nodes/{{ edit_ref }}"
+            hx-target="#col-inspector"
+            hx-swap="innerHTML">Abbrechen</button>
+  </div>
+</form>

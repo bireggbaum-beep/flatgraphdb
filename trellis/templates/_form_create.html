@@ -41,8 +41,8 @@
     <div class="form-row">
       <label for="current_status">current_status</label>
       <input id="current_status" name="current_status" type="text"
-             list="status-list" autocomplete="off">
-      <datalist id="status-list">
+             list="status-list-create" autocomplete="off">
+      <datalist id="status-list-create">
         {% for s in form_spec.statuses %}
         <option value="{{ s }}">{% endfor %}
       </datalist>
@@ -56,28 +56,20 @@
     <h3>Pflicht-Kanten</h3>
     {% for pk in form_spec.pflicht_kanten %}
     <div class="form-row">
-      <label for="pk__{{ pk.typ }}">
+      <label>
         {{ pk.typ }}
         <span class="hint">
           → {{ pk.ziel_typen|join(", ") }}
           ({{ "genau eine" if pk.anzahl == "genau_eine" else "≥ 1" }})
         </span>
       </label>
-      {% if pk.anzahl == "genau_eine" %}
-      <select id="pk__{{ pk.typ }}" name="pk__{{ pk.typ }}">
-        <option value="">— offen lassen (Stub) —</option>
-        {% for opt in candidates[pk.typ] %}
-        <option value="{{ opt.ref }}">{{ opt.name }} <span>({{ opt.type }})</span></option>
-        {% endfor %}
-      </select>
-      {% else %}
-      <select id="pk__{{ pk.typ }}" name="pk__{{ pk.typ }}" multiple size="4">
-        {% for opt in candidates[pk.typ] %}
-        <option value="{{ opt.ref }}">{{ opt.name }} ({{ opt.type }})</option>
-        {% endfor %}
-      </select>
-      <span class="hint">Strg/Cmd-Klick für mehrfache Auswahl. Leer lassen → Stub.</span>
-      {% endif %}
+      {% with name='pk__' + pk.typ,
+              types=pk.ziel_typen,
+              mode=('single' if pk.anzahl == 'genau_eine' else 'multi'),
+              placeholder='@ ' + pk.ziel_typen|join('/') + ' suchen oder neu anlegen' %}
+        {% include "_mention_input.html" %}
+      {% endwith %}
+      <span class="hint">Leer lassen → Knoten wird als Stub angelegt.</span>
     </div>
     {% endfor %}
   </section>
@@ -85,12 +77,10 @@
 
   <div class="form-actions">
     <button type="submit" class="btn-primary">Anlegen</button>
-    <a class="btn-cancel"
-       href="/types/{{ form_spec.name }}"
-       hx-get="/nodes/__cancel__/__cancel__"
-       hx-disable="true"
-       onclick="document.getElementById('col-inspector').innerHTML='<div class=\'placeholder\'><p class=\'muted\'>Wähle einen Knoten aus der Liste.</p></div>'; return false;">
-      Abbrechen
-    </a>
+    <button type="button" class="btn-cancel"
+            hx-get="/types/{{ form_spec.name }}"
+            hx-target="#col-list"
+            hx-swap="innerHTML"
+            onclick="document.getElementById('col-inspector').innerHTML='';">Abbrechen</button>
   </div>
 </form>

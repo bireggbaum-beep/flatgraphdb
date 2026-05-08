@@ -1,0 +1,33 @@
+{# Body of the mention popup. Returned by GET /search. Vars:
+     hits        list of {ref, type, name, current_status, is_stub}
+     query       the trimmed search string
+     create_for  list of type names where inline-create is offered
+#}
+<ul class="mention-list">
+  {% for h in hits %}
+  <li class="mention-item"
+      data-ref="{{ h.ref }}"
+      data-name="{{ h.name }}">
+    <span class="mention-name">{{ h.name }}</span>
+    <span class="mention-meta">
+      {{ h.type }} · {{ h.ref.split('/')[1] }}
+      {% if h.is_stub %}· stub{% endif %}
+    </span>
+  </li>
+  {% endfor %}
+
+  {% if create_for and query %}
+  {% if hits %}<li class="mention-divider"></li>{% endif %}
+  {% for tname in create_for %}
+  <li class="mention-item create"
+      data-create="{{ tname }}"
+      data-name="{{ query }}">
+    <span class="mention-name">Neu {{ tname }} „{{ query }}"</span>
+  </li>
+  {% endfor %}
+  {% endif %}
+
+  {% if not hits and not (create_for and query) %}
+  <li class="mention-empty">Keine Treffer.</li>
+  {% endif %}
+</ul>
