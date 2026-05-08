@@ -21,18 +21,21 @@
   <section class="form-section">
     <h3>Felder</h3>
     {% for f in form_spec.fields %}
+    {% set val = (attempt or {}).get(f.name, '') %}
     <div class="form-row">
       <label for="field__{{ f.name }}">
         {{ f.name }}{% if f.required %}<span class="req">*</span>{% endif %}
       </label>
       {% if f.type == "text" %}
-      <textarea id="field__{{ f.name }}" name="field__{{ f.name }}" rows="3"></textarea>
+      <textarea id="field__{{ f.name }}" name="field__{{ f.name }}" rows="3">{{ val }}</textarea>
       {% elif f.type == "bool" %}
-      <input id="field__{{ f.name }}" name="field__{{ f.name }}" type="checkbox" value="true">
+      <input id="field__{{ f.name }}" name="field__{{ f.name }}" type="checkbox" value="true"
+             {% if val %}checked{% endif %}>
       {% else %}
       <input id="field__{{ f.name }}" name="field__{{ f.name }}"
              type="{% if f.type in ('int','float') %}number{% else %}text{% endif %}"
-             {% if f.type == "float" %}step="any"{% endif %}>
+             {% if f.type == "float" %}step="any"{% endif %}
+             value="{{ val }}">
       {% endif %}
     </div>
     {% endfor %}
@@ -41,7 +44,8 @@
     <div class="form-row">
       <label for="current_status">current_status</label>
       <input id="current_status" name="current_status" type="text"
-             list="status-list-create" autocomplete="off">
+             list="status-list-create" autocomplete="off"
+             value="{{ (attempt or {}).get('current_status', '') }}">
       <datalist id="status-list-create">
         {% for s in form_spec.statuses %}
         <option value="{{ s }}">{% endfor %}

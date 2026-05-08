@@ -10,7 +10,7 @@
   <ul class="contract-list">
     {% for c in inspector.contracts_out %}
     <li class="contract">
-      <code class="ref">{{ c.target }}</code>
+      <a class="ref" hx-get="/nodes/{{ c.target }}" hx-target="#col-inspector" hx-swap="innerHTML">{{ c.target }}</a>
       <span class="muted">muss</span>
       <span class="status-pill">{{ c.required_status }}</span>
       {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
@@ -88,7 +88,7 @@
   <ul class="contract-list">
     {% for c in inspector.contracts_in %}
     <li class="contract">
-      <code class="ref">{{ c.source }}</code>
+      <a class="ref" hx-get="/nodes/{{ c.source }}" hx-target="#col-inspector" hx-swap="innerHTML">{{ c.source }}</a>
       <span class="muted">braucht uns in</span>
       <span class="status-pill">{{ c.required_status }}</span>
       {% if c.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}

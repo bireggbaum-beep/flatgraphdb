@@ -24,7 +24,7 @@
     <ul class="edge-list">
       {% for e in slot.edges %}
       <li>
-        <code class="ref">{{ e.other_ref }}</code>
+        <a class="ref" hx-get="/nodes/{{ e.other_ref }}" hx-target="#col-inspector" hx-swap="innerHTML">{{ e.other_ref }}</a>
         <span class="muted small">{{ e.other_name }}</span>
         <button class="icon-btn"
                 type="button"
@@ -82,7 +82,7 @@
       <ul class="edge-list">
         {% for e in grp.edges %}
         <li>
-          <code class="ref">{{ e.other_ref }}</code>
+          <a class="ref" hx-get="/nodes/{{ e.other_ref }}" hx-target="#col-inspector" hx-swap="innerHTML">{{ e.other_ref }}</a>
           <span class="muted small">{{ e.other_name }}</span>
           <button class="icon-btn"
                   type="button"
@@ -98,3 +98,5 @@
   </div>
   {% endif %}
 </section>
+
+{% include "_oob_list_refresh.html" %}

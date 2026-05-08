@@ -41,6 +41,7 @@ def empty_state() -> dict[str, Any]:
         "form_spec":           None,
         "candidates":          {},
         "form_error":          None,
+        "attempt":             {},   # values to prefill form inputs (on error)
         # edit form
         "edit_node":           None,
         "edit_ref":            None,
@@ -58,6 +59,13 @@ def empty_state() -> dict[str, Any]:
         "dashboard_columns":   [],
         # settings
         "settings_yaml":       "",
+        # out-of-band list refresh (set by mutating routes so the middle
+        # column auto-updates after create/edit/delete/restore)
+        "oob_list_type":       None,
+        "oob_list_rows":       [],
+        "oob_selected_ref":    None,
+        # soft-delete placeholder
+        "deleted_ref":         None,
     }
 
 
@@ -137,8 +145,14 @@ def mention_results(
     """Build the data for a mention-popup partial.
 
     `types` constrains the search; an empty list means "any type". `query`
-    is a non-empty trimmed search string. The popup also offers inline-create
-    options for every type listed (or all types if `types` is empty).
+    is a non-empty trimmed search string.
+
+    Inline-create offers ("+ Neu …") are *suggestion only* and add visual
+    noise when there are already plenty of matches. The rule:
+        - if there are 2+ hits, hide all create offers (the user is picking)
+        - otherwise show at most the first 2 allowed types
+    Users who really want to create a new node despite a match can clear
+    the field and type a name nobody has yet.
     """
     known = set(db.config.type_names())
     asked = [t for t in types if t in known] or list(known)
@@ -152,10 +166,12 @@ def mention_results(
         if len(hits) >= limit:
             break
 
+    create_for = [] if len(hits) >= 2 else asked[:2]
+
     return {
         "query":      query,
         "hits":       hits,
-        "create_for": asked,
+        "create_for": create_for,
     }
 
 

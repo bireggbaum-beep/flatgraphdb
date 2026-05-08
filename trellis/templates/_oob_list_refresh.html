@@ -1,0 +1,12 @@
+{# Out-of-band list refresh. Set by mutating routes (create/edit/delete/restore)
+   so HTMX swaps the new list content into #col-list automatically — no need
+   for the user to re-click the type in the sidebar. #}
+{% if oob_list_type %}
+<section id="col-list" hx-swap-oob="innerHTML">
+  {% with selected_type=oob_list_type,
+          selected_ref=oob_selected_ref,
+          nodes=oob_list_rows %}
+    {% include "_list.html" %}
+  {% endwith %}
+</section>
+{% endif %}

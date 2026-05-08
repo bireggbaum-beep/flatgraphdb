@@ -46,14 +46,19 @@ def _form_error_response(
     db: TrellisDB,
     spec: NodeType,
     message: str,
+    attempt: dict[str, Any] | None = None,
 ) -> HTMLResponse:
-    """Re-render the create form with a non-blocking error banner."""
+    """Re-render the create form with a non-blocking error banner.
+
+    `attempt` carries what the user typed so it survives the round-trip.
+    """
     ctx = _ctx(
         request,
         selected_type=spec.name,
         form_spec=spec,
         candidates=views.candidates_for_pflicht(db, spec),
         form_error=message,
+        attempt=attempt or {},
     )
     template = "_form_create.html" if _is_htmx(request) else "index.html"
     return templates.TemplateResponse(request, template, ctx, status_code=400)
@@ -78,6 +83,16 @@ def _inspector_ctx(request: Request, db: TrellisDB, ref: str, **extra: Any) -> d
         all_type_names=db.config.type_names(),
         **extra,
     )
+
+
+def _with_list_refresh(ctx: dict[str, Any], db: TrellisDB, type_name: str,
+                       selected_ref: str | None = None) -> dict[str, Any]:
+    """Decorate an inspector / structural-section context with an OOB list
+    refresh, so the middle column auto-updates after a mutation."""
+    ctx["oob_list_type"]    = type_name
+    ctx["oob_list_rows"]    = views.list_view(db, type_name)
+    ctx["oob_selected_ref"] = selected_ref
+    return ctx
 
 
 # ---------------------------------------------------------------- routes
@@ -133,10 +148,11 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(404, str(e))
 
         form = await request.form()
+        attempt = forms.attempt_from_form(form, spec)
         try:
             parsed = forms.parse_node_form(form, spec)
         except forms.FormError as e:
-            return _form_error_response(request, db, spec, str(e))
+            return _form_error_response(request, db, spec, str(e), attempt=attempt)
 
         fields = dict(parsed["fields"])
         if parsed["current_status"]:
@@ -145,15 +161,14 @@ def register_routes(app: FastAPI) -> None:
         try:
             ref = db.create_node(type_name, fields, parsed["pflicht_targets"])
         except TrellisError as e:
-            return _form_error_response(request, db, spec, str(e))
+            return _form_error_response(request, db, spec, str(e), attempt=attempt)
 
-        # Successful create → swap inspector to the new node and signal a list refresh.
+        # Successful create → swap inspector AND OOB-refresh the middle column.
         if _is_htmx(request):
             t = ref.split("/", 1)[0]
             ctx = _inspector_ctx(request, db, ref)
-            resp = templates.TemplateResponse(request, "_inspector.html", ctx)
-            resp.headers["HX-Trigger"] = f"refresh-list-{t}"
-            return resp
+            _with_list_refresh(ctx, db, t, selected_ref=ref)
+            return templates.TemplateResponse(request, "_inspector.html", ctx)
         return RedirectResponse(url=f"/nodes/{ref}", status_code=303)
 
     # ---------------- edit (plain fields + status) ----------------
@@ -194,11 +209,13 @@ def register_routes(app: FastAPI) -> None:
             update = forms.parse_edit_form(form, spec)
             db.update_node(ref, update)
         except (forms.FormError, TrellisError) as e:
-            node = db.get_node(ref) or {}
+            # Preserve the user's typed values rather than re-loading the
+            # saved node — otherwise a typo causes silent input loss.
+            attempted_node = forms.attempt_from_form(form, spec)
             ctx = _ctx(
                 request,
                 selected_type=type_name, selected_ref=ref,
-                form_spec=spec, edit_node=node, edit_ref=ref,
+                form_spec=spec, edit_node=attempted_node, edit_ref=ref,
                 form_error=str(e),
             )
             template = "_form_edit.html" if _is_htmx(request) else "index.html"
@@ -206,9 +223,8 @@ def register_routes(app: FastAPI) -> None:
 
         if _is_htmx(request):
             ctx = _inspector_ctx(request, db, ref)
-            resp = templates.TemplateResponse(request, "_inspector.html", ctx)
-            resp.headers["HX-Trigger"] = f"refresh-list-{type_name}"
-            return resp
+            _with_list_refresh(ctx, db, type_name, selected_ref=ref)
+            return templates.TemplateResponse(request, "_inspector.html", ctx)
         return RedirectResponse(url=f"/nodes/{ref}", status_code=303)
 
     # ---------------- search (mention picker) ----------------
@@ -281,7 +297,10 @@ def register_routes(app: FastAPI) -> None:
             return templates.TemplateResponse(
                 request, "_contracts_section.html", ctx, status_code=400
             )
-        ctx = _inspector_ctx(request, db, parsed["source_ref"])
+        # Keep the form open after a successful add so the user can stack
+        # the next contract without re-clicking "+ Neue Voraussetzung".
+        # "Abbrechen" closes it explicitly.
+        ctx = _inspector_ctx(request, db, parsed["source_ref"], contract_form_open=True)
         return templates.TemplateResponse(request, "_contracts_section.html", ctx)
 
     @app.post("/contract/{edge_id}/delete")
@@ -356,12 +375,11 @@ def register_routes(app: FastAPI) -> None:
         except TrellisError as e:
             raise HTTPException(400, str(e))
         if _is_htmx(request):
-            ctx = _ctx(request, selected_type=type_name)
-            resp = HTMLResponse(
-                "<div class='placeholder'><p class='muted'>Knoten gelöscht.</p></div>"
+            ctx = _ctx(request, selected_type=type_name, deleted_ref=ref)
+            _with_list_refresh(ctx, db, type_name, selected_ref=None)
+            return templates.TemplateResponse(
+                request, "_deleted_placeholder.html", ctx,
             )
-            resp.headers["HX-Trigger"] = f"refresh-list-{type_name}"
-            return resp
         return RedirectResponse(url=f"/types/{type_name}", status_code=303)
 
     @app.post("/restore/{type_name}/{node_id}")
@@ -374,9 +392,8 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(400, str(e))
         if _is_htmx(request):
             ctx = _inspector_ctx(request, db, ref)
-            resp = templates.TemplateResponse(request, "_inspector.html", ctx)
-            resp.headers["HX-Trigger"] = f"refresh-list-{type_name}"
-            return resp
+            _with_list_refresh(ctx, db, type_name, selected_ref=ref)
+            return templates.TemplateResponse(request, "_inspector.html", ctx)
         return RedirectResponse(url=f"/nodes/{ref}", status_code=303)
 
     # ---------------- readiness dashboard ----------------
@@ -433,8 +450,15 @@ def _structural_response(
     error: str | None,
     status: int = 200,
 ) -> HTMLResponse:
-    """Re-render the structural section after an add/delete (success or error)."""
+    """Re-render the structural section after an add/delete (success or error).
+
+    A successful structural mutation can flip a node's stub state, so we
+    also OOB-refresh the middle column to keep its stub-dot honest.
+    """
+    type_name, _ = source_ref.split("/", 1)
     ctx = _inspector_ctx(request, db, source_ref, structural_error=error)
+    if status == 200:
+        _with_list_refresh(ctx, db, type_name, selected_ref=source_ref)
     return templates.TemplateResponse(
         request, "_structural_section.html", ctx, status_code=status,
     )

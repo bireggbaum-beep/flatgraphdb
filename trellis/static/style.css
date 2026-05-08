@@ -63,6 +63,17 @@ code, .ref {
   color: var(--text-muted);
 }
 
+a.ref {
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dotted transparent;
+}
+a.ref:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  text-decoration: none;
+}
+
 /* ---------- topbar -------------------------------------------------------- */
 
 .topbar {

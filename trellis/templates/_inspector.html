@@ -65,7 +65,7 @@
     <div class="edge-group-label">{{ et }}</div>
     <ul class="edge-list">
       {% for e in edges %}
-      <li><code class="ref">{{ e.other }}</code></li>
+      <li><a class="ref" hx-get="/nodes/{{ e.other }}" hx-target="#col-inspector" hx-swap="innerHTML">{{ e.other }}</a></li>
       {% endfor %}
     </ul>
   </div>
@@ -80,3 +80,5 @@
   <p class="muted">Wähle einen Knoten aus der Liste.</p>
 </div>
 {% endif %}
+
+{% include "_oob_list_refresh.html" %}

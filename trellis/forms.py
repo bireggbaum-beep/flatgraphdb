@@ -62,6 +62,23 @@ def multi(form: Mapping[str, Any], key: str) -> list[str]:
 _multi = multi
 
 
+def attempt_from_form(form: Mapping[str, Any], spec: NodeType) -> dict[str, Any]:
+    """Extract the user's typed values into a {field_name: str} dict, suitable
+    for re-prefilling the form on error.
+
+    Includes `current_status` if present. Does *not* coerce — the values stay
+    as strings so the form re-renders exactly what the user typed."""
+    out: dict[str, Any] = {}
+    for f in spec.fields:
+        v = form.get(f"field__{f.name}")
+        if v is not None and v != "":
+            out[f.name] = str(v)
+    cs = form.get("current_status")
+    if cs:
+        out["current_status"] = str(cs)
+    return out
+
+
 # ---------------------------------------------------------------- parser
 
 def parse_node_form(form: Mapping[str, Any], spec: NodeType) -> dict[str, Any]:
