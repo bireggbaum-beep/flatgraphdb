@@ -32,6 +32,7 @@ def empty_state() -> dict[str, Any]:
         "selected_type":       None,
         "selected_ref":        None,
         "nodes":               [],
+        "list_query":          "",
         # inspector
         "inspector":           None,
         "structural_state":    None,
@@ -82,16 +83,22 @@ def common(db: TrellisDB) -> dict[str, Any]:
 # ---------------------------------------------------------------- views
 
 def list_view(db: TrellisDB, type_name: str) -> list[dict[str, Any]]:
-    """Rows for the middle column when a type is selected."""
+    """Rows for the middle column when a type is selected.
+
+    Each row carries `aggregate_readiness` so the list can show an R/Y/G
+    dot without the user having to switch to the Readiness tab.
+    """
+    from . import readiness  # local import to avoid module cycle
     rows: list[dict[str, Any]] = []
     for nid, data in db.list_nodes(type_name).items():
         ref = f"{type_name}/{nid}"
         rows.append({
-            "ref":            ref,
-            "id":             nid,
-            "name":           data.get("name", nid),
-            "current_status": data.get("current_status"),
-            "is_stub":        db.is_stub(ref),
+            "ref":                 ref,
+            "id":                  nid,
+            "name":                data.get("name", nid),
+            "current_status":      data.get("current_status"),
+            "is_stub":             db.is_stub(ref),
+            "aggregate_readiness": readiness.aggregate_readiness(db, ref),
         })
     rows.sort(key=lambda r: (r["name"] or "").lower())
     return rows

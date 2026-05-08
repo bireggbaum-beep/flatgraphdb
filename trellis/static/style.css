@@ -229,6 +229,26 @@ a.ref:hover {
 }
 .btn-cancel:hover { background: var(--bg-2); text-decoration: none; }
 
+.list-search {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-1);
+}
+.list-search-input {
+  width: 100%;
+  background: var(--bg-0);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: var(--fs-small);
+}
+.list-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .node-table {
   width: 100%;
   border-collapse: collapse;
@@ -249,9 +269,11 @@ a.ref:hover {
   padding: 5px 12px;
   border-bottom: 1px solid var(--border-soft);
 }
+.node-table .col-ready  { width: 22px; text-align: center; }
 .node-table .col-id     { width: 110px; color: var(--text-muted); }
 .node-table .col-status { width: 130px; }
 .node-table .col-stub   { width: 24px; text-align: center; }
+.node-table .col-ready .ready-dot { margin-top: 0; }
 
 .node-row { cursor: pointer; }
 .node-row:hover { background: var(--bg-2); }

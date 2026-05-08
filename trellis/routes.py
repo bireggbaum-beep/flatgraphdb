@@ -104,14 +104,21 @@ def register_routes(app: FastAPI) -> None:
         return templates.TemplateResponse(request, "index.html", _ctx(request))
 
     @app.get("/types/{type_name}", response_class=HTMLResponse)
-    def list_type(request: Request, type_name: str) -> HTMLResponse:
+    def list_type(
+        request: Request,
+        type_name: str,
+        q: str = Query(""),
+    ) -> HTMLResponse:
         db: TrellisDB = request.app.state.db
         try:
             db.config.get_type(type_name)
         except ConfigError as e:
             raise HTTPException(404, str(e))
         rows = views.list_view(db, type_name)
-        ctx = _ctx(request, selected_type=type_name, nodes=rows)
+        q_clean = (q or "").strip().lower()
+        if q_clean:
+            rows = [r for r in rows if q_clean in (r["name"] or "").lower()]
+        ctx = _ctx(request, selected_type=type_name, nodes=rows, list_query=q)
         return _render(request, "index.html", "_list.html", ctx)
 
     @app.get("/nodes/{type_name}/{node_id}", response_class=HTMLResponse)

@@ -20,14 +20,29 @@
   </div>
 </header>
 
+<div class="list-search">
+  <input type="text"
+         class="list-search-input"
+         name="q"
+         value="{{ list_query }}"
+         placeholder="filter…"
+         autocomplete="off"
+         hx-get="/types/{{ selected_type }}"
+         hx-trigger="input changed delay:200ms, search"
+         hx-target="#col-list"
+         hx-swap="innerHTML"
+         hx-include="this">
+</div>
+
 {% if not nodes %}
 <div class="placeholder">
-  <p class="muted">Noch nichts angelegt.</p>
+  <p class="muted">{% if list_query %}Keine Treffer für „{{ list_query }}".{% else %}Noch nichts angelegt.{% endif %}</p>
 </div>
 {% else %}
 <table class="node-table">
   <thead>
     <tr>
+      <th class="col-ready" title="Aggregate Readiness"></th>
       <th class="col-name">Name</th>
       <th class="col-id">ID</th>
       <th class="col-status">Status</th>
@@ -41,6 +56,10 @@
         hx-target="#col-inspector"
         hx-swap="innerHTML"
         hx-trigger="click">
+      <td class="col-ready">
+        <span class="ready-dot ready-{{ n.aggregate_readiness }}"
+              title="aggregate {{ n.aggregate_readiness }}"></span>
+      </td>
       <td class="col-name">{{ n.name }}</td>
       <td class="col-id"><code>{{ n.id }}</code></td>
       <td class="col-status">
