@@ -53,6 +53,38 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_seed(args: argparse.Namespace) -> int:
+    from .core import TrellisError
+    from .seed_demo import seed
+
+    project_dir = Path(args.project_dir).resolve()
+    if not (project_dir / "types.yaml").exists():
+        print(f"trellis: no types.yaml in {project_dir}", file=sys.stderr)
+        print(f"  run:   python3 -m trellis init {project_dir}", file=sys.stderr)
+        return 2
+    try:
+        stats = seed(project_dir, force=args.force)
+    except TrellisError as e:
+        print(f"trellis: {e}", file=sys.stderr)
+        return 1
+
+    print(f"trellis: seeded demo dataset into {project_dir}")
+    print()
+    print("  Counts by type:")
+    for t, c in sorted(stats["counts"].items()):
+        print(f"    {t:<14} {c:>3}")
+    print()
+    print("  Readiness check (these are what the dashboard should show):")
+    print(f"    Prozessvalidierung    aggregate = {stats['pv_readiness'].upper()}   (red — cascade from PQ)")
+    print(f"    PQ Tablettenlinie A   aggregate = {stats['pq_readiness'].upper()}   (red — 2 unsatisfied OQ blockers)")
+    print(f"    IQ Mischer M-01       aggregate = {stats['leaf_readiness'].upper()} (green — leaf, no contracts)")
+    print()
+    print(f"  Stub demo:    {stats['stub_ref']}  (Phase ohne betrifft)")
+    print()
+    print(f"  Start the UI:  python3 -m trellis serve {project_dir}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="trellis")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -66,6 +98,17 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8765)
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_seed = sub.add_parser(
+        "seed",
+        help="Populate the project with a realistic Q&V demo dataset",
+    )
+    p_seed.add_argument("project_dir")
+    p_seed.add_argument(
+        "--force", action="store_true",
+        help="wipe existing data/ before seeding",
+    )
+    p_seed.set_defaults(func=_cmd_seed)
 
     args = parser.parse_args(argv)
     return args.func(args)

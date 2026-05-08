@@ -101,6 +101,24 @@ db.add_contract(pq, iq, required_status="Abgeschlossen", is_blocker=True)
 print(db.inspector(pq))
 ```
 
+## Demo-Datensatz
+
+Zum Ausprobieren mit realistisch-aussehenden Daten:
+
+```
+python3 -m trellis init /tmp/proj
+python3 -m trellis seed /tmp/proj
+python3 -m trellis serve /tmp/proj
+```
+
+Der Seed legt ein vollständiges Q&V-Szenario an (Tablettenlinie mit fünf
+Equipments, je vier Phasen, plus eine kombinierte IQ-OQ, Prozess­validierung,
+Linie-PQ, Spec-Setting-Meilenstein, Dokumente, Material, Software, Training,
+Medium) und deckt alle UI-Fälle ab: Stub-Knoten, ein "Pausiert"-Status der
+nicht in `types.yaml` deklariert ist, satisfiable und unsatisfiable Verträge
+mit und ohne Blocker, mehrhopfige Readiness-Kaskaden. Re-Seed mit `--force`.
+
 ## Status
 
-Backend-Skelett (config + core). UI (FastAPI + Jinja + HTMX) folgt.
+Backend (`config`, `core`, `readiness`) plus UI (`app` / `routes` / `views` /
+`forms` plus Jinja-Templates und HTMX) — drei Etappen, ~3.900 Zeilen.
