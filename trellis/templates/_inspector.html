@@ -26,6 +26,13 @@
           hx-get="/edit/{{ inspector.ref }}"
           hx-target="#col-inspector"
           hx-swap="innerHTML">Bearbeiten</button>
+  <button type="button" class="btn-cancel btn-danger"
+          hx-post="/soft-delete/{{ inspector.ref }}"
+          hx-target="#col-inspector"
+          hx-swap="innerHTML"
+          hx-confirm="„{{ node.name or inspector.ref }}" wirklich löschen? (Soft-Delete — die GC räumt später physisch auf.)">
+    Löschen
+  </button>
 </div>
 
 <section class="inspector-section">
@@ -48,21 +55,7 @@
   </dl>
 </section>
 
-{% if inspector.structural_out %}
-<section class="inspector-section">
-  <h3>Strukturelle Verbindungen (ausgehend)</h3>
-  {% for et, edges in inspector.structural_out.items() %}
-  <div class="edge-group">
-    <div class="edge-group-label">{{ et }}</div>
-    <ul class="edge-list">
-      {% for e in edges %}
-      <li><code class="ref">{{ e.other }}</code></li>
-      {% endfor %}
-    </ul>
-  </div>
-  {% endfor %}
-</section>
-{% endif %}
+{% include "_structural_section.html" %}
 
 {% if inspector.structural_in %}
 <section class="inspector-section">

@@ -14,23 +14,37 @@
       <span class="brand">trellis</span>
       <span class="project">{{ project_name }}</span>
     </div>
+    <nav class="topbar-tabs">
+      <a class="tab {% if active_tab == 'modell' %}is-active{% endif %}" href="/">Modell</a>
+      <a class="tab {% if active_tab == 'readiness' %}is-active{% endif %}" href="/readiness">Readiness</a>
+    </nav>
     <div class="topbar-right">
-      <span class="settings" title="Einstellungen">⚙</span>
+      <a class="settings tab {% if active_tab == 'settings' %}is-active{% endif %}"
+         href="/settings" title="Einstellungen / types.yaml">⚙</a>
     </div>
   </header>
 
-  <main class="grid">
+  <main class="grid grid-{{ active_tab }}">
     <aside class="col col-types">
       {% include "_sidebar.html" %}
     </aside>
 
+    {% if active_tab == "modell" %}
     <section class="col col-list" id="col-list">
       {% include "_list.html" %}
     </section>
-
     <aside class="col col-inspector" id="col-inspector">
       {% include "_inspector.html" %}
     </aside>
+    {% elif active_tab == "readiness" %}
+    <section class="col col-dashboard" id="col-dashboard">
+      {% include "_dashboard.html" %}
+    </section>
+    {% elif active_tab == "settings" %}
+    <section class="col col-settings">
+      {% include "_settings.html" %}
+    </section>
+    {% endif %}
   </main>
 </body>
 </html>

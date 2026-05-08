@@ -1,0 +1,100 @@
+{# Structural-edges editor — lives inside the inspector. Re-renderable on its own.
+   Required vars:
+     structural_state    — built by views.structural_state(db, ref)
+     structural_form_pk  — typ of pflicht-kante currently being filled (or None)
+   Optional:
+     structural_error
+#}
+<section class="inspector-section" id="structural-section">
+  <h3>Strukturelle Verbindungen (ausgehend)</h3>
+
+  {% if structural_error %}
+  <div class="form-error">{{ structural_error }}</div>
+  {% endif %}
+
+  {% for slot in structural_state.pflicht_slots %}
+  <div class="edge-group">
+    <div class="edge-group-label">
+      {{ slot.typ }}
+      <span class="muted small">
+        → {{ slot.ziel_typen|join(", ") }}
+        ({{ "genau eine" if slot.anzahl == "genau_eine" else "≥ 1" }})
+      </span>
+    </div>
+    <ul class="edge-list">
+      {% for e in slot.edges %}
+      <li>
+        <code class="ref">{{ e.other_ref }}</code>
+        <span class="muted small">{{ e.other_name }}</span>
+        <button class="icon-btn"
+                type="button"
+                title="Verbindung entfernen"
+                hx-post="/structural/{{ e.edge_id }}/delete"
+                hx-vals='{"source_ref": "{{ structural_state.ref }}"}'
+                hx-target="#structural-section"
+                hx-swap="outerHTML">✕</button>
+      </li>
+      {% endfor %}
+      {% if not slot.edges %}
+      <li class="muted small">— keine —</li>
+      {% endif %}
+    </ul>
+
+    {% if structural_form_pk == slot.typ %}
+    <form class="contract-form"
+          hx-post="/structural"
+          hx-target="#structural-section"
+          hx-swap="outerHTML">
+      <input type="hidden" name="source_ref" value="{{ structural_state.ref }}">
+      <input type="hidden" name="edge_type" value="{{ slot.typ }}">
+      <div class="form-row">
+        {% with name='target_ref', types=slot.ziel_typen,
+                mode=('single' if slot.anzahl == 'genau_eine' else 'single'),
+                placeholder='@ ' + slot.ziel_typen|join('/') + ' suchen' %}
+          {% include "_mention_input.html" %}
+        {% endwith %}
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">Hinzufügen</button>
+        <button type="button" class="btn-cancel"
+                hx-get="/nodes/{{ structural_state.ref }}"
+                hx-target="#col-inspector"
+                hx-swap="innerHTML">Abbrechen</button>
+      </div>
+    </form>
+    {% elif not slot.is_full %}
+    <div class="section-actions">
+      <button type="button" class="btn-link"
+              hx-get="/structural/new?source={{ structural_state.ref }}&pk={{ slot.typ }}"
+              hx-target="#structural-section"
+              hx-swap="outerHTML">+ Hinzufügen</button>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if structural_state.extra %}
+  <div class="edge-group-extra">
+    <div class="edge-group-label muted small">weitere Verbindungen</div>
+    {% for grp in structural_state.extra %}
+    <div class="edge-group">
+      <div class="edge-group-label">{{ grp.typ }}</div>
+      <ul class="edge-list">
+        {% for e in grp.edges %}
+        <li>
+          <code class="ref">{{ e.other_ref }}</code>
+          <span class="muted small">{{ e.other_name }}</span>
+          <button class="icon-btn"
+                  type="button"
+                  hx-post="/structural/{{ e.edge_id }}/delete"
+                  hx-vals='{"source_ref": "{{ structural_state.ref }}"}'
+                  hx-target="#structural-section"
+                  hx-swap="outerHTML">✕</button>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>

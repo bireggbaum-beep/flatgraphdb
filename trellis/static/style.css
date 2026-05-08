@@ -618,3 +618,192 @@ code, .ref {
   font-size: var(--fs-small);
   color: var(--text-muted);
 }
+
+/* ---------- topbar tabs --------------------------------------------------- */
+
+.topbar-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  flex: 1;
+  justify-content: center;
+}
+.topbar-tabs .tab,
+.topbar-right .tab {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 14px;
+  color: var(--text-muted);
+  font-size: var(--fs-small);
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+}
+.topbar-tabs .tab:hover,
+.topbar-right .tab:hover { color: var(--text); text-decoration: none; }
+.topbar-tabs .tab.is-active,
+.topbar-right .tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* ---------- grid templates per tab --------------------------------------- */
+
+.grid-readiness,
+.grid-settings {
+  grid-template-columns: var(--col-types-w) 1fr;
+}
+
+.col-dashboard,
+.col-settings {
+  background: var(--bg-0);
+  overflow: auto;
+}
+
+/* ---------- readiness dashboard ------------------------------------------ */
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 10px 14px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+.dashboard-title h2 {
+  margin: 0;
+  font-size: var(--fs-h2);
+}
+.dashboard-controls {
+  display: flex; align-items: center; gap: 6px;
+}
+.dashboard-controls select {
+  background: var(--bg-0);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: var(--fs-small);
+}
+
+.dashboard-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow-x: auto;
+  background: var(--bg-0);
+}
+
+.dash-col {
+  flex: 0 0 320px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--bg-0);
+}
+.dash-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-1);
+}
+.dash-col-label {
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dash-col-items {
+  list-style: none;
+  margin: 0; padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.dash-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  font-size: var(--fs-base);
+}
+.dash-item:hover { background: var(--bg-2); }
+.dash-item.is-selected { background: var(--bg-3); }
+
+.dash-item-body { flex: 1; min-width: 0; }
+.dash-item-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dash-item-meta {
+  margin-top: 2px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+  font-size: 11px;
+}
+
+.dash-empty { padding: 12px; }
+
+.ready-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex: 0 0 auto;
+}
+.ready-dot.ready-green  { background: var(--good); }
+.ready-dot.ready-yellow { background: var(--warn); }
+.ready-dot.ready-red    { background: var(--danger); }
+
+/* readiness colour applied to the whole row's left edge as a subtle bar */
+.dash-item.ready-red    { box-shadow: inset 2px 0 0 0 var(--danger); }
+.dash-item.ready-yellow { box-shadow: inset 2px 0 0 0 var(--warn); }
+.dash-item.ready-green  { box-shadow: inset 2px 0 0 0 var(--good); }
+
+/* ---------- settings ----------------------------------------------------- */
+
+.settings {
+  padding: 14px 18px;
+  max-width: 920px;
+}
+.settings-header h2 {
+  margin: 0 0 4px 0;
+  font-size: var(--fs-h2);
+}
+.settings-yaml {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  overflow: auto;
+  white-space: pre;
+  max-height: calc(100vh - 220px);
+}
+
+/* ---------- danger button ------------------------------------------------ */
+
+.btn-danger {
+  color: var(--danger);
+  border-color: var(--border);
+}
+.btn-danger:hover {
+  background: rgba(255, 111, 111, 0.08);
+  color: var(--danger);
+  border-color: var(--danger);
+}

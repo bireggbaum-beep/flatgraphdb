@@ -45,7 +45,7 @@ def coerce(raw: Any, ftype: str) -> Any:
 
 # ---------------------------------------------------------------- helpers
 
-def _multi(form: Mapping[str, Any], key: str) -> list[str]:
+def multi(form: Mapping[str, Any], key: str) -> list[str]:
     """Pick all values for `key` from a Starlette FormData (multi-valued).
 
     Falls back to a single-value lookup for plain Mapping inputs (so the
@@ -56,6 +56,10 @@ def _multi(form: Mapping[str, Any], key: str) -> list[str]:
         v = form.get(key)
         vals = [v] if v else []
     return [str(v) for v in vals if v not in (None, "")]
+
+
+# back-compat alias for callers that still use the underscored name
+_multi = multi
 
 
 # ---------------------------------------------------------------- parser

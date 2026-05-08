@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from . import forms, views
+from . import forms, readiness, views
 from .app import templates
 from .config import ConfigError, NodeType
 from .core import TrellisDB, TrellisError
@@ -59,6 +59,27 @@ def _form_error_response(
     return templates.TemplateResponse(request, template, ctx, status_code=400)
 
 
+def _inspector_ctx(request: Request, db: TrellisDB, ref: str, **extra: Any) -> dict[str, Any]:
+    """Build the full template context needed to render the inspector.
+
+    The inspector partial includes both the contracts section and the
+    structural section, each of which needs its own auxiliary data. This
+    helper centralises that gathering so individual route handlers stay
+    short and consistent.
+    """
+    type_name, _ = ref.split("/", 1)
+    return _ctx(
+        request,
+        selected_type=type_name,
+        selected_ref=ref,
+        inspector=views.inspector_view(db, ref),
+        structural_state=views.structural_state(db, ref),
+        known_statuses=views.collect_known_statuses(db),
+        all_type_names=db.config.type_names(),
+        **extra,
+    )
+
+
 # ---------------------------------------------------------------- routes
 
 def register_routes(app: FastAPI) -> None:
@@ -83,10 +104,9 @@ def register_routes(app: FastAPI) -> None:
         db: TrellisDB = request.app.state.db
         ref = f"{type_name}/{node_id}"
         try:
-            insp = views.inspector_view(db, ref)
+            ctx = _inspector_ctx(request, db, ref)
         except TrellisError as e:
             raise HTTPException(404, str(e))
-        ctx = _ctx(request, selected_type=type_name, selected_ref=ref, inspector=insp)
         return _render(request, "index.html", "_inspector.html", ctx)
 
     @app.get("/new/{type_name}", response_class=HTMLResponse)
@@ -130,12 +150,7 @@ def register_routes(app: FastAPI) -> None:
         # Successful create → swap inspector to the new node and signal a list refresh.
         if _is_htmx(request):
             t = ref.split("/", 1)[0]
-            ctx = _ctx(
-                request,
-                selected_type=t,
-                selected_ref=ref,
-                inspector=views.inspector_view(db, ref),
-            )
+            ctx = _inspector_ctx(request, db, ref)
             resp = templates.TemplateResponse(request, "_inspector.html", ctx)
             resp.headers["HX-Trigger"] = f"refresh-list-{t}"
             return resp
@@ -190,11 +205,7 @@ def register_routes(app: FastAPI) -> None:
             return templates.TemplateResponse(request, template, ctx, status_code=400)
 
         if _is_htmx(request):
-            ctx = _ctx(
-                request,
-                selected_type=type_name, selected_ref=ref,
-                inspector=views.inspector_view(db, ref),
-            )
+            ctx = _inspector_ctx(request, db, ref)
             resp = templates.TemplateResponse(request, "_inspector.html", ctx)
             resp.headers["HX-Trigger"] = f"refresh-list-{type_name}"
             return resp
@@ -241,16 +252,9 @@ def register_routes(app: FastAPI) -> None:
     def contract_new_form(request: Request, source: str = Query(...)) -> HTMLResponse:
         db: TrellisDB = request.app.state.db
         try:
-            insp = views.inspector_view(db, source)
+            ctx = _inspector_ctx(request, db, source, contract_form_open=True)
         except TrellisError as e:
             raise HTTPException(404, str(e))
-        ctx = _ctx(
-            request,
-            inspector=insp,
-            contract_form_open=True,
-            known_statuses=views.collect_known_statuses(db),
-            all_type_names=db.config.type_names(),
-        )
         return templates.TemplateResponse(request, "_contracts_section.html", ctx)
 
     @app.post("/contract")
@@ -267,22 +271,17 @@ def register_routes(app: FastAPI) -> None:
             )
         except (forms.FormError, TrellisError) as e:
             source = form.get("source_ref") or ""
-            insp = views.inspector_view(db, source) if source else None
-            ctx = _ctx(
-                request,
-                inspector=insp,
+            if not source:
+                raise HTTPException(400, str(e))
+            ctx = _inspector_ctx(
+                request, db, source,
                 contract_form_open=True,
                 contract_form_error=str(e),
-                known_statuses=views.collect_known_statuses(db),
-                all_type_names=db.config.type_names(),
             )
             return templates.TemplateResponse(
                 request, "_contracts_section.html", ctx, status_code=400
             )
-        insp = views.inspector_view(db, parsed["source_ref"])
-        ctx = _ctx(request, inspector=insp,
-                   known_statuses=views.collect_known_statuses(db),
-                   all_type_names=db.config.type_names())
+        ctx = _inspector_ctx(request, db, parsed["source_ref"])
         return templates.TemplateResponse(request, "_contracts_section.html", ctx)
 
     @app.post("/contract/{edge_id}/delete")
@@ -296,8 +295,146 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(400, str(e))
         if not source:
             return Response(status_code=204)
-        insp = views.inspector_view(db, source)
-        ctx = _ctx(request, inspector=insp,
-                   known_statuses=views.collect_known_statuses(db),
-                   all_type_names=db.config.type_names())
+        ctx = _inspector_ctx(request, db, source)
         return templates.TemplateResponse(request, "_contracts_section.html", ctx)
+
+    # ---------------- structural edges (link-fields, post-hoc) ----------------
+
+    @app.get("/structural/new", response_class=HTMLResponse)
+    def structural_new_form(
+        request: Request,
+        source: str = Query(...),
+        pk: str = Query(...),
+    ) -> HTMLResponse:
+        """Open the inline mention input for a single Pflicht-Kante slot."""
+        db: TrellisDB = request.app.state.db
+        try:
+            ctx = _inspector_ctx(request, db, source, structural_form_pk=pk)
+        except TrellisError as e:
+            raise HTTPException(404, str(e))
+        return templates.TemplateResponse(request, "_structural_section.html", ctx)
+
+    @app.post("/structural")
+    async def structural_create(request: Request) -> Response:
+        db: TrellisDB = request.app.state.db
+        form = await request.form()
+        source = (form.get("source_ref") or "").strip()
+        edge_type = (form.get("edge_type") or "").strip()
+        targets = forms.multi(form, "target_ref")
+        if not source or not edge_type:
+            raise HTTPException(400, "source_ref und edge_type sind Pflicht")
+        if not targets:
+            return _structural_response(request, db, source, "Bitte ein Ziel auswählen.")
+        try:
+            for tref in targets:
+                db.add_structural_edge(source, tref, edge_type)
+        except TrellisError as e:
+            return _structural_response(request, db, source, str(e), status=400)
+        return _structural_response(request, db, source, None)
+
+    @app.post("/structural/{edge_id}/delete")
+    async def structural_delete(request: Request, edge_id: str) -> Response:
+        db: TrellisDB = request.app.state.db
+        form = await request.form()
+        source = (form.get("source_ref") or "").strip()
+        try:
+            db.remove_structural_edge(edge_id)
+        except TrellisError as e:
+            raise HTTPException(400, str(e))
+        if not source:
+            return Response(status_code=204)
+        return _structural_response(request, db, source, None)
+
+    # ---------------- soft-delete / restore ----------------
+
+    @app.post("/soft-delete/{type_name}/{node_id}")
+    def soft_delete(request: Request, type_name: str, node_id: str) -> Response:
+        db: TrellisDB = request.app.state.db
+        ref = f"{type_name}/{node_id}"
+        try:
+            db.soft_delete_node(ref)
+        except TrellisError as e:
+            raise HTTPException(400, str(e))
+        if _is_htmx(request):
+            ctx = _ctx(request, selected_type=type_name)
+            resp = HTMLResponse(
+                "<div class='placeholder'><p class='muted'>Knoten gelöscht.</p></div>"
+            )
+            resp.headers["HX-Trigger"] = f"refresh-list-{type_name}"
+            return resp
+        return RedirectResponse(url=f"/types/{type_name}", status_code=303)
+
+    @app.post("/restore/{type_name}/{node_id}")
+    def restore(request: Request, type_name: str, node_id: str) -> Response:
+        db: TrellisDB = request.app.state.db
+        ref = f"{type_name}/{node_id}"
+        try:
+            db.restore_node(ref)
+        except TrellisError as e:
+            raise HTTPException(400, str(e))
+        if _is_htmx(request):
+            ctx = _inspector_ctx(request, db, ref)
+            resp = templates.TemplateResponse(request, "_inspector.html", ctx)
+            resp.headers["HX-Trigger"] = f"refresh-list-{type_name}"
+            return resp
+        return RedirectResponse(url=f"/nodes/{ref}", status_code=303)
+
+    # ---------------- readiness dashboard ----------------
+
+    @app.get("/readiness", response_class=HTMLResponse)
+    def dashboard(
+        request: Request,
+        type: str = Query("Phase"),
+        path: str = Query(""),
+    ) -> HTMLResponse:
+        db: TrellisDB = request.app.state.db
+        if type not in db.config.types:
+            type = next(iter(db.config.types.keys()))
+        refs = [r for r in (path or "").split(",") if r and r in _all_refs_set(db)]
+        columns = views.build_dashboard_columns(db, type, refs)
+        ctx = _ctx(
+            request,
+            active_tab="readiness",
+            dashboard_type=type,
+            dashboard_columns=columns,
+        )
+        if _is_htmx(request):
+            return templates.TemplateResponse(request, "_dashboard.html", ctx)
+        return templates.TemplateResponse(request, "index.html", ctx)
+
+    # ---------------- settings (read-only types.yaml) ----------------
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings(request: Request) -> HTMLResponse:
+        path = request.app.state.project_dir / "types.yaml"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = "(types.yaml nicht lesbar)"
+        ctx = _ctx(request, active_tab="settings", settings_yaml=text)
+        return templates.TemplateResponse(request, "index.html", ctx)
+
+
+# ---------------------------------------------------------------- helpers (cont.)
+
+def _all_refs_set(db: TrellisDB) -> set[str]:
+    """All currently existing node refs (for path validation in /readiness)."""
+    out: set[str] = set()
+    for t in db.config.type_names():
+        for nid in db.list_nodes(t).keys():
+            out.add(f"{t}/{nid}")
+    return out
+
+
+def _structural_response(
+    request: Request,
+    db: TrellisDB,
+    source_ref: str,
+    error: str | None,
+    status: int = 200,
+) -> HTMLResponse:
+    """Re-render the structural section after an add/delete (success or error)."""
+    ctx = _inspector_ctx(request, db, source_ref, structural_error=error)
+    return templates.TemplateResponse(
+        request, "_structural_section.html", ctx, status_code=status,
+    )

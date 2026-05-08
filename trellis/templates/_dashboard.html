@@ -1,0 +1,89 @@
+<div class="dashboard">
+  <header class="dashboard-header">
+    <div class="dashboard-title">
+      <h2>Readiness</h2>
+      <span class="muted small">Worst-of-Kaskade entlang aller Voraussetzungen.</span>
+    </div>
+    <form class="dashboard-controls" hx-get="/readiness" hx-target="#col-dashboard" hx-swap="innerHTML">
+      <label for="dash-type" class="muted small">Top-Level-Typ:</label>
+      <select id="dash-type" name="type" onchange="this.form.requestSubmit();">
+        {% for t in type_names %}
+        <option value="{{ t }}" {% if t == dashboard_type %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </header>
+
+  <div class="dashboard-columns" id="dashboard-columns">
+    {% for col in dashboard_columns %}
+      {% if col.kind == "top" %}
+      <div class="dash-col">
+        <header class="dash-col-header">
+          <span class="dash-col-label">{{ col.type_name }}</span>
+          <span class="muted small">{{ col.rows|length }}</span>
+        </header>
+        <ul class="dash-col-items">
+          {% for r in col.rows %}
+          <li class="dash-item ready-{{ r.aggregate_readiness }}
+                     {% if r.ref == col.selected_ref %}is-selected{% endif %}"
+              hx-get="/readiness?type={{ dashboard_type }}&path={{ r.next_path }}"
+              hx-target="#col-dashboard"
+              hx-swap="innerHTML"
+              hx-trigger="click">
+            <span class="ready-dot ready-{{ r.aggregate_readiness }}" title="{{ r.aggregate_readiness }}"></span>
+            <span class="dash-item-name">{{ r.name }}</span>
+            <span class="dash-item-meta">
+              {% if r.is_stub %}<span class="dot dot-stub" title="Stub"></span>{% endif %}
+              {% if r.current_status %}<span class="status-pill">{{ r.current_status }}</span>{% endif %}
+            </span>
+          </li>
+          {% else %}
+          <li class="dash-empty muted small">Noch nichts angelegt.</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <div class="dash-col">
+        <header class="dash-col-header">
+          <span class="dash-col-label">{{ col.source.source_name }}</span>
+          <span class="ready-dot ready-{{ col.source.source_readiness }}"
+                title="aggregate {{ col.source.source_readiness }}"></span>
+        </header>
+        <ul class="dash-col-items">
+          {% for it in col.source["items"] %}
+          <li class="dash-item ready-{{ it.effective_readiness }}
+                     {% if it.ref == col.selected_ref %}is-selected{% endif %}"
+              hx-get="/readiness?type={{ dashboard_type }}&path={{ it.next_path }}"
+              hx-target="#col-dashboard"
+              hx-swap="innerHTML"
+              hx-trigger="click">
+            <span class="ready-dot ready-{{ it.effective_readiness }}"
+                  title="Vertrag {{ it.contract_status }}, Ziel-Aggregat {{ it.aggregate_readiness }}"></span>
+            <div class="dash-item-body">
+              <div class="dash-item-name">{{ it.name }}</div>
+              <div class="dash-item-meta">
+                {% if it.is_satisfied %}
+                <span class="muted small">erfüllt</span>
+                {% else %}
+                <span class="muted small">ist</span>
+                {% if it.current_status %}
+                <span class="status-pill">{{ it.current_status }}</span>
+                {% else %}
+                <span class="muted">—</span>
+                {% endif %}
+                <span class="muted small">muss</span>
+                <span class="status-pill">{{ it.required_status }}</span>
+                {% if it.is_blocker %}<span class="badge badge-blocker">Blocker</span>{% endif %}
+                {% endif %}
+              </div>
+            </div>
+          </li>
+          {% else %}
+          <li class="dash-empty muted small">— keine Voraussetzungen —</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+</div>
