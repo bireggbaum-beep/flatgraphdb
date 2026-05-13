@@ -29,7 +29,6 @@ Features:
 
 import contextlib
 import copy
-import hashlib
 import json
 import os
 import re
@@ -157,6 +156,7 @@ class FlatGraphDB:
         self._purged_nodes   = {}    # {collection: set(node_ids)} — permanently deleted this session
         self._edge_additions = {}    # {rel_type: {edge_id: edge_data}} — edges created this session
         self._edge_deletions = {}    # {rel_type: set(edge_ids)} — edges deleted this session
+        self._collection_revisions = {}  # {collection: int} — on-disk revision counter; populated by _initialize_cache
         self._initialize_cache()
 
     # ------------------------------------------------------------------
@@ -219,6 +219,8 @@ class FlatGraphDB:
 
     def _initialize_cache(self):
         """Load all JSON files into RAM once. Temp-files are merged on top of the base state."""
+        self._collection_revisions = self._load_revisions_from_disk()
+
         if os.path.exists(self.dirs["nodes"]):
             for filename in os.listdir(self.dirs["nodes"]):
                 if filename.endswith("_temp.json") or not filename.endswith(".json"):
@@ -318,6 +320,7 @@ class FlatGraphDB:
                 else:
                     temp_data.pop(nid, None)
             self._save_json_atomic(temp_path, temp_data)
+            self._bump_revision_unlocked(collection_name)
 
     def _flush_pending_writes(self):
         """Flush all buffered node and edge writes to disk (transaction commit)."""
@@ -335,6 +338,7 @@ class FlatGraphDB:
                     else:
                         temp_data.pop(nid, None)
                 self._save_json_atomic(temp_path, temp_data)
+                self._bump_revision_unlocked(collection_name)
         for rel_type in list(self._dirty_edges):
             self._flush_edge_type(rel_type)
         self._dirty_edges.clear()
@@ -402,6 +406,7 @@ class FlatGraphDB:
             self._save_json_atomic(path, merged)
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+            self._bump_revision_unlocked(collection_name)
         # Keep local RAM in sync with the authoritative merged state
         self._cache["nodes"][collection_name] = merged
         self._dirty_nodes.pop(collection_name, None)
@@ -542,24 +547,49 @@ class FlatGraphDB:
     def _index_file(self, collection):
         return os.path.join(self.dirs["index"], f"{collection}.json")
 
-    def _collection_checksum(self, collection):
-        keys = sorted(self._cache["nodes"].get(collection, {}).keys())
-        return hashlib.md5("|".join(keys).encode()).hexdigest()
+    def _meta_file(self):
+        return os.path.join(self.root, "datenbank", "_meta.json")
+
+    def _load_revisions_from_disk(self):
+        """Load the {collection: revision} counter dict from datenbank/_meta.json."""
+        return self._load_json_from_disk(self._meta_file()).get("revisions", {})
+
+    def _bump_revision_unlocked(self, collection):
+        """
+        Increment the on-disk revision counter for one collection.
+
+        Must be called inside an already-acquired self._acquire_lock() block —
+        does RMW on the meta file without re-acquiring the lock so we share
+        the same critical section as the actual data write.
+        """
+        path = self._meta_file()
+        meta = self._load_json_from_disk(path)
+        revisions = meta.setdefault("revisions", {})
+        disk_rev = revisions.get(collection, 0)
+        ram_rev  = self._collection_revisions.get(collection, 0)
+        new_rev  = max(disk_rev, ram_rev) + 1
+        revisions[collection] = new_rev
+        self._save_json_atomic(path, meta)
+        self._collection_revisions[collection] = new_rev
+
+    def _collection_revision(self, collection):
+        """Cached on-disk revision counter for one collection (0 if never written)."""
+        return self._collection_revisions.get(collection, 0)
 
     def _mark_index_dirty(self, collection):
         self._dirty_index.add(collection)
         self._index_cache.pop(collection, None)
 
     def _load_index_from_disk(self, collection):
-        """Load field index from disk. Returns None if missing or stale (checksum mismatch)."""
+        """Load field index from disk. Returns None if missing or stale (revision mismatch)."""
         path = self._index_file(collection)
         if not os.path.exists(path):
             return None
         try:
             data = self._load_json_from_disk(path)
-        except RuntimeError:
+        except CorruptStoreError:
             return None
-        if data.get("_meta", {}).get("checksum") != self._collection_checksum(collection):
+        if data.get("_meta", {}).get("revision") != self._collection_revision(collection):
             return None
         return {k: v for k, v in data.items() if k != "_meta"}
 
@@ -575,7 +605,7 @@ class FlatGraphDB:
 
     def _persist_index(self, collection):
         data = dict(self._index_cache.get(collection, {}))
-        data["_meta"] = {"checksum": self._collection_checksum(collection)}
+        data["_meta"] = {"revision": self._collection_revision(collection)}
         self._save_json_atomic(self._index_file(collection), data)
 
     def _get_field_index(self, collection, field):

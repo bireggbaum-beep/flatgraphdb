@@ -14,6 +14,7 @@ root_dir/
     nodes/        one JSON file per collection
     edges/        one JSON file per edge type
     index/        lazy field indexes for find_nodes()
+    _meta.json    per-collection revision counters (index invalidation)
   vault/          binary assets (PDFs, images, …)
   vault_text/     offloaded longtext fields
   vault_archive/  quarantine for soft-deleted assets
@@ -181,6 +182,8 @@ results = db.find_nodes("book", {"status": "published"}, readonly=True)
 ```
 
 Returns `{node_id: data}`. Soft-deleted nodes are always excluded.
+
+**Index validity.** Each collection has an on-disk revision counter (`datenbank/_meta.json`) that is incremented on every write. Persisted indexes in `datenbank/index/` store the revision they were built from and are discarded on load when the revision has moved on — so a field-value change without an id change correctly invalidates a stale index. A `find_nodes()` call after that simply rebuilds the index on the next access.
 
 ### next_id
 
