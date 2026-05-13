@@ -153,9 +153,11 @@ class FlatGraphDB:
         self._dirty_edges  = set()   # rel_types with pending edge writes
         self._transaction_depth = 0  # >0 = active transaction, writes are buffered
         # RMW delta tracking — required for correct multi-process merges
-        self._purged_nodes   = {}    # {collection: set(node_ids)} — permanently deleted this session
-        self._edge_additions = {}    # {rel_type: {edge_id: edge_data}} — edges created this session
-        self._edge_deletions = {}    # {rel_type: set(edge_ids)} — edges deleted this session
+        self._purged_nodes      = {}  # {collection: set(node_ids)} — permanently deleted this session
+        self._edge_additions    = {}  # {rel_type: {edge_id: edge_data}} — edges created this session
+        self._edge_deletions    = {}  # {rel_type: set(edge_ids)} — edges deleted this session
+        self._pending_creations = {}  # {collection: set(node_ids)} — created in RAM, not yet on disk → CAS at persist
+        self._node_updates      = {}  # {collection: {node_id: {field: value}}} — per-node update delta for per-field merge
         self._collection_revisions = {}  # {collection: int} — on-disk revision counter; populated by _initialize_cache
         self._initialize_cache()
 
@@ -301,6 +303,86 @@ class FlatGraphDB:
     def _mark_node_dirty(self, collection_name, node_id):
         self._dirty_nodes.setdefault(collection_name, set()).add(node_id)
 
+    def _persist_collection_unlocked(self, collection_name, dirty_ids):
+        """
+        Write a batch of dirty node ids to the collection's temp file under the
+        already-acquired self._acquire_lock(). Performs:
+
+          - CAS for pending creations: if the id already exists on disk, the node
+            is rolled back from RAM and ConflictError is raised. Other dirty ids
+            in this batch are still applied (we raise after the save).
+          - Per-field merge for updates whose delta is tracked in _node_updates:
+            the on-disk version is read inside the lock and our delta layered on
+            top, so disjoint-field updates from peer processes survive.
+          - Whole-node write for dirty ids without a tracked delta (restore_node,
+            GC cascade flag, internal _-only updates).
+          - Disk delete for dirty ids that are no longer in the RAM cache.
+
+        Returns the list of (collection, node_id) tuples that conflicted; caller
+        decides whether to raise.
+        """
+        temp_path = self._temp_file(collection_name)
+        base_path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
+        col_data  = self._cache["nodes"].get(collection_name, {})
+
+        temp_data = self._load_json_from_disk(temp_path)
+        disk_base = self._load_json_from_disk(base_path)
+        pending_new  = self._pending_creations.get(collection_name, set())
+        node_updates = self._node_updates.get(collection_name, {})
+
+        conflicts = []
+        applied = False
+
+        for nid in dirty_ids:
+            if nid in pending_new:
+                # CAS: must not exist on disk yet.
+                if nid in temp_data or nid in disk_base:
+                    col_data.pop(nid, None)
+                    pending_new.discard(nid)
+                    node_updates.pop(nid, None)
+                    conflicts.append(nid)
+                    continue
+                if nid in col_data:
+                    temp_data[nid] = col_data[nid]
+                    applied = True
+            elif nid in col_data:
+                delta = node_updates.get(nid)
+                if delta is not None:
+                    if nid not in temp_data and nid not in disk_base:
+                        # Node we were updating got purged by another process.
+                        col_data.pop(nid, None)
+                        node_updates.pop(nid, None)
+                        conflicts.append(nid)
+                        continue
+                    merged = dict(temp_data.get(nid) or disk_base.get(nid, {}))
+                    merged.update(delta)
+                    temp_data[nid] = merged
+                    col_data[nid] = merged  # sync RAM so subsequent reads see merged state
+                    applied = True
+                else:
+                    temp_data[nid] = col_data[nid]
+                    applied = True
+            elif nid in temp_data:
+                # Node was removed from RAM (e.g. GC purge); reflect on disk.
+                temp_data.pop(nid, None)
+                applied = True
+
+        if applied:
+            self._save_json_atomic(temp_path, temp_data)
+            self._bump_revision_unlocked(collection_name)
+
+        # Successfully persisted dirty ids drop out of the pending sets.
+        non_conflicted = set(dirty_ids) - set(conflicts)
+        pending_new.difference_update(non_conflicted)
+        for nid in non_conflicted:
+            node_updates.pop(nid, None)
+        if not pending_new:
+            self._pending_creations.pop(collection_name, None)
+        if not node_updates:
+            self._node_updates.pop(collection_name, None)
+
+        return conflicts
+
     def _persist_collection(self, collection_name):
         """Write only changed nodes to the temp-file — or buffer when inside a transaction."""
         dirty_ids = self._dirty_nodes.get(collection_name, set())
@@ -309,39 +391,32 @@ class FlatGraphDB:
         if self._transaction_depth > 0:
             return  # buffered until commit
         self._dirty_nodes.pop(collection_name, None)
-        temp_path = self._temp_file(collection_name)
-        col_data = self._cache["nodes"].get(collection_name, {})
         with self._acquire_lock():
-            # Read inside the lock to avoid TOCTOU races with other processes
-            temp_data = self._load_json_from_disk(temp_path)
-            for nid in dirty_ids:
-                if nid in col_data:
-                    temp_data[nid] = col_data[nid]
-                else:
-                    temp_data.pop(nid, None)
-            self._save_json_atomic(temp_path, temp_data)
-            self._bump_revision_unlocked(collection_name)
+            conflicts = self._persist_collection_unlocked(collection_name, dirty_ids)
+        if conflicts:
+            raise ConflictError(
+                f"Node id collision in '{collection_name}' — already created by another process: "
+                f"{sorted(conflicts)}"
+            )
 
     def _flush_pending_writes(self):
         """Flush all buffered node and edge writes to disk (transaction commit)."""
+        all_conflicts = {}
         for collection_name in list(self._dirty_nodes.keys()):
             dirty_ids = self._dirty_nodes.pop(collection_name, set())
             if not dirty_ids:
                 continue
-            temp_path = self._temp_file(collection_name)
-            col_data = self._cache["nodes"].get(collection_name, {})
             with self._acquire_lock():
-                temp_data = self._load_json_from_disk(temp_path)
-                for nid in dirty_ids:
-                    if nid in col_data:
-                        temp_data[nid] = col_data[nid]
-                    else:
-                        temp_data.pop(nid, None)
-                self._save_json_atomic(temp_path, temp_data)
-                self._bump_revision_unlocked(collection_name)
+                conflicts = self._persist_collection_unlocked(collection_name, dirty_ids)
+            if conflicts:
+                all_conflicts[collection_name] = sorted(conflicts)
         for rel_type in list(self._dirty_edges):
             self._flush_edge_type(rel_type)
         self._dirty_edges.clear()
+        if all_conflicts:
+            raise ConflictError(
+                f"Transaction commit hit id collisions from peer processes: {all_conflicts}"
+            )
 
     def flush(self):
         """Write all buffered writes to disk immediately. Useful outside transaction()."""
@@ -368,6 +443,8 @@ class FlatGraphDB:
         snap_purged     = copy.deepcopy(self._purged_nodes)
         snap_edge_add   = copy.deepcopy(self._edge_additions)
         snap_edge_del   = copy.deepcopy(self._edge_deletions)
+        snap_pending    = copy.deepcopy(self._pending_creations)
+        snap_updates    = copy.deepcopy(self._node_updates)
 
         self._transaction_depth = 1
         try:
@@ -376,12 +453,14 @@ class FlatGraphDB:
             self._flush_pending_writes()
         except Exception:
             self._transaction_depth = 0
-            self._cache["nodes"]   = snap_nodes
-            self._cache["edges"]   = snap_edges
-            self._edge_type_index  = snap_edge_idx
-            self._purged_nodes     = snap_purged
-            self._edge_additions   = snap_edge_add
-            self._edge_deletions   = snap_edge_del
+            self._cache["nodes"]    = snap_nodes
+            self._cache["edges"]    = snap_edges
+            self._edge_type_index   = snap_edge_idx
+            self._purged_nodes      = snap_purged
+            self._edge_additions    = snap_edge_add
+            self._edge_deletions    = snap_edge_del
+            self._pending_creations = snap_pending
+            self._node_updates      = snap_updates
             self._dirty_nodes.clear()
             self._dirty_edges.clear()
             self._dirty_index.update(snap_nodes.keys())
@@ -496,6 +575,50 @@ class FlatGraphDB:
 
     def _is_deleted(self, node_data):
         return node_data is not None and "_deletion_flag" in node_data
+
+    # ------------------------------------------------------------------
+    # Internal helpers — multi-process cache freshness
+    # ------------------------------------------------------------------
+
+    def _reload_collection_unlocked(self, collection_name):
+        """Re-read base + temp for one collection. Caller must hold _acquire_lock()."""
+        base_path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
+        temp_path = self._temp_file(collection_name)
+        disk_base = self._load_json_from_disk(base_path)
+        disk_temp = self._load_json_from_disk(temp_path)
+        merged = {**disk_base, **disk_temp}
+        # Preserve our own pending creations (not yet on disk).
+        for nid in self._pending_creations.get(collection_name, set()):
+            ram_node = self._cache["nodes"].get(collection_name, {}).get(nid)
+            if ram_node is not None:
+                merged[nid] = ram_node
+        # Layer our pending field updates over the freshly-read disk state so
+        # un-flushed local changes survive a refresh.
+        for nid, delta in self._node_updates.get(collection_name, {}).items():
+            base = dict(merged.get(nid, {}))
+            base.update(delta)
+            merged[nid] = base
+        self._cache["nodes"][collection_name] = merged
+        revisions = self._load_revisions_from_disk()
+        self._collection_revisions[collection_name] = revisions.get(collection_name, 0)
+        self._index_cache.pop(collection_name, None)
+
+    def _refresh_if_stale(self, collection_name):
+        """
+        If a peer process bumped the on-disk revision for this collection past
+        what we last saw, reload it. Only active when file_lock=True (the opt-in
+        multi-process mode) and outside of transactions (whose snapshot must not
+        shift mid-block).
+        """
+        if not self.file_lock or self._transaction_depth > 0:
+            return
+        on_disk = self._load_revisions_from_disk().get(collection_name, 0)
+        if on_disk <= self._collection_revisions.get(collection_name, 0):
+            return
+        with self._acquire_lock():
+            # Re-check inside the lock — another process may have bumped further;
+            # we always end up with the latest state.
+            self._reload_collection_unlocked(collection_name)
 
     # ------------------------------------------------------------------
     # Internal helpers — vault_text
@@ -651,6 +774,7 @@ class FlatGraphDB:
         stored = copy.deepcopy(data)
         self._offload_longtexts(collection_name, node_id, stored)
         self._cache["nodes"][collection_name][node_id] = stored
+        self._pending_creations.setdefault(collection_name, set()).add(node_id)
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
@@ -672,6 +796,7 @@ class FlatGraphDB:
         except ValueError:
             return None
 
+        self._refresh_if_stale(col)
         node_data = self._cache["nodes"].get(col, {}).get(n_id)
         if node_data and not self._is_deleted(node_data):
             return node_data if readonly else copy.deepcopy(node_data)
@@ -686,6 +811,7 @@ class FlatGraphDB:
             col, n_id = node_ref.split("/", 1)
         except ValueError:
             return None
+        self._refresh_if_stale(col)
         raw = self._cache["nodes"].get(col, {}).get(n_id)
         return copy.deepcopy(raw) if raw is not None else None
 
@@ -722,6 +848,13 @@ class FlatGraphDB:
 
         self._offload_longtexts(collection_name, node_id, update_data)
         col_cache[node_id].update(update_data)
+        # Record the per-field delta so _persist_collection can apply only these
+        # fields on top of the current disk state (per-field LWW merge under lock).
+        # Skip delta tracking for nodes still pending creation: their first persist
+        # writes the full RAM version anyway, and tracking would force a merge with
+        # an empty disk node on retry after a CAS conflict.
+        if node_id not in self._pending_creations.get(collection_name, set()):
+            self._node_updates.setdefault(collection_name, {}).setdefault(node_id, {}).update(update_data)
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
@@ -739,6 +872,7 @@ class FlatGraphDB:
         :param readonly: If True, values are direct cache references (no deep copy).
                          Faster for display/reporting — caller must never mutate the dicts.
         """
+        self._refresh_if_stale(collection_name)
         col = self._cache["nodes"].get(collection_name, {})
         _copy = (lambda d: d) if readonly else copy.deepcopy
         if include_deleted:
@@ -821,6 +955,7 @@ class FlatGraphDB:
         if not match:
             return self.list_nodes(collection_name, readonly=readonly)
 
+        self._refresh_if_stale(collection_name)
         result_ids = None
 
         for field, criterion in match.items():

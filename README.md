@@ -382,7 +382,25 @@ Offloading is transparent: `update_node` with a long value offloads automaticall
 db = FlatGraphDB("./mydb", file_lock=True)
 ```
 
-With `file_lock=True`, every write acquires an exclusive file lock (`fcntl` on Unix, `msvcrt` on Windows) and uses a Read-Modify-Write pattern. Concurrent processes merge their changes at the collection level rather than blindly overwriting each other's writes.
+`file_lock=True` is the opt-in mode for multiple OS processes (or app instances) sharing the same database directory — for example the same user driving two devices, or a web app running with multiple workers. It is not a multi-user permission layer.
+
+Every write acquires an exclusive file lock (`fcntl` on Unix, `msvcrt` on Windows) and runs the entire read-modify-write inside that lock. Within that critical section three guarantees are added:
+
+- **CAS for `create_node()`** — at the moment of the disk write the on-disk state is re-read; if a peer process already created the same id, the RAM-cached node is rolled back and `ConflictError` is raised. No silent overwrite.
+- **Per-field merge for `update_node()`** — the on-disk version of the node is read inside the lock and your update is layered on top. Two processes editing **disjoint fields** of the same node both survive. Two processes writing the **same field** resolve as last-writer-wins.
+- **Stale-cache refresh on reads** — `get_node()`, `get_node_raw()`, `get_node_full()`, `list_nodes()` and `find_nodes()` check the collection's revision counter on entry. If a peer process bumped it past the local view, that single collection is re-read from disk before the call returns.
+
+```python
+try:
+    db.create_node("book", "B1", {...})
+except ConflictError:
+    # peer process already created this id — refresh and decide
+    existing = db.get_node("book/B1")
+```
+
+**What this mode does not promise.** The base-file/temp-file write inside one collection is atomic relative to peer processes, but a transaction that spans multiple collections is not disk-atomic — if the process is killed mid-commit, some collections may be flushed and others not. Edges have unique UUIDs and are not subject to CAS. Whole-node operations that bypass the field-delta path (`restore_node`, GC cascade flag) write the full node version and follow whole-node LWW semantics.
+
+With `file_lock=False` (the default) none of the above is active: writes are still atomic per file via `os.replace()`, but concurrent peer writes can lose updates and stale RAM caches are never refreshed.
 
 ---
 
