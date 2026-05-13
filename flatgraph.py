@@ -798,7 +798,7 @@ class FlatGraphDB:
 
         self._refresh_if_stale(col)
         node_data = self._cache["nodes"].get(col, {}).get(n_id)
-        if node_data and not self._is_deleted(node_data):
+        if node_data is not None and not self._is_deleted(node_data):
             return node_data if readonly else copy.deepcopy(node_data)
         return None
 
@@ -1529,7 +1529,7 @@ class MaintenanceEngine(FlatGraphDB):
                     try:
                         col, nid = edge["target"].split("/", 1)
                         target_node = self._cache["nodes"].get(col, {}).get(nid)
-                        if target_node and not self._is_deleted(target_node):
+                        if target_node is not None and not self._is_deleted(target_node):
                             target_node["_deletion_flag"] = datetime.now(timezone.utc).isoformat()
                             target_node.setdefault("_keep_asset", True)
                             self._mark_node_dirty(col, nid)
@@ -1550,7 +1550,7 @@ class MaintenanceEngine(FlatGraphDB):
             except ValueError:
                 continue
             data = self._cache["nodes"].get(col, {}).get(nid)
-            if data and self._is_deleted(data):
+            if data is not None and self._is_deleted(data):
                 found.append((col, nid, data))
         return found
 

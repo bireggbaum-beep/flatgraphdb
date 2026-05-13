@@ -501,5 +501,16 @@ All FlatGraphDB-specific errors derive from `FlatGraphError`, so a single `excep
 | `SchemaTypeError`        | `TypeError`           | schema field present but wrong Python type             |
 | `EdgeConstraintError`    | `ValueError`          | edge violates declared `edge_constraints`              |
 | `CorruptStoreError`      | `RuntimeError`        | on-disk JSON is unreadable or malformed                |
+| `ConflictError`          | `FlatGraphError`      | peer-process CAS collision on `create_node` / commit   |
 | `TransactionError`       | `FlatGraphError`      | reserved for future transactional failures             |
-| `ConflictError`          | `FlatGraphError`      | reserved for future multi-process conflict detection   |
+
+---
+
+## Tests
+
+```bash
+pip install pytest
+pytest
+```
+
+The suite lives in `tests/`, uses pytest's `tmp_path` so each test runs against a fresh on-disk database, and covers the exception hierarchy, the documented `collect_related` / `restore_node` contracts, revision-based index invalidation, multi-process CAS / per-field merge / stale-cache refresh, plus the core CRUD / traverse / transaction / GC golden paths. CI runs it on every push via `.github/workflows/tests.yml`.
