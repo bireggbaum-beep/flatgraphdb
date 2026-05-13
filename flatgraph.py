@@ -45,6 +45,50 @@ _INTERNAL_COLLECTIONS  = {"_audit_log"}
 
 
 # =============================================================================
+# EXCEPTIONS
+# =============================================================================
+# All FlatGraphDB errors inherit from FlatGraphError, so callers can catch the
+# whole family with one except clause. Each concrete error also inherits from a
+# matching stdlib type (KeyError / ValueError / TypeError / RuntimeError) so
+# existing code that catches those continues to work.
+
+class FlatGraphError(Exception):
+    """Base class for every FlatGraphDB error."""
+
+
+class NodeExistsError(FlatGraphError, KeyError):
+    """A node with the given id already exists in the target collection."""
+
+
+class NodeNotFoundError(FlatGraphError, KeyError):
+    """A referenced node does not exist (or is soft-deleted)."""
+
+
+class SchemaValidationError(FlatGraphError, ValueError):
+    """Data does not satisfy the declared collection schema."""
+
+
+class SchemaTypeError(FlatGraphError, TypeError):
+    """A schema field is present but has the wrong Python type."""
+
+
+class EdgeConstraintError(FlatGraphError, ValueError):
+    """An edge violates the declared edge_constraints for its rel_type."""
+
+
+class TransactionError(FlatGraphError):
+    """A transaction could not be completed."""
+
+
+class ConflictError(FlatGraphError):
+    """A multi-process write conflict was detected."""
+
+
+class CorruptStoreError(FlatGraphError, RuntimeError):
+    """An on-disk file is unreadable or not valid JSON."""
+
+
+# =============================================================================
 # MAIN ENGINE
 # =============================================================================
 
@@ -214,9 +258,9 @@ class FlatGraphDB:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"File '{filepath}' is not valid JSON: {e}") from e
+            raise CorruptStoreError(f"File '{filepath}' is not valid JSON: {e}") from e
         except IOError as e:
-            raise RuntimeError(f"Could not read file '{filepath}': {e}") from e
+            raise CorruptStoreError(f"Could not read file '{filepath}': {e}") from e
 
     def _save_json_atomic(self, filepath, data):
         """Atomic write: write to .tmp first, then os.replace()."""
@@ -371,36 +415,36 @@ class FlatGraphDB:
             # --- plain Python type (existing behaviour, fully backward-compatible) ---
             if isinstance(spec, type):
                 if field not in data:
-                    raise ValueError(
+                    raise SchemaValidationError(
                         f"Required field '{field}' missing in collection '{collection_name}'."
                     )
                 if not isinstance(data[field], spec):
-                    raise TypeError(
+                    raise SchemaTypeError(
                         f"Field '{field}' must be of type {spec.__name__}."
                     )
                 continue
 
             if not isinstance(spec, dict):
-                raise ValueError(f"Invalid schema spec for field '{field}': {spec!r}")
+                raise SchemaValidationError(f"Invalid schema spec for field '{field}': {spec!r}")
 
             field_type = spec.get("type")
 
             # --- enum: {"type": str|list, "options": [...]} ---
             if field_type in (str, list):
                 if field not in data:
-                    raise ValueError(
+                    raise SchemaValidationError(
                         f"Required field '{field}' missing in collection '{collection_name}'."
                     )
                 value = data[field]
                 if not isinstance(value, field_type):
                     name = field_type.__name__
-                    raise TypeError(f"Field '{field}' must be of type {name}.")
+                    raise SchemaTypeError(f"Field '{field}' must be of type {name}.")
                 options = spec.get("options")
                 if options is not None:
                     items = value if isinstance(value, list) else [value]
                     for item in items:
                         if item not in options:
-                            raise ValueError(
+                            raise SchemaValidationError(
                                 f"Field '{field}': '{item}' is not an allowed value. "
                                 f"Allowed: {options}"
                             )
@@ -414,12 +458,12 @@ class FlatGraphDB:
                 target_col = spec.get("target")
                 if not self._node_ref_exists(value, expected_collection=target_col):
                     hint = f" in collection '{target_col}'" if target_col else ""
-                    raise ValueError(
+                    raise SchemaValidationError(
                         f"Field '{field}': referenced node '{value}' does not exist{hint}."
                     )
                 continue
 
-            raise ValueError(f"Unknown schema type '{field_type}' for field '{field}'.")
+            raise SchemaValidationError(f"Unknown schema type '{field_type}' for field '{field}'.")
 
     def _node_ref_exists(self, ref, expected_collection=None):
         """Return True if ref points to an existing, non-deleted node."""
@@ -439,7 +483,7 @@ class FlatGraphDB:
         src_col = source_ref.split("/", 1)[0] if "/" in source_ref else source_ref
         tgt_col = target_ref.split("/", 1)[0] if "/" in target_ref else target_ref
         if (src_col, tgt_col) not in [tuple(p) for p in allowed]:
-            raise ValueError(
+            raise EdgeConstraintError(
                 f"Edge type '{rel_type}' does not allow "
                 f"'{src_col}' → '{tgt_col}'. "
                 f"Allowed pairs: {[list(p) for p in allowed]}"
@@ -569,7 +613,7 @@ class FlatGraphDB:
             self._cache["nodes"][collection_name] = {}
 
         if node_id in self._cache["nodes"][collection_name]:
-            raise KeyError(
+            raise NodeExistsError(
                 f"Node '{node_id}' already exists in collection '{collection_name}'. "
                 f"Use update_node() to modify existing nodes."
             )
@@ -837,7 +881,7 @@ class FlatGraphDB:
                 exists = node_id in self._cache["nodes"].get(collection_name, {})
                 if exists:
                     if on_conflict == "error":
-                        raise KeyError(f"Node '{node_id}' already exists in '{collection_name}'.")
+                        raise NodeExistsError(f"Node '{node_id}' already exists in '{collection_name}'.")
                     if on_conflict == "skip":
                         skipped += 1
                         continue
@@ -929,12 +973,17 @@ class FlatGraphDB:
     def restore_node(self, collection_name, node_id):
         """
         Undo a soft-delete (as long as the GC has not yet run).
+
+        :return: True only if a soft-deleted node was actually restored.
+                 False if the node does not exist or was not soft-deleted —
+                 in both no-op cases neither audit log nor webhooks fire.
         """
         col_cache = self._cache["nodes"].get(collection_name, {})
-        if node_id not in col_cache:
+        node = col_cache.get(node_id)
+        if node is None or "_deletion_flag" not in node:
             return False
-        col_cache[node_id].pop("_deletion_flag", None)
-        col_cache[node_id].pop("_keep_asset", None)
+        node.pop("_deletion_flag", None)
+        node.pop("_keep_asset", None)
         self._mark_node_dirty(collection_name, node_id)
         self._persist_collection(collection_name)
         self._mark_index_dirty(collection_name)
@@ -955,9 +1004,9 @@ class FlatGraphDB:
         :return: edge_id
         """
         if self.get_node(source_ref) is None:
-            raise ValueError(f"Source node '{source_ref}' does not exist or is soft-deleted.")
+            raise NodeNotFoundError(f"Source node '{source_ref}' does not exist or is soft-deleted.")
         if self.get_node(target_ref) is None:
-            raise ValueError(f"Target node '{target_ref}' does not exist or is soft-deleted.")
+            raise NodeNotFoundError(f"Target node '{target_ref}' does not exist or is soft-deleted.")
         self._validate_edge(source_ref, target_ref, rel_type)
 
         edge_id = f"link_{uuid.uuid4().hex[:12]}"
@@ -1128,34 +1177,45 @@ class FlatGraphDB:
 
         return results
 
-    def collect_related(self, start_ref, rel_type_path, direction="out"):
+    def collect_related(self, start_ref, rel_type_path, direction="out",
+                        include_intermediate=False):
         """
         Collect nodes along a chain of different relationship types.
+        Each rel_type is applied strictly level by level: only nodes reached at
+        level N are used as starting points for level N+1.
+
         Useful for mixed traversals like:
         MainProcess --has_subprocess--> SubProcesses --needs_equipment--> Equipments
 
         :param rel_type_path: list of rel_types to follow per level;
                               the last level provides the results.
-        :return: Liste von Node-Refs am Ende der Kette (ohne Duplikate)
+        :param include_intermediate: If True, every intermediate level is unioned with
+                                     the carried-over set, so direct connections at
+                                     earlier levels can still reach the final rel_type.
+                                     Default False = strict level-by-level (was the
+                                     documented semantics; the loose mode is opt-in).
+        :return: sorted list of node refs at the end of the chain (no duplicates)
 
         Beispiel:
-            # All equipments of all sub-processes (and the main process itself):
+            # Equipments needed by sub-processes of a main process (strict):
             db.collect_related('processes/PROC-MAIN',
                                ['has_subprocess', 'needs_equipment'])
+
+            # ...plus equipments needed directly by the main process itself:
+            db.collect_related('processes/PROC-MAIN',
+                               ['has_subprocess', 'needs_equipment'],
+                               include_intermediate=True)
         """
         if not rel_type_path:
             return []
 
-        # Collect all intermediate nodes (first to second-to-last level)
         current = {start_ref}
         for rel_type in rel_type_path[:-1]:
             next_set = set()
             for node in current:
                 next_set.update(self.get_connected(node, direction, rel_type))
-            # Keep start level too, in case there are direct connections at that level
-            current = current | next_set
+            current = (current | next_set) if include_intermediate else next_set
 
-        # Final level: collect target nodes
         results = set()
         final_rel = rel_type_path[-1]
         for node in current:

@@ -94,7 +94,7 @@ db = FlatGraphDB("./mydb", schemas={
 })
 ```
 
-**Validation** runs on `create_node()` and `update_node()`. Raises `ValueError` for missing/invalid values, `TypeError` for wrong types.
+**Validation** runs on `create_node()` and `update_node()`. Raises `SchemaValidationError` for missing/invalid values and `SchemaTypeError` for wrong types. Both inherit from `ValueError` / `TypeError` respectively, so existing `except` clauses keep working.
 
 ---
 
@@ -110,7 +110,7 @@ db = FlatGraphDB("./mydb", edge_constraints={
 })
 ```
 
-`create_edge()` raises `ValueError` when the pair is not in the allowed list. Edge types not listed pass freely.
+`create_edge()` raises `EdgeConstraintError` (a `ValueError` subclass) when the pair is not in the allowed list. Edge types not listed pass freely.
 
 ---
 
@@ -121,7 +121,7 @@ db = FlatGraphDB("./mydb", edge_constraints={
 ```python
 ref = db.create_node(collection_name, node_id, data)
 # → "collection/node_id"
-# raises KeyError if node_id already exists in the collection
+# raises NodeExistsError (KeyError subclass) if node_id already exists in the collection
 ```
 
 ### get_node / get_node_full / get_node_raw
@@ -203,7 +203,10 @@ db.soft_delete("book", "B1", keep_asset=False)
 # same, but instructs GC to move the vault file to vault_archive/ instead of keeping it
 
 db.restore_node("book", "B1")
-# undoes soft_delete as long as GC has not yet run
+# undoes soft_delete as long as GC has not yet run.
+# Returns True only if a soft-deleted node was actually un-flagged;
+# returns False if the node does not exist or was not soft-deleted (no-op,
+# no audit entry, no webhook).
 ```
 
 ---
@@ -283,11 +286,16 @@ Returns a list of node refs in BFS order, no duplicates.
 
 ### collect_related
 
-Follows a chain of different edge types level by level:
+Follows a chain of different edge types strictly level by level. Only nodes
+reached at level N are used as starting points for level N+1.
 
 ```python
 # books written by authors that a given author follows
 books = db.collect_related("author/A1", ["follows", "written_by"], direction="out")
+
+# also include books written directly by A1 (loose mode, opt-in)
+books = db.collect_related("author/A1", ["follows", "written_by"],
+                           direction="out", include_intermediate=True)
 ```
 
 ---
@@ -457,3 +465,20 @@ hits = db.find_nodes("book", {"status": "published"}, readonly=True)
 ```
 
 **Contract:** never write to a dict returned with `readonly=True`. Doing so corrupts the internal cache.
+
+---
+
+## Exceptions
+
+All FlatGraphDB-specific errors derive from `FlatGraphError`, so a single `except FlatGraphError` catches the whole family. Each concrete class also inherits from a matching stdlib base so existing `except KeyError / ValueError / TypeError / RuntimeError` clauses keep working.
+
+| Exception                | Inherits from         | Raised when                                            |
+| ------------------------ | --------------------- | ------------------------------------------------------ |
+| `NodeExistsError`        | `KeyError`            | `create_node` / `import_*` and the id already exists   |
+| `NodeNotFoundError`      | `KeyError`            | `create_edge` source/target ref does not resolve       |
+| `SchemaValidationError`  | `ValueError`          | required field missing, enum/link value invalid        |
+| `SchemaTypeError`        | `TypeError`           | schema field present but wrong Python type             |
+| `EdgeConstraintError`    | `ValueError`          | edge violates declared `edge_constraints`              |
+| `CorruptStoreError`      | `RuntimeError`        | on-disk JSON is unreadable or malformed                |
+| `TransactionError`       | `FlatGraphError`      | reserved for future transactional failures             |
+| `ConflictError`          | `FlatGraphError`      | reserved for future multi-process conflict detection   |
