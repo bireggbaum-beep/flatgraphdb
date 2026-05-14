@@ -184,15 +184,29 @@ class FlatGraphDB:
         if not new and not deleted:
             return
         with self._acquire_lock():
-            disk_edges = self._load_json_from_disk(self._edges_file(rel_type))
-            for eid in deleted:
-                disk_edges.pop(eid, None)
-            disk_edges.update(new)
+            disk_edges = self._compute_edge_write(rel_type)
             self._save_json_atomic(self._edges_file(rel_type), disk_edges)
         # Clear deltas only after a successful write
         self._edge_additions.pop(rel_type, None)
         self._edge_deletions.pop(rel_type, None)
         self._cache["edges"][rel_type] = disk_edges
+
+    def _compute_edge_write(self, rel_type):
+        """
+        Pure computation of an edge type's next file content. Caller holds the
+        lock. Reads the current edge file, applies this session's add/delete
+        delta, and returns the merged dict. Returns None when there is nothing
+        to write.
+        """
+        new     = self._edge_additions.get(rel_type, {})
+        deleted = self._edge_deletions.get(rel_type, set())
+        if not new and not deleted:
+            return None
+        disk_edges = self._load_json_from_disk(self._edges_file(rel_type))
+        for eid in deleted:
+            disk_edges.pop(eid, None)
+        disk_edges.update(new)
+        return disk_edges
 
     @staticmethod
     def _translate_legacy_edge(edge):
@@ -221,6 +235,10 @@ class FlatGraphDB:
 
     def _initialize_cache(self):
         """Load all JSON files into RAM once. Temp-files are merged on top of the base state."""
+        # Crash recovery first: roll committed transactions forward, roll
+        # uncommitted staging files back, so the cache loads a consistent state.
+        with self._acquire_lock():
+            self._recover_transactions()
         self._collection_revisions = self._load_revisions_from_disk()
 
         if os.path.exists(self.dirs["nodes"]):
@@ -301,6 +319,79 @@ class FlatGraphDB:
     def _temp_file(self, collection_name):
         return os.path.join(self.dirs["nodes"], f"{collection_name}_temp.json")
 
+    # ------------------------------------------------------------------
+    # Internal helpers — transaction commit marker + crash recovery
+    # ------------------------------------------------------------------
+
+    _TX_MARKER_RE  = re.compile(r"_tx_([0-9a-f]{32})\.json$")
+    _TX_STAGING_RE = re.compile(r".+\.json\.([0-9a-f]{32})$")
+
+    def _tx_marker_path(self, txid):
+        return os.path.join(self.root, "datenbank", f"_tx_{txid}.json")
+
+    def _apply_tx_marker(self, marker_path, marker):
+        """
+        Roll a committed transaction forward: rename each staged file into place,
+        apply the revision bumps, then drop the marker. Idempotent — a staging
+        file that has already been renamed is simply skipped, so re-running this
+        after a mid-apply crash completes cleanly.
+        """
+        touched_dirs = set()
+        for staging_rel, final_rel in marker.get("apply", []):
+            staging = os.path.join(self.root, staging_rel)
+            final   = os.path.join(self.root, final_rel)
+            if os.path.exists(staging):
+                os.replace(staging, final)
+                touched_dirs.add(os.path.dirname(final) or ".")
+        for d in touched_dirs:
+            self._fsync_dir(d)
+        revisions = marker.get("revisions")
+        if revisions:
+            meta = self._load_json_from_disk(self._meta_file())
+            meta.setdefault("revisions", {}).update(revisions)
+            self._save_json_atomic(self._meta_file(), meta)
+        os.remove(marker_path)
+        self._fsync_dir(os.path.dirname(marker_path) or ".")
+
+    def _recover_transactions(self):
+        """
+        Crash recovery, run under the lock before the cache is loaded.
+
+          - A committed transaction marker → roll forward (idempotent apply).
+          - Staging files with no committed marker → roll back (delete).
+          - Leftover .tmp scratch from an interrupted atomic write → delete.
+
+        A marker that fails to parse never finished its fsync, so it was never a
+        real commit point: it is discarded and its staging files roll back.
+        """
+        db_dir = os.path.join(self.root, "datenbank")
+        if not os.path.isdir(db_dir):
+            return
+
+        committed = set()
+        for name in os.listdir(db_dir):
+            m = self._TX_MARKER_RE.match(name)
+            if not m:
+                continue
+            marker_path = os.path.join(db_dir, name)
+            try:
+                marker = self._load_json_from_disk(marker_path)
+            except CorruptStoreError:
+                os.remove(marker_path)
+                continue
+            committed.add(m.group(1))
+            self._apply_tx_marker(marker_path, marker)
+
+        for d in (db_dir, self.dirs["nodes"], self.dirs["edges"], self.dirs["index"]):
+            if not os.path.isdir(d):
+                continue
+            for name in os.listdir(d):
+                sm = self._TX_STAGING_RE.match(name)
+                if sm and sm.group(1) not in committed:
+                    os.remove(os.path.join(d, name))
+                elif name.endswith(".tmp"):
+                    os.remove(os.path.join(d, name))
+
     @contextlib.contextmanager
     def _acquire_lock(self):
         """File lock for multi-process safety (only active when file_lock=True)."""
@@ -328,23 +419,24 @@ class FlatGraphDB:
     def _mark_node_dirty(self, collection_name, node_id):
         self._dirty_nodes.setdefault(collection_name, set()).add(node_id)
 
-    def _persist_collection_unlocked(self, collection_name, dirty_ids):
+    def _compute_collection_write(self, collection_name, dirty_ids):
         """
-        Write a batch of dirty node ids to the collection's temp file under the
-        already-acquired self._acquire_lock(). Performs:
+        Pure computation of a collection's next temp-file content. Caller holds
+        the lock. Reads base + temp from disk and applies:
 
-          - CAS for pending creations: if the id already exists on disk, the node
-            is rolled back from RAM and ConflictError is raised. Other dirty ids
-            in this batch are still applied (we raise after the save).
+          - CAS for pending creations: if the id already exists on disk the node
+            is rolled back from RAM and recorded as a conflict.
           - Per-field merge for updates whose delta is tracked in _node_updates:
-            the on-disk version is read inside the lock and our delta layered on
-            top, so disjoint-field updates from peer processes survive.
+            the on-disk version is read and our delta layered on top, so
+            disjoint-field updates from a peer process survive.
           - Whole-node write for dirty ids without a tracked delta (restore_node,
             GC cascade flag, internal _-only updates).
-          - Disk delete for dirty ids that are no longer in the RAM cache.
+          - Disk delete for dirty ids no longer in the RAM cache.
 
-        Returns the list of (collection, node_id) tuples that conflicted; caller
-        decides whether to raise.
+        Returns (temp_data, conflicts, applied). Performs no disk writes, no
+        revision bump and no delta-tracking cleanup — callers decide when to
+        commit those. Does mutate the RAM cache for merged updates so reads stay
+        consistent, and rolls conflicting ids out of RAM + the pending deltas.
         """
         temp_path = self._temp_file(collection_name)
         base_path = os.path.join(self.dirs["nodes"], f"{collection_name}.json")
@@ -392,21 +484,22 @@ class FlatGraphDB:
                 temp_data.pop(nid, None)
                 applied = True
 
-        if applied:
-            self._save_json_atomic(temp_path, temp_data)
-            self._bump_revision_unlocked(collection_name)
+        return temp_data, conflicts, applied
 
-        # Successfully persisted dirty ids drop out of the pending sets.
+    def _finalize_persist(self, collection_name, dirty_ids, conflicts):
+        """Drop successfully-persisted ids out of the pending-delta tracking."""
         non_conflicted = set(dirty_ids) - set(conflicts)
-        pending_new.difference_update(non_conflicted)
-        for nid in non_conflicted:
-            node_updates.pop(nid, None)
-        if not pending_new:
-            self._pending_creations.pop(collection_name, None)
-        if not node_updates:
-            self._node_updates.pop(collection_name, None)
-
-        return conflicts
+        pending_new = self._pending_creations.get(collection_name)
+        if pending_new:
+            pending_new.difference_update(non_conflicted)
+            if not pending_new:
+                self._pending_creations.pop(collection_name, None)
+        node_updates = self._node_updates.get(collection_name)
+        if node_updates:
+            for nid in non_conflicted:
+                node_updates.pop(nid, None)
+            if not node_updates:
+                self._node_updates.pop(collection_name, None)
 
     def _persist_collection(self, collection_name):
         """Write only changed nodes to the temp-file — or buffer when inside a transaction."""
@@ -417,7 +510,17 @@ class FlatGraphDB:
             return  # buffered until commit
         self._dirty_nodes.pop(collection_name, None)
         with self._acquire_lock():
-            conflicts = self._persist_collection_unlocked(collection_name, dirty_ids)
+            temp_data, conflicts, applied = self._compute_collection_write(
+                collection_name, dirty_ids,
+            )
+            if applied:
+                # Bump the revision BEFORE the data write. A crash in between
+                # then leaves revision >= data, which only over-invalidates an
+                # index (safe, just rebuilds) instead of under-invalidating it
+                # (the stale-index bug).
+                self._bump_revision_unlocked(collection_name)
+                self._save_json_atomic(self._temp_file(collection_name), temp_data)
+            self._finalize_persist(collection_name, dirty_ids, conflicts)
         if conflicts:
             raise ConflictError(
                 f"Node id collision in '{collection_name}' — already created by another process: "
@@ -425,23 +528,104 @@ class FlatGraphDB:
             )
 
     def _flush_pending_writes(self):
-        """Flush all buffered node and edge writes to disk (transaction commit)."""
-        all_conflicts = {}
-        for collection_name in list(self._dirty_nodes.keys()):
-            dirty_ids = self._dirty_nodes.pop(collection_name, set())
-            if not dirty_ids:
-                continue
-            with self._acquire_lock():
-                conflicts = self._persist_collection_unlocked(collection_name, dirty_ids)
+        """
+        Flush all buffered node and edge writes as one atomic transaction.
+
+        Cross-collection atomicity is provided by a staging-file + commit-marker
+        protocol, all under a single lock:
+
+          1. Compute every collection's and edge type's next file content.
+             CAS conflicts surface here, before anything touches disk.
+          2. Write each to a transaction-scoped staging file (durably fsync'd).
+          3. Write one commit marker — its durable creation is THE commit point.
+          4. Rename the staging files into place and apply the revision bumps.
+          5. Delete the marker.
+
+        A crash before step 3 leaves orphan staging files that recovery deletes
+        (roll back). A crash after step 3 leaves a marker that recovery replays
+        (roll forward). See _recover_transactions.
+        """
+        node_cols  = [c for c, ids in self._dirty_nodes.items() if ids]
+        edge_types = list(self._dirty_edges)
+        if not node_cols and not edge_types:
+            self._dirty_nodes.clear()
+            self._dirty_edges.clear()
+            return
+
+        with self._acquire_lock():
+            # --- 1. compute next content; surface CAS conflicts before staging ---
+            computed_nodes = {}   # collection -> (temp_data, dirty_ids)
+            computed_edges = {}   # rel_type   -> edge_data
+            conflicts = {}
+            for col in node_cols:
+                dirty_ids = self._dirty_nodes.get(col, set())
+                temp_data, col_conflicts, applied = self._compute_collection_write(col, dirty_ids)
+                if col_conflicts:
+                    conflicts[col] = sorted(col_conflicts)
+                if applied:
+                    computed_nodes[col] = (temp_data, dirty_ids)
+            for rel_type in edge_types:
+                edge_data = self._compute_edge_write(rel_type)
+                if edge_data is not None:
+                    computed_edges[rel_type] = edge_data
+
             if conflicts:
-                all_conflicts[collection_name] = sorted(conflicts)
-        for rel_type in list(self._dirty_edges):
-            self._flush_edge_type(rel_type)
+                # Nothing has been staged yet — abort cleanly. In a transaction
+                # the context manager restores the RAM snapshot on this raise.
+                self._dirty_nodes.clear()
+                self._dirty_edges.clear()
+                raise ConflictError(
+                    f"Transaction commit hit id collisions from peer processes: {conflicts}"
+                )
+
+            if not computed_nodes and not computed_edges:
+                self._dirty_nodes.clear()
+                self._dirty_edges.clear()
+                return
+
+            # --- 2. stage every file under one transaction id ---
+            txid = uuid.uuid4().hex
+            disk_revisions = self._load_json_from_disk(self._meta_file()).get("revisions", {})
+            staged = []            # (staging_path, final_path)
+            revisions_after = {}
+            for col, (temp_data, _ids) in computed_nodes.items():
+                final   = self._temp_file(col)
+                staging = f"{final}.{txid}"
+                self._save_json_atomic(staging, temp_data)
+                staged.append((staging, final))
+                cur = max(disk_revisions.get(col, 0), self._collection_revisions.get(col, 0))
+                revisions_after[col] = cur + 1
+            for rel_type, edge_data in computed_edges.items():
+                final   = self._edges_file(rel_type)
+                staging = f"{final}.{txid}"
+                self._save_json_atomic(staging, edge_data)
+                staged.append((staging, final))
+
+            # --- 3. the commit marker — its durable creation is the commit point ---
+            marker = {
+                "apply": [[os.path.relpath(s, self.root), os.path.relpath(f, self.root)]
+                          for s, f in staged],
+                "revisions": revisions_after,
+            }
+            marker_path = self._tx_marker_path(txid)
+            self._save_json_atomic(marker_path, marker)
+
+            # --- 4 + 5. roll forward and drop the marker ---
+            self._apply_tx_marker(marker_path, marker)
+
+            # --- in-RAM bookkeeping (the commit is already durable on disk) ---
+            for col, rev in revisions_after.items():
+                if col in computed_nodes:
+                    self._collection_revisions[col] = rev
+            for col, (_temp_data, dirty_ids) in computed_nodes.items():
+                self._finalize_persist(col, dirty_ids, [])
+            for rel_type, edge_data in computed_edges.items():
+                self._edge_additions.pop(rel_type, None)
+                self._edge_deletions.pop(rel_type, None)
+                self._cache["edges"][rel_type] = edge_data
+
+        self._dirty_nodes.clear()
         self._dirty_edges.clear()
-        if all_conflicts:
-            raise ConflictError(
-                f"Transaction commit hit id collisions from peer processes: {all_conflicts}"
-            )
 
     def flush(self):
         """Write all buffered writes to disk immediately. Useful outside transaction()."""

@@ -323,11 +323,21 @@ with db.transaction():
 
 `db.flush()` — force-write all pending writes outside a transaction context.
 
-### Durability
+### Durability and crash recovery
 
 Every store file (node collections, edge types, field indexes, the revision counter) is written through a durable atomic path: data is written to a `.tmp` file, `fsync`'d, `os.replace()`'d into place, and the parent directory is `fsync`'d so the rename itself survives power loss. After a crash a reader sees either the previous file or the fully-written new one — never a truncated or zero-length file.
 
-One gap remains: a `transaction()` spanning **multiple collections** flushes them one file at a time. Each file is individually durable, but if the process dies between two collections' flushes, the transaction is half-applied on disk. Closing that gap needs a write-ahead journal and is not yet implemented.
+A `transaction()` that spans **multiple collections** is made atomic with a staging-file + commit-marker protocol, all under one lock:
+
+1. Every collection's and edge type's next file content is computed (CAS conflicts surface here, before anything touches disk).
+2. Each is written to a transaction-scoped staging file (`<file>.<txid>`), durably `fsync`'d.
+3. One commit marker `datenbank/_tx_<txid>.json` is written durably — **its creation is the commit point**.
+4. The staging files are renamed into place and the revision bumps applied.
+5. The marker is removed.
+
+On open, recovery runs first: a present marker is rolled **forward** (idempotent re-apply), staging files with no marker are rolled **back** (deleted), and `.tmp` scratch from an interrupted write is swept. A crash at any point therefore resolves to either the whole transaction or none of it. A marker that fails to parse never finished its `fsync`, so it was never a commit point and rolls back.
+
+Single (non-transaction) writes bump the revision counter *before* the data file, so a crash in between leaves the revision ahead of the data — which only over-invalidates a field index (a harmless rebuild) rather than under-invalidating it.
 
 ---
 
@@ -404,7 +414,7 @@ except ConflictError:
     existing = db.get_node("book/B1")
 ```
 
-**What this mode does not promise.** The base-file/temp-file write inside one collection is atomic relative to peer processes, but a transaction that spans multiple collections is not disk-atomic — if the process is killed mid-commit, some collections may be flushed and others not. Edges have unique UUIDs and are not subject to CAS. Whole-node operations that bypass the field-delta path (`restore_node`, GC cascade flag) write the full node version and follow whole-node LWW semantics.
+**What this mode does not promise.** Edges have unique UUIDs and are not subject to CAS. Whole-node operations that bypass the field-delta path (`restore_node`, GC cascade flag) write the full node version and follow whole-node LWW semantics. (Cross-collection transactions *are* crash-atomic — see [Durability and crash recovery](#durability-and-crash-recovery).)
 
 With `file_lock=False` (the default) none of the above is active: writes are still atomic per file via `os.replace()`, but concurrent peer writes can lose updates and stale RAM caches are never refreshed.
 
