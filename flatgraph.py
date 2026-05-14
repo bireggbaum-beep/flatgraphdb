@@ -29,6 +29,7 @@ Features:
 
 import contextlib
 import copy
+import hashlib
 import json
 import os
 import re
@@ -284,9 +285,11 @@ class FlatGraphDB:
         except IOError as e:
             raise CorruptStoreError(f"Could not read file '{filepath}': {e}") from e
 
-    def _save_json_atomic(self, filepath, data, durable=True):
+    def _atomic_replace(self, filepath, text, durable=True):
         """
-        Atomic write via temp file + os.replace().
+        Atomically replace filepath with `text` via a uniquely-named temp file
+        plus os.replace(). The unique temp name makes this safe for callers that
+        do not hold the file lock (the content-addressed vault_text blobs).
 
         With durable=True (the default) the temp file is fsync'd before the
         rename and the parent directory after it, so the result survives a power
@@ -299,15 +302,21 @@ class FlatGraphDB:
         data that is cheap to rebuild — the field indexes — where a crash-lost
         or torn file simply triggers a rebuild on next access.
         """
-        temp_file = filepath + ".tmp"
+        temp_file = f"{filepath}.{uuid.uuid4().hex}.tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write(text)
             if durable:
                 f.flush()
                 os.fsync(f.fileno())
         os.replace(temp_file, filepath)
         if durable:
             self._fsync_dir(os.path.dirname(filepath) or ".")
+
+    def _save_json_atomic(self, filepath, data, durable=True):
+        """Atomic (optionally durable) JSON write — see _atomic_replace."""
+        self._atomic_replace(
+            filepath, json.dumps(data, indent=2, ensure_ascii=False), durable,
+        )
 
     @staticmethod
     def _fsync_dir(dirpath):
@@ -844,15 +853,28 @@ class FlatGraphDB:
 
     _VAULT_TEXT_PREFIX = "@vault_text/"
 
-    def _vt_path(self, collection_name, node_id, field):
-        """Return the vault_text filepath for a given node field."""
-        safe = re.sub(r"[^\w\-]", "_", f"{collection_name}__{node_id}__{field}")
-        return os.path.join(self.dirs["vault_text"], f"{safe}.txt")
+    def _vault_text_path(self, content):
+        """Content-addressed path for a longtext blob: vault_text/<sha256>.txt."""
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        return os.path.join(self.dirs["vault_text"], f"{digest}.txt")
 
-    def _offload_longtexts(self, collection_name, node_id, data):
+    def _offload_longtexts(self, data):
         """
-        If longtext_threshold is set, replace any string value that exceeds
-        the threshold with an @vault_text/ reference. Modifies data in-place.
+        If longtext_threshold is set, replace any string value longer than the
+        threshold with an @vault_text/ reference and write the text to a
+        content-addressed blob. Modifies data in-place.
+
+        Blobs are named by the sha256 of their content, which makes the
+        vault_text store immutable: an update writes a *new* blob and never
+        touches the old one, so a rolled-back or failed write only ever leaves
+        an unreferenced orphan for the garbage collector to sweep — it can
+        never corrupt an existing value. Identical content is deduplicated.
+        Because the store is immutable the blob is written eagerly (before the
+        node persist) and needs no part in the transaction commit protocol.
+
+        Trade-off: frequent updates of large fields accumulate orphan blobs
+        until the next garbage_collection() run — the same orphan-until-GC
+        model the vault/ binary assets already use.
         """
         if not self.longtext_threshold:
             return
@@ -860,9 +882,11 @@ class FlatGraphDB:
             if field.startswith("_"):
                 continue
             if isinstance(value, str) and len(value) > self.longtext_threshold:
-                path = self._vt_path(collection_name, node_id, field)
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(value)
+                path = self._vault_text_path(value)
+                if not os.path.exists(path):
+                    # Atomic + durable: the node about to be persisted will
+                    # reference this blob, so it must survive a power loss.
+                    self._atomic_replace(path, value, durable=True)
                 data[field] = f"{self._VAULT_TEXT_PREFIX}{os.path.relpath(path, self.root)}"
 
     def _resolve_longtexts(self, data):
@@ -992,7 +1016,7 @@ class FlatGraphDB:
             )
 
         stored = copy.deepcopy(data)
-        self._offload_longtexts(collection_name, node_id, stored)
+        self._offload_longtexts(stored)
         self._cache["nodes"][collection_name][node_id] = stored
         self._pending_creations.setdefault(collection_name, set()).add(node_id)
         self._mark_node_dirty(collection_name, node_id)
@@ -1066,7 +1090,7 @@ class FlatGraphDB:
             if not all(k.startswith("_") for k in update_data):
                 raise
 
-        self._offload_longtexts(collection_name, node_id, update_data)
+        self._offload_longtexts(update_data)
         col_cache[node_id].update(update_data)
         # Record the per-field delta so _persist_collection can apply only these
         # fields on top of the current disk state (per-field LWW merge under lock).

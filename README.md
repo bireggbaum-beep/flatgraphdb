@@ -382,13 +382,17 @@ db.create_node("article", "AR1", {
 })
 
 node = db.get_node("article/AR1")
-# node["content"] == "@vault_text/vault_text/..."  ← reference string, fast
+# node["content"] == "@vault_text/vault_text/<sha256>.txt"  ← reference, fast
 
 node_full = db.get_node_full("article/AR1")
 # node_full["content"] == full text  ← one extra disk read per offloaded field
 ```
 
-Offloading is transparent: `update_node` with a long value offloads automatically. The GC removes `vault_text/` files that are no longer referenced by any live node.
+Offloading is transparent: `update_node` with a long value offloads automatically.
+
+**Content-addressed and immutable.** A blob is named by the sha256 of its content. The store is therefore append-only: an update writes a *new* blob and never overwrites an old one, and identical content across nodes is written once (deduplicated). Each blob is written through the durable atomic path before the referencing node is persisted.
+
+This immutability is what makes offloading transaction-safe. A rolled-back or crashed write can only ever leave an *unreferenced orphan* — it can never corrupt the value an existing reference points at. The GC removes `vault_text/` files no longer referenced by any live node, so frequent updates of large fields accumulate orphans until the next `garbage_collection()` run — the same orphan-until-GC model the `vault/` binary assets use.
 
 ---
 

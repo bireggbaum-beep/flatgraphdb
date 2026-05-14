@@ -64,12 +64,13 @@ def test_fsync_dir_is_safe_on_normal_directory(db):
 
 def test_non_durable_write_is_still_atomic_and_correct(db):
     """durable=False skips fsync but must still produce a complete, valid file."""
+    import glob
     import json
     path = os.path.join(db.root, "scratch.json")
     db._save_json_atomic(path, {"a": 1, "b": [2, 3]}, durable=False)
     assert json.load(open(path)) == {"a": 1, "b": [2, 3]}
-    # No .tmp scratch left behind.
-    assert not os.path.exists(path + ".tmp")
+    # No .tmp scratch left behind (temp names are unique: <path>.<uuid>.tmp).
+    assert glob.glob(path + ".*.tmp") == []
 
 
 def test_index_writes_are_not_fsync_durable(db, monkeypatch):
