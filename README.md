@@ -5,7 +5,7 @@ A lightweight, file-based graph database for Python. No external dependencies. S
 **Key properties:**
 - Nodes stored as JSON, grouped by collection (one file per collection)
 - Relationships modelled as typed, directed edges (one file per edge type)
-- RAM cache for fast reads; atomic writes via temp+rename
+- RAM cache for fast reads; durable atomic writes (temp file → fsync → rename → dir fsync)
 - Optional schema validation, multi-process locking, audit trail, webhooks
 
 ```
@@ -322,6 +322,12 @@ with db.transaction():
 ```
 
 `db.flush()` — force-write all pending writes outside a transaction context.
+
+### Durability
+
+Every store file (node collections, edge types, field indexes, the revision counter) is written through a durable atomic path: data is written to a `.tmp` file, `fsync`'d, `os.replace()`'d into place, and the parent directory is `fsync`'d so the rename itself survives power loss. After a crash a reader sees either the previous file or the fully-written new one — never a truncated or zero-length file.
+
+One gap remains: a `transaction()` spanning **multiple collections** flushes them one file at a time. Each file is individually durable, but if the process dies between two collections' flushes, the transaction is half-applied on disk. Closing that gap needs a write-ahead journal and is not yet implemented.
 
 ---
 

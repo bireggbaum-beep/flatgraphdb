@@ -267,11 +267,36 @@ class FlatGraphDB:
             raise CorruptStoreError(f"Could not read file '{filepath}': {e}") from e
 
     def _save_json_atomic(self, filepath, data):
-        """Atomic write: write to .tmp first, then os.replace()."""
+        """
+        Durable atomic write: write to .tmp, fsync the file so its contents reach
+        stable storage, os.replace() it into place, then fsync the parent
+        directory so the rename itself survives a power loss. After a crash a
+        reader therefore sees either the old file or the fully-written new one,
+        never a truncated or zero-length file.
+        """
         temp_file = filepath + ".tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(temp_file, filepath)
+        self._fsync_dir(os.path.dirname(filepath) or ".")
+
+    @staticmethod
+    def _fsync_dir(dirpath):
+        """fsync a directory so a rename within it is durable. No-op where unsupported."""
+        if sys.platform == "win32":
+            return  # Windows cannot fsync a directory handle
+        try:
+            fd = os.open(dirpath, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
 
     def _temp_file(self, collection_name):
         return os.path.join(self.dirs["nodes"], f"{collection_name}_temp.json")
