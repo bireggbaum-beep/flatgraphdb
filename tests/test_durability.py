@@ -60,3 +60,26 @@ def test_fsync_dir_is_safe_on_normal_directory(db):
     db._fsync_dir(db.dirs["nodes"])
     # ...and should silently no-op on a path that cannot be opened.
     db._fsync_dir(os.path.join(db.root, "does", "not", "exist"))
+
+
+def test_non_durable_write_is_still_atomic_and_correct(db):
+    """durable=False skips fsync but must still produce a complete, valid file."""
+    import json
+    path = os.path.join(db.root, "scratch.json")
+    db._save_json_atomic(path, {"a": 1, "b": [2, 3]}, durable=False)
+    assert json.load(open(path)) == {"a": 1, "b": [2, 3]}
+    # No .tmp scratch left behind.
+    assert not os.path.exists(path + ".tmp")
+
+
+def test_index_writes_are_not_fsync_durable(db, monkeypatch):
+    """
+    Index persistence is derived data — it must go through the non-durable
+    path, so a find_nodes() call triggers no fsync of the index file.
+    """
+    db.create_node("book", "B1", {"title": "Trial"})
+    calls = {"fsync": 0}
+    real_fsync = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: calls.__setitem__("fsync", calls["fsync"] + 1) or real_fsync(fd))
+    db.find_nodes("book", {"title": "trial"})  # builds + persists the index
+    assert calls["fsync"] == 0

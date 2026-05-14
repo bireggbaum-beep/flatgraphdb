@@ -284,21 +284,30 @@ class FlatGraphDB:
         except IOError as e:
             raise CorruptStoreError(f"Could not read file '{filepath}': {e}") from e
 
-    def _save_json_atomic(self, filepath, data):
+    def _save_json_atomic(self, filepath, data, durable=True):
         """
-        Durable atomic write: write to .tmp, fsync the file so its contents reach
-        stable storage, os.replace() it into place, then fsync the parent
-        directory so the rename itself survives a power loss. After a crash a
-        reader therefore sees either the old file or the fully-written new one,
-        never a truncated or zero-length file.
+        Atomic write via temp file + os.replace().
+
+        With durable=True (the default) the temp file is fsync'd before the
+        rename and the parent directory after it, so the result survives a power
+        loss — after a crash a reader sees either the old file or the
+        fully-written new one, never a truncated one. Use this for every
+        authoritative store file.
+
+        durable=False skips both fsyncs. The write is still atomic against a
+        process crash, just not against power loss. Correct only for derived
+        data that is cheap to rebuild — the field indexes — where a crash-lost
+        or torn file simply triggers a rebuild on next access.
         """
         temp_file = filepath + ".tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            os.fsync(f.fileno())
+            if durable:
+                f.flush()
+                os.fsync(f.fileno())
         os.replace(temp_file, filepath)
-        self._fsync_dir(os.path.dirname(filepath) or ".")
+        if durable:
+            self._fsync_dir(os.path.dirname(filepath) or ".")
 
     @staticmethod
     def _fsync_dir(dirpath):
@@ -938,7 +947,9 @@ class FlatGraphDB:
     def _persist_index(self, collection):
         data = dict(self._index_cache.get(collection, {}))
         data["_meta"] = {"revision": self._collection_revision(collection)}
-        self._save_json_atomic(self._index_file(collection), data)
+        # Indexes are derived data: a crash-lost or stale-revision index is
+        # rebuilt on next access, so the write is atomic but not fsync-durable.
+        self._save_json_atomic(self._index_file(collection), data, durable=False)
 
     def _get_field_index(self, collection, field):
         """Return the index for a field, building and persisting it lazily if needed."""
