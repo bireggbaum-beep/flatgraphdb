@@ -6,7 +6,11 @@ A lightweight, file-based graph database for Python. No external dependencies. S
 - Nodes stored as JSON, grouped by collection (one file per collection)
 - Relationships modelled as typed, directed edges (one file per edge type)
 - RAM cache for fast reads; durable atomic writes (temp file → fsync → rename → dir fsync)
+- Crash-atomic multi-collection transactions; idempotent crash recovery on open
 - Optional schema validation, multi-process locking, audit trail, webhooks
+
+For the hard guarantees — what is durable, what is atomic, what is visible when,
+and what happens on a crash — see **[DESIGN.md](DESIGN.md)**.
 
 ```
 root_dir/
