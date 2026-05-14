@@ -14,7 +14,7 @@ If a behaviour is not stated here, do not assume it.
 root/
   .flatgraph.lock                     lock file (used only when file_lock=True)
   datenbank/
-    _meta.json                        per-collection revision counters
+    _meta.json                        store format version + per-collection revision counters
     _tx_<txid>.json                   transient transaction commit marker
     nodes/
       <collection>.json               AUTHORITATIVE — compacted base state
@@ -156,6 +156,13 @@ What a process abort can leave, and how it resolves:
   content-addressed blob itself is atomically present or absent.
 - **In-flight RAM state** (`_node_updates`, `_pending_creations`, dirty sets)
   is lost — it only ever mattered to the dead process's session.
+
+**Format version.** Immediately after recovery, under the same lock, the store's
+`format_version` in `_meta.json` is checked. A store with no version field
+predates versioning but is structurally identical to the current format, so it
+is stamped in place. A store carrying any *other* version is rejected with
+`UnsupportedFormatError` rather than risk a silent misread — when a real format 2
+exists, its one-time migration is dispatched from this same check.
 
 ---
 

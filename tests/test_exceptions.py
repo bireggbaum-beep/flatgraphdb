@@ -12,18 +12,20 @@ from flatgraph import (
     SchemaTypeError,
     EdgeConstraintError,
     CorruptStoreError,
+    UnsupportedFormatError,
     TransactionError,
     ConflictError,
 )
 
 
 @pytest.mark.parametrize("exc,stdlib", [
-    (NodeExistsError,       KeyError),
-    (NodeNotFoundError,     KeyError),
-    (SchemaValidationError, ValueError),
-    (SchemaTypeError,       TypeError),
-    (EdgeConstraintError,   ValueError),
-    (CorruptStoreError,     RuntimeError),
+    (NodeExistsError,        KeyError),
+    (NodeNotFoundError,      KeyError),
+    (SchemaValidationError,  ValueError),
+    (SchemaTypeError,        TypeError),
+    (EdgeConstraintError,    ValueError),
+    (CorruptStoreError,      RuntimeError),
+    (UnsupportedFormatError, RuntimeError),
 ])
 def test_concrete_exceptions_inherit_from_flatgraph_and_stdlib(exc, stdlib):
     assert issubclass(exc, FlatGraphError)

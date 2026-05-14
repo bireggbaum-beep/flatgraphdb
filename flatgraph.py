@@ -43,6 +43,12 @@ from datetime import datetime, timezone
 _RESERVED_EDGE_FIELDS  = {"source", "target", "type", "created_at", "_cascade_delete"}
 _INTERNAL_COLLECTIONS  = {"_audit_log"}
 
+# On-disk store format version. Stamped into datenbank/_meta.json on open and
+# verified there — a store written by a newer build is rejected rather than
+# misread. Bump this only when the on-disk layout changes, and add the
+# migration step in FlatGraphDB._check_format_version.
+_FORMAT_VERSION = 1
+
 
 # =============================================================================
 # EXCEPTIONS
@@ -86,6 +92,10 @@ class ConflictError(FlatGraphError):
 
 class CorruptStoreError(FlatGraphError, RuntimeError):
     """An on-disk file is unreadable or not valid JSON."""
+
+
+class UnsupportedFormatError(FlatGraphError, RuntimeError):
+    """The on-disk store format version is not one this build can read."""
 
 
 # =============================================================================
@@ -238,8 +248,10 @@ class FlatGraphDB:
         """Load all JSON files into RAM once. Temp-files are merged on top of the base state."""
         # Crash recovery first: roll committed transactions forward, roll
         # uncommitted staging files back, so the cache loads a consistent state.
+        # Then verify/stamp the store format version. Both under one lock.
         with self._acquire_lock():
             self._recover_transactions()
+            self._check_format_version()
         self._collection_revisions = self._load_revisions_from_disk()
 
         if os.path.exists(self.dirs["nodes"]):
@@ -918,6 +930,28 @@ class FlatGraphDB:
     def _load_revisions_from_disk(self):
         """Load the {collection: revision} counter dict from datenbank/_meta.json."""
         return self._load_json_from_disk(self._meta_file()).get("revisions", {})
+
+    def _check_format_version(self):
+        """
+        Verify the on-disk store format is one this build can read, and stamp
+        the format version into _meta.json if it is missing. Caller holds the
+        lock.
+
+        A store with no version field predates versioning but is structurally
+        identical to format 1, so it is simply stamped. A store carrying any
+        other version is rejected rather than risk a silent misread — when a
+        real format 2 exists, its migration step is dispatched from here.
+        """
+        meta = self._load_json_from_disk(self._meta_file())
+        disk_version = meta.get("format_version")
+        if disk_version is None:
+            meta["format_version"] = _FORMAT_VERSION
+            self._save_json_atomic(self._meta_file(), meta)
+        elif disk_version != _FORMAT_VERSION:
+            raise UnsupportedFormatError(
+                f"Store at '{self.root}' is format version {disk_version}; "
+                f"this FlatGraphDB build supports format version {_FORMAT_VERSION}."
+            )
 
     def _bump_revision_unlocked(self, collection):
         """

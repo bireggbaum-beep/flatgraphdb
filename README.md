@@ -18,7 +18,7 @@ root_dir/
     nodes/        one JSON file per collection
     edges/        one JSON file per edge type
     index/        lazy field indexes for find_nodes()
-    _meta.json    per-collection revision counters (index invalidation)
+    _meta.json    store format version + per-collection revision counters
   vault/          binary assets (PDFs, images, …)
   vault_text/     offloaded longtext fields
   vault_archive/  quarantine for soft-deleted assets
@@ -525,6 +525,7 @@ All FlatGraphDB-specific errors derive from `FlatGraphError`, so a single `excep
 | `SchemaTypeError`        | `TypeError`           | schema field present but wrong Python type             |
 | `EdgeConstraintError`    | `ValueError`          | edge violates declared `edge_constraints`              |
 | `CorruptStoreError`      | `RuntimeError`        | on-disk JSON is unreadable or malformed                |
+| `UnsupportedFormatError` | `RuntimeError`        | store written by a newer FlatGraphDB build             |
 | `ConflictError`          | `FlatGraphError`      | peer-process CAS collision on `create_node` / commit   |
 | `TransactionError`       | `FlatGraphError`      | reserved for future transactional failures             |
 
