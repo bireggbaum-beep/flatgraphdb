@@ -2,10 +2,16 @@
 FLATGRAPH - Leichtgewichtige, filebasierte Graph-Datenbank fuer Python
 =============================================================================
 
-Version:  2.1
-Stand:    April 2026
+Version:  4.0.0-entwurf
+Stand:    25. September 2026
 Lizenz:   Privatprojekt, keine Lizenz vergeben
 Autor:    [User]
+
+Diese Datei stand von April bis September unveraendert auf "2.1", waehrend
+sich der Code im Anwender-Repo (bireggbaum-beep/homedms, flatgraph/entwurf/)
+um mehrere Hauptversionen weiterentwickelte — die Versionsnummer allein war
+also kein verlaessliches Kennzeichen mehr. Mit diesem Import ist flatgraph.py
+hier wieder der tatsaechlich aktuelle Stand (Issue #36, "flatgraph 4.0").
 
 Flatgraph ist ein einzelnes Python-Modul, das komplexe Datenmodelle mit
 Objekten und ihren Beziehungen in menschenlesbaren JSON-Dateien abbildet.
