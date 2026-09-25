@@ -207,6 +207,26 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
+class FachgroesseAbweichend(FlatGraphFehler, ValueError):
+    """Der Bestand ist mit einer anderen Fachgroesse angelegt als verlangt.
+
+    Die Groesse gehoert dem Bestand, nicht dem Aufrufer. Nachgeben waere
+    still falsch: mit einer neuen Groesse fuellten sich nur die NEUEN
+    Faecher anders, und wer EINE_DATEI verlangt, faende trotzdem viele
+    Dateien vor. Umpacken gibt es nicht; wer wechseln will, legt einen
+    neuen Bestand an und uebertraegt.
+    """
+
+    def __init__(self, vorhanden, verlangt, pfad):
+        self.vorhanden, self.verlangt, self.pfad = vorhanden, verlangt, pfad
+        def name(g):
+            return "EINE_DATEI" if g == EINE_DATEI else str(g)
+        super().__init__(
+            f"Der Bestand unter '{pfad}' hat die Fachgroesse {name(vorhanden)}, "
+            f"verlangt ist {name(verlangt)}. fach_groesse weglassen, um die des "
+            f"Bestands zu uebernehmen.")
+
+
 __version__ = "4.0.0-entwurf"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
@@ -234,7 +254,18 @@ SPEICHERFORM = 3
 # wird jeder Schreibvorgang teurer, ohne dass das Oeffnen noch viel gewinnt
 # (400 je Fach: 4 ms je Knoten, 0.51 s kalt). Auf einen 4-KB-Block
 # auszurichten lohnt nicht — Verschnitt entsteht nur im letzten Block.
+# Die Vorgabe fuer einen NEUEN Bestand; ein bestehender hat seine eigene
+# in der Marke (_meta.json, "fach_groesse").
 FACH_GROESSE = 25
+
+# Fachgroesse "unbegrenzt": jede Sammlung und jede Kantenart liegt in genau
+# einer Datei. Fuer kleine Bestaende, die man ohne flatgraph lesen, von Hand
+# korrigieren und mit git vergleichen will. Der Preis ist der von Form 1:
+# jede Aenderung schreibt die ganze Sammlung neu. Nachgemessen 25.09.2026,
+# Knoten zu ~300 Byte: 1000 je Sammlung 6 ms, 5000 je Sammlung 26 ms je
+# Schreibvorgang, linear. Anders als Form 1 ohne Deltadatei — die Datei ist
+# vollstaendig, so wie sie daliegt.
+EINE_DATEI = 0
 
 _log = logging.getLogger("flatgraph")
 
@@ -300,8 +331,9 @@ class _Ablage:
     ist es auch, der sie wieder schliesst (FlatGraphDB._verdichten).
     """
 
-    def __init__(self, verzeichnis):
+    def __init__(self, verzeichnis, groesse):
         self.verzeichnis = verzeichnis
+        self.groesse = groesse  # EINE_DATEI: nie ein zweites Fach
         self.fach_von = {}      # kennung -> fachnummer
         self.inhalt = {}        # fachnummer -> {kennungen}
 
@@ -317,7 +349,8 @@ class _Ablage:
         if nr is not None:
             return nr
         letztes = max(self.inhalt) if self.inhalt else 0
-        if letztes == 0 or len(self.inhalt[letztes]) >= FACH_GROESSE:
+        if letztes == 0 or (self.groesse != EINE_DATEI
+                            and len(self.inhalt[letztes]) >= self.groesse):
             letztes += 1
         self.eintragen(kennung, letztes)
         return letztes
@@ -400,7 +433,7 @@ def _sperre_freigeben(schluessel):
 class FlatGraphDB:
     def __init__(self, root_dir, schemas=None, edge_constraints=None,
                  file_lock=False, audit=False, webhooks=None, bei_aenderung=None,
-                 longtext_threshold=None):
+                 longtext_threshold=None, fach_groesse=None):
         """
         Initialize the graph engine.
 
@@ -433,6 +466,11 @@ class FlatGraphDB:
                                    are automatically offloaded to vault_text/ as plain-text files.
                                    The node field stores an "@vault_text/..." reference instead.
                                    Use get_node_full() to resolve references back to full text.
+        :param fach_groesse: Eintraege je Datei, nur fuer einen NEUEN Bestand
+                           (Vorgabe FACH_GROESSE). EINE_DATEI legt jede Sammlung
+                           und jede Kantenart in genau eine Datei. Ein bestehender
+                           Bestand behaelt die seine; None uebernimmt sie, eine
+                           abweichende Angabe wirft FachgroesseAbweichend.
         """
         # Die Sperre der Instanz, VOR allem anderen. Wiedereintrittsfaehig,
         # weil oeffentliche Methoden einander aufrufen (soft_delete ruft
@@ -457,6 +495,16 @@ class FlatGraphDB:
         self.bei_aenderung = bei_aenderung
         self._meldungen = []         # in einer Transaktion gepufferte Meldungen
         self.longtext_threshold = longtext_threshold
+        # Vor dem Sperren pruefen: ein Tippfehler soll nicht erst nach dem
+        # Umzug eines Bestands auffallen.
+        if fach_groesse is not None and (
+                isinstance(fach_groesse, bool) or not isinstance(fach_groesse, int)
+                or fach_groesse < 0):
+            raise ValueError(
+                f"fach_groesse muss eine ganze Zahl >= 1 oder EINE_DATEI (0) "
+                f"sein, nicht {fach_groesse!r}.")
+        self._fach_groesse_wunsch = fach_groesse
+        self.fach_groesse = None     # steht erst nach _speicherform_pruefen fest
         self._audit_writing = False  # prevents recursive audit entries
         self._geschlossen = False
 
@@ -669,8 +717,18 @@ class FlatGraphDB:
             if isinstance(gefunden, int) and gefunden > SPEICHERFORM:
                 raise SpeicherformZuNeu(gefunden, SPEICHERFORM, self.root)
             if gefunden == SPEICHERFORM:
+                # Ohne Eintrag ist der Bestand aelter als die Einstellung
+                # und mit der festen Groesse 25 geschrieben.
+                vorhanden = daten.get("fach_groesse", 25)
+                wunsch = self._fach_groesse_wunsch
+                if wunsch is not None and wunsch != vorhanden:
+                    raise FachgroesseAbweichend(vorhanden, wunsch, self.root)
+                self.fach_groesse = vorhanden
                 self._umzugsreste_wegraeumen()
                 return
+        # Neu oder im Umzug: hier wird die Groesse festgelegt.
+        self.fach_groesse = (FACH_GROESSE if self._fach_groesse_wunsch is None
+                             else self._fach_groesse_wunsch)
         # Marke fehlt oder nennt eine aeltere Form: umziehen, Stufe fuer
         # Stufe. Fehlt sie, ist der Bestand aelter als die Pruefung und liegt
         # damit in Form 1.
@@ -684,6 +742,7 @@ class FlatGraphDB:
         self._save_json_atomic(self._meta_datei(), {
             "speicherform": SPEICHERFORM,
             "langtext_schwelle": self.longtext_threshold,
+            "fach_groesse": self.fach_groesse,
             "geschrieben_von": __version__,
             "geaendert": datetime.now(timezone.utc).isoformat(),
         })
@@ -850,7 +909,7 @@ class FlatGraphDB:
 
     def _ablage_befuellen(self, verzeichnis, daten):
         """Eintraege der Reihe nach in Faecher fuellen und schreiben (Umzug)."""
-        ablage = _Ablage(verzeichnis)
+        ablage = _Ablage(verzeichnis, self.fach_groesse)
         for k in sorted(daten):
             ablage.zuordnen(k)
         # Direkt, ohne Absichtsdatei: der Umzug baut in einem eigenen
@@ -871,7 +930,7 @@ class FlatGraphDB:
                 if not os.path.isdir(verzeichnis):
                     continue
                 name = urllib.parse.unquote(eintrag)
-                ablage = _Ablage(verzeichnis)
+                ablage = _Ablage(verzeichnis, self.fach_groesse)
                 self._ablagen[art][name] = ablage
                 daten, reparieren = self._ablage_laden(ablage)
                 if art == "nodes":
@@ -1002,7 +1061,8 @@ class FlatGraphDB:
     def _ablage(self, art, name):
         ablage = self._ablagen[art].get(name)
         if ablage is None:
-            ablage = _Ablage(os.path.join(self.dirs[art], _ordnername(name)))
+            ablage = _Ablage(os.path.join(self.dirs[art], _ordnername(name)),
+                             self.fach_groesse)
             self._ablagen[art][name] = ablage
         return ablage
 
@@ -1250,7 +1310,7 @@ class FlatGraphDB:
             for art, name in beruehrt:
                 alt = self._ablagen[art].get(name)
                 if alt is not None:
-                    frisch = _Ablage(alt.verzeichnis)
+                    frisch = _Ablage(alt.verzeichnis, self.fach_groesse)
                     # Ohne Aufraeumen: der Fehler, der hierher fuehrte,
                     # soll beim Aufrufer ankommen, nicht ein Folgefehler
                     # beim Loeschen einer .neu. Die raeumt das Oeffnen weg.
@@ -2584,11 +2644,14 @@ class FlatGraphDB:
         Oeffnen (_ablage_laden). Umgekehrt waere er zwischendurch nirgends.
         """
         aufgeloest = 0
+        # Bei EINE_DATEI ist groesse // 2 == 0: kein Fach gilt als duenn,
+        # und die Teilung unten wird nie erreicht.
+        groesse = self.fach_groesse
         for art in ("nodes", "edges"):
             for name, ablage in list(self._ablagen[art].items()):
                 daten = self._cache[art].get(name, {})
                 duenn = sorted(nr for nr, m in ablage.inhalt.items()
-                               if 0 < len(m) <= FACH_GROESSE // 2)
+                               if 0 < len(m) <= groesse // 2)
                 if len(duenn) < 2:
                     continue
                 umzug = sorted(k for nr in duenn for k in ablage.inhalt[nr])
@@ -2596,7 +2659,7 @@ class FlatGraphDB:
                 neue = set()
                 for i, k in enumerate(umzug):
                     ablage.entfernen(k)
-                    nr = erstes + i // FACH_GROESSE
+                    nr = erstes + i // groesse
                     ablage.eintragen(k, nr)
                     neue.add(nr)
                 self._faecher_schreiben(ablage, neue, daten)

@@ -382,6 +382,7 @@ Alle erben von `FlatGraphFehler` — wer alles fangen will, fängt die. Und
     UngueltigeReferenz                          auch ValueError
     DateiKaputt                                 auch RuntimeError
     AbschlussHaengt                             auch OSError
+    FachgroesseAbweichend                       auch ValueError
 
 Deshalb funktioniert bestehender Aufrufcode mit `except KeyError` weiter.
 Das ist der Grund, warum 2.2 eigene Fehlertypen einführen konnte, ohne
@@ -510,6 +511,21 @@ für USB-Sticks, Sicherungen und Synchronisation eine Last. Mit Fächern zu
 25 im Versuch: 0.98 s, 0.9 ms, 8 000 Dateien auf 140 MB; einen Knoten
 schreiben blieb unter 1 ms. 25 war im Versuch das Optimum zwischen 6
 und 400.
+
+**Die Fachgrösse gehört dem Bestand** (ab `4.0.0-entwurf`). Sie wird beim
+Anlegen festgelegt — `FlatGraphDB(wurzel, fach_groesse=...)`, Vorgabe 25 —
+und steht in `_meta.json` unter `fach_groesse`. Wer den Bestand später
+ohne Angabe öffnet, bekommt dessen Grösse; eine abweichende Angabe wirft
+`FachgroesseAbweichend`, statt nur die neuen Fächer anders zu füllen.
+Umpacken gibt es nicht. Ein Bestand ohne Eintrag ist älter als die
+Einstellung und hat 25.
+
+`fach_groesse=EINE_DATEI` (0) legt jede Sammlung und jede Kantenart in
+genau eine Datei, `nodes/<sammlung>/fach_000001.json` — vollständig, ohne
+Deltadatei wie in Form 1. Gedacht für kleine Bestände, die man ohne
+flatgraph lesen, von Hand korrigieren und mit git vergleichen will. Jede
+Änderung schreibt dann die ganze Sammlung: nachgemessen 25.09.2026 mit
+Knoten zu ~300 Byte 6 ms bei 1000, 26 ms bei 5000 Einträgen, linear.
 
 Eine Datei = ein Knoten gilt damit nicht mehr: ohne flatgraph findet man
 einen Knoten per `grep` über die Fächer; die Dateien bleiben lesbares JSON.

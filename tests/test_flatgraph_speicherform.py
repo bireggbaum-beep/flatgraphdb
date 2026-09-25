@@ -424,6 +424,61 @@ for wie, anzahl in (("rename", 3), ("replace", 4)):
         check(f"Abbruch beim {n}. {wie}: der nächste Start führt den Umzug zu Ende",
               fehler == "OSError" and vollstaendig(w), f"Fehler: {fehler}")
 
+# =========================================================================
+# Fachgrösse als Einstellung des Bestands — EINE_DATEI
+# =========================================================================
+print("--- Fachgrösse ---")
+if hasattr(fg, "EINE_DATEI"):
+    w = tempfile.mkdtemp(dir=WURZEL)
+    db = fg.FlatGraphDB(w, fach_groesse=fg.EINE_DATEI)
+    with db.transaction():
+        for i in range(3 * FACH):
+            db.create_node("d", f"k_{i:03d}", {"n": i})
+        for i in range(3 * FACH - 1):
+            db.create_edge(f"d/k_{i:03d}", f"d/k_{i + 1:03d}", "folgt")
+    db.create_node("d", "k_neu", {"n": -1})
+    check(f"EINE_DATEI: {3 * FACH + 1} Knoten und {3 * FACH - 1} Kanten liegen in je einer Datei",
+          fachinhalt(w, "nodes", "d") == [3 * FACH + 1]
+          and fachinhalt(w, "edges", "folgt") == [3 * FACH - 1],
+          f"{fachinhalt(w, 'nodes', 'd')} {fachinhalt(w, 'edges', 'folgt')}")
+
+    # Der Müllsammler verdichtet sonst Fächer; hier gibt es keine zu verdichten,
+    # und er darf weder teilen noch verlieren.
+    for i in range(0, 3 * FACH, 2):
+        db.soft_delete("d", f"k_{i:03d}")
+    db.run_garbage_collection()
+    rest = sorted(platte(w)["d"])
+    check("EINE_DATEI: nach dem Müllsammler bleibt es eine Datei mit genau den Lebenden",
+          fachinhalt(w, "nodes", "d") == [len(rest)]
+          and rest == sorted([f"k_{i:03d}" for i in range(1, 3 * FACH, 2)] + ["k_neu"]),
+          str(fachinhalt(w, "nodes", "d")))
+
+    db = neu_oeffnen(db)
+    for i in range(FACH + 5):
+        db.create_node("d", f"spaet_{i:03d}", {"n": i})
+    check("Ohne Angabe beim Wiederöffnen gilt die Fachgrösse des Bestands",
+          db.fach_groesse == fg.EINE_DATEI and len(faecher(w, "nodes", "d")) == 1,
+          f"{db.fach_groesse} {faecher(w, 'nodes', 'd')}")
+    db.close()
+
+    check("Eine abweichende Fachgrösse für einen bestehenden Bestand wird verweigert",
+          wirft(lambda: fg.FlatGraphDB(w, fach_groesse=25)) == "FachgroesseAbweichend")
+    db = fg.FlatGraphDB(w)
+    check("… und die Verweigerung gibt den Bestand wieder frei",
+          db.fach_groesse == fg.EINE_DATEI)
+    db.close()
+
+    alt_w = tempfile.mkdtemp(dir=WURZEL)
+    db = fg.FlatGraphDB(alt_w)
+    db.create_node("d", "a", {"n": 1})
+    db.close()
+    marke_pfad = os.path.join(alt_w, "datenbank", "_meta.json")
+    marke = json.load(open(marke_pfad, encoding="utf-8"))
+    del marke["fach_groesse"]
+    json.dump(marke, open(marke_pfad, "w", encoding="utf-8"))
+    check("Ein Bestand ohne Eintrag in der Marke gilt als Fachgrösse 25",
+          wirft(lambda: fg.FlatGraphDB(alt_w, fach_groesse=fg.EINE_DATEI)) == "FachgroesseAbweichend")
+
 shutil.rmtree(WURZEL, ignore_errors=True)
 
 bestanden = sum(1 for _, ok, _ in results if ok)
