@@ -132,6 +132,19 @@ check("Die Vorgabe gibt eine Kopie — Ändern trifft den Bestand nicht",
       db3.get_node("k/k_1")["liste"] == [1, 2, 3],
       str(db3.get_node("k/k_1")["liste"]))
 
+# Auch in die andere Richtung: was der Aufrufer nach dem Anlegen an seinen
+# eigenen Daten ändert, darf den Bestand nicht treffen — auch nicht über
+# eine Unterklasse von dict, die eine auf JSON-Typen verkürzte Kopie sonst
+# durchreichen würde.
+from collections import OrderedDict                                    # noqa: E402
+eigene = {"liste": [1], "karte": OrderedDict(tief=[1])}
+db3.create_node("k", "k_eigen", eigene)
+eigene["liste"].append(99)
+eigene["karte"]["tief"].append(99)
+check("Was der Aufrufer danach an seinen Daten ändert, trifft den Bestand nicht",
+      db3.get_node("k/k_eigen") == {"liste": [1], "karte": {"tief": [1]}},
+      str(db3.get_node("k/k_eigen")))
+
 roh = db3.list_nodes("k", readonly=True)
 check("readonly gibt dieselben Werte", roh["k_1"]["liste"] == [1, 2, 3])
 check("Aber als Verweis in den Zwischenspeicher, nicht als Kopie",

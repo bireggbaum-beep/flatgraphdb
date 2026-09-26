@@ -117,6 +117,29 @@ check("Verschachtelte, gültige Werte gehen weiter durch",
       fehler(lambda: db.create_node("dinge", "tief", {
           "liste": [1, 2.5, None, True, "ä"], "karte": {"a": {"b": []}}})) is None)
 
+# Ein einzelnes Surrogat: so liefert Python einen Dateinamen, dessen Bytes
+# kein UTF-8 sind. JSON kann es, die Platte (UTF-8) nicht. Bis 4.0 bestand
+# es die Prüfung, scheiterte erst beim Schreiben — und blieb im Speicher.
+SURROGAT = "Rechnung M\udce4rz.pdf"
+e = fehler(lambda: db.create_node("dinge", "s1", {"datei": SURROGAT}))
+check("Ein einzelnes Surrogat wird mit NichtSpeicherbar abgewiesen",
+      ist(e, "NichtSpeicherbar"), repr(e))
+check("… und steht nicht im Speicher", db.get_node("dinge/s1") is None)
+check("… und das Fach lässt sich danach weiter schreiben",
+      fehler(lambda: db.create_node("dinge", "s2", {"v": 1})) is None)
+e = fehler(lambda: db.create_node("dinge", "s3", {"liste": [{SURROGAT: 1}]}))
+check("Auch als Schlüssel, tief verschachtelt", ist(e, "NichtSpeicherbar"), repr(e))
+e = fehler(lambda: db.create_node("dinge", SURROGAT, {"v": 1}))
+check("Auch als Kennung: UngueltigerName", ist(e, "UngueltigerName"), repr(e))
+db = neu_oeffnen(db)
+check("… und nach dem Neustart steht, was angenommen wurde",
+      db.get_node("dinge/s2") == {"v": 1} and db.get_node("dinge/s1") is None)
+
+zirkel = {}
+zirkel["selbst"] = zirkel
+e = fehler(lambda: db.create_node("dinge", "zirkel", {"z": zirkel}))
+check("Ein Wert, der sich selbst enthält: NichtSpeicherbar", ist(e, "NichtSpeicherbar"), repr(e))
+
 # =========================================================================
 print("--- Kanten ---")
 # =========================================================================

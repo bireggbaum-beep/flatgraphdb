@@ -175,12 +175,17 @@ Ab `3.0.0-entwurf`. Geprüft wird VOR jeder Änderung am Arbeitsspeicher:
 - **Der Wert kommt als JSON unverändert zurück.** Abgewiesen mit
   `NichtSpeicherbar` (auch ein `TypeError`): Werte ohne JSON-Form
   (`date`, `set`, eigene Objekte), `NaN` und Unendlich (kein gültiges
-  JSON), Tupel (kämen als Liste zurück) und Zahlenschlüssel (kämen als
-  Text zurück). Geprüft bei `create_node`, `update_node` (am
-  zusammengeführten Knoten) und `create_edge` (samt Metadaten).
+  JSON), Tupel (kämen als Liste zurück), Zahlenschlüssel (kämen als
+  Text zurück), Werte, die sich selbst enthalten, und Zeichenketten mit
+  einem einzelnen Surrogat (so liefert Python Dateinamen, deren Bytes kein
+  UTF-8 sind; JSON kann sie, die Platte nicht). Geprüft bei `create_node`,
+  `update_node` (am zusammengeführten Knoten) und `create_edge` (samt
+  Metadaten), durch einen Gang über die Typen: 5.7 µs für einen Knoten mit
+  50 KB Text, bis 4.0 per JSON hin und zurück 254 µs — und das Surrogat
+  kam trotzdem durch, blieb im Speicher und sperrte sein Fach.
 - **Sammlungen und Kantenarten haben sichere Namen.** Abgewiesen mit
   `UngueltigerName` (auch ein `ValueError`), siehe Abschnitt 7.
-- **Kennungen sind nicht leere Zeichenketten.** Ebenfalls `UngueltigerName`.
+- **Kennungen sind nicht leere Zeichenketten**, als UTF-8 schreibbar. Ebenfalls `UngueltigerName`.
 
 Vorher wurde erst der Speicher geändert und dann geschrieben. Scheiterte
 das Schreiben, widersprachen sich beide — nachgewiesen:
@@ -465,14 +470,25 @@ nach jeder Änderung:
   Zwischenspeicher selbst heraus — nachgemessen 3.37 ms → 0.35 ms bei 2000
   Knoten. **Wer so liest, darf das Ergebnis niemals ändern**: er hielte
   sonst die Datenbank in der Hand, nicht ihr Abbild.
+  Die Kopie wächst linear mit der Zahl der gelieferten Einträge. Ab
+  `3.0.0-entwurf` ist sie auf JSON-Typen zugeschnitten statt
+  `copy.deepcopy`, bei gleichem Schutz; gemessen an Knoten mit Listen und
+  einem verschachtelten Feld (26.09.2026): 2000 Knoten 16 → 4 ms,
+  **100 000 Knoten 995 → 435 ms**. Wer grosse Sammlungen oft ganz liest,
+  braucht `readonly=True`.
 - **Nachbarschaft kostet nichts mehr, was mit dem Bestand wächst.** Der
   Index Knoten → Kanten wird beim Öffnen gebaut und bei jeder Kante
   mitgeführt. Er kostet Hauptspeicher in der Grössenordnung der
   Kantenzahl — das ist der Preis dafür.
-- **Schreiben wächst mit der Sammlung**, weil bei jeder Änderung die ganze
-  Sammlung neu geschrieben wird. Wer viele Knoten hintereinander ändert,
-  braucht `transaction()` — sonst wird aus einem Massenlauf quadratische
-  Arbeit.
+- **Wer viele Knoten oder Kanten auf einmal schreibt, tut das in
+  `with db.transaction():`.** Ohne Transaktion ist jeder einzelne Aufruf
+  dauerhaft auf der Platte, wenn er zurückkehrt (2.2), und zahlt dafür je
+  einen `fsync` auf Datei und Verzeichnis. Eine Transaktion zahlt das
+  einmal für alle. Nachgemessen (Linux, 26.09.2026): 1000 Kanten einzeln
+  0.72 s, in einer Transaktion 0.04 s. Unter Windows ist `fsync` teurer;
+  nicht gemessen. Bis Speicherform 2 stand hier ein anderer Grund — jede
+  Änderung schrieb die ganze Sammlung neu. Seit den Fächern schreibt sie
+  nur ihr Fach.
 
 ---
 
