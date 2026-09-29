@@ -100,6 +100,10 @@ class KanteFehlt(FlatGraphFehler, KeyError):
     """Die angesprochene Kante gibt es nicht."""
 
 
+class KanteExistiert(FlatGraphFehler, ValueError):
+    """Diese ungerichtete Kante gibt es schon (A–B und B–A sind dieselbe)."""
+
+
 class UngueltigeReferenz(FlatGraphFehler, ValueError):
     """Eine Knotenreferenz ist nicht `sammlung/kennung`.
 
@@ -270,7 +274,8 @@ FACH_GROESSE = 25
 
 _log = logging.getLogger("flatgraph")
 
-_RESERVED_EDGE_FIELDS  = {"source", "target", "type", "created_at", "_cascade_delete"}
+_RESERVED_EDGE_FIELDS  = {"source", "target", "type", "created_at", "_cascade_delete",
+                          "gerichtet"}
 _INTERNAL_COLLECTIONS  = {"_audit_log"}
 
 # Die Knotenfelder, die flatgraph SELBST schreibt. Nur sie sind von der
@@ -614,17 +619,37 @@ class FlatGraphDB:
     # erzeugt einen Index, der etwas anderes behauptet als der Bestand — und
     # das faellt erst auf, wenn eine Ansicht Falsches zeigt.
 
+    @staticmethod
+    def _ungerichtet(kante):
+        return kante.get("gerichtet") is False
+
+    def _index_paare(self, kante):
+        """Welche (Verzeichnis, Knoten) diese Kante eintraegt. Eine
+        gerichtete: aus bei der Quelle, ein beim Ziel. Eine ungerichtete
+        steht bei BEIDEN Enden in beiden Verzeichnissen, damit jede Abfrage
+        sie von jedem Ende findet, ohne die Richtung zu kennen."""
+        quelle, ziel = kante["source"], kante["target"]
+        if self._ungerichtet(kante):
+            return ((self._out_index, quelle), (self._in_index, ziel),
+                    (self._out_index, ziel), (self._in_index, quelle))
+        return ((self._out_index, quelle), (self._in_index, ziel))
+
     def _index_edge(self, edge_id, edge_data):
+        # Interning: dieselben Verweise ("plant/LINIE-A") und Kantenarten
+        # gibt es im Speicher nur einmal, nicht einmal je Kante und Index.
+        # Zurueckgeschrieben in die Kante selbst, sonst haelt sie ihre eigene
+        # Kopie am Leben.
+        for feld in ("source", "target"):
+            edge_data[feld] = sys.intern(edge_data[feld])
+        if "type" in edge_data:
+            edge_data["type"] = sys.intern(edge_data["type"])
         rel_type = edge_data.get("type", "_unknown")
-        self._out_index.setdefault(edge_data["source"], {}) \
-                       .setdefault(rel_type, {})[edge_id] = edge_data
-        self._in_index.setdefault(edge_data["target"], {}) \
-                      .setdefault(rel_type, {})[edge_id] = edge_data
+        for index, ref in self._index_paare(edge_data):
+            index.setdefault(ref, {}).setdefault(rel_type, {})[edge_id] = edge_data
 
     def _unindex_edge(self, edge_id, edge_data):
         rel_type = edge_data.get("type", "_unknown")
-        for index, ref in ((self._out_index, edge_data["source"]),
-                           (self._in_index, edge_data["target"])):
+        for index, ref in self._index_paare(edge_data):
             eimer = index.get(ref, {}).get(rel_type)
             if eimer is not None:
                 eimer.pop(edge_id, None)
@@ -1505,14 +1530,20 @@ class FlatGraphDB:
         node = self._cache["nodes"].get(col, {}).get(nid)
         return node is not None and not self._is_deleted(node)
 
-    def _validate_edge(self, source_ref, target_ref, rel_type):
-        """Check source/target collections against declared edge_constraints (if any)."""
+    def _validate_edge(self, source_ref, target_ref, rel_type, gerichtet=True):
+        """Check source/target collections against declared edge_constraints (if any).
+
+        Eine ungerichtete Kante hat keine Quelle und kein Ziel im Sinn der
+        Regel: erlaubt ist das Paar in beiden Reihenfolgen.
+        """
         allowed = self.edge_constraints.get(rel_type)
         if allowed is None:
             return  # no constraint declared for this rel_type
         src_col = source_ref.split("/", 1)[0] if "/" in source_ref else source_ref
         tgt_col = target_ref.split("/", 1)[0] if "/" in target_ref else target_ref
-        if (src_col, tgt_col) not in [tuple(p) for p in allowed]:
+        paare = [tuple(p) for p in allowed]
+        if (src_col, tgt_col) not in paare and (
+                gerichtet or (tgt_col, src_col) not in paare):
             raise ValueError(
                 f"Edge type '{rel_type}' does not allow "
                 f"'{src_col}' → '{tgt_col}'. "
@@ -2261,17 +2292,12 @@ class FlatGraphDB:
         fuer Anwender, die Kanten ungerichtet benutzen. Enden im Papierkorb
         zaehlen nicht — dort wird nichts mehr verwendet.
         """
-        if direction not in ("in", "out", "both"):
-            raise ValueError("direction muss 'in', 'out' oder 'both' sein.")
         ergebnis = {}
-        for richtung in (("in", "out") if direction == "both" else (direction,)):
-            index = self._in_index if richtung == "in" else self._out_index
-            for art, eimer in index.get(node_ref, {}).items():
-                for eid, kante in eimer.items():
-                    andere = kante["source"] if richtung == "in" else kante["target"]
-                    if self.get_node(andere, readonly=True) is None:
-                        continue
-                    ergebnis.setdefault(art, []).append((eid, andere))
+        for eid, kante, andere in self._kanten_am_knoten(
+                node_ref, direction, None, mit_gegenueber=True):
+            if self.get_node(andere, readonly=True) is None:
+                continue
+            ergebnis.setdefault(kante.get("type", "_unknown"), []).append((eid, andere))
         return ergebnis
 
     def loeschfolgen(self, node_ref):
@@ -2302,21 +2328,40 @@ class FlatGraphDB:
     # OEFFENTLICHE API - EDGES
     # ------------------------------------------------------------------
 
-    def create_edge(self, source_ref, target_ref, rel_type, meta=None, cascade_delete=False):
+    def create_edge(self, source_ref, target_ref, rel_type, meta=None,
+                    cascade_delete=False, gerichtet=True):
         """
-        Create a directed edge.
+        Create an edge (directed unless `gerichtet=False`).
         :param cascade_delete: if True the target node is deleted together with the source.
                                Use for: logs belonging to an object, sub-processes of a
                                main process, attached files, etc.
+        :param gerichtet: False fuer eine ungerichtete Kante („grenzt an“,
+                          „ist verbunden mit“): sie gilt von beiden Enden,
+                          und A–B und B–A sind dieselbe Kante — eine zweite
+                          wirft `KanteExistiert`. Gespeichert wird nur die
+                          Ausnahme (`gerichtet: False`); ohne das Feld gilt
+                          „gerichtet“, so bleiben bestehende Bestaende gleich.
+                          Zusammen mit `cascade_delete` sinnlos (das Ziel
+                          haengt an der Quelle) und deshalb abgewiesen.
         :return: edge_id
         """
         self._offen_pruefen()
+        if not gerichtet and cascade_delete:
+            raise ValueError("Eine ungerichtete Kante kann kein Kaskadenloeschen "
+                             "haben: es gibt kein Ziel, das an der Quelle haengt.")
         if self.get_node(source_ref) is None:
             raise ValueError(f"Source node '{source_ref}' does not exist or is soft-deleted.")
         if self.get_node(target_ref) is None:
             raise ValueError(f"Target node '{target_ref}' does not exist or is soft-deleted.")
         self._name_pruefen(rel_type, "Kantenart")
-        self._validate_edge(source_ref, target_ref, rel_type)
+        self._validate_edge(source_ref, target_ref, rel_type, gerichtet)
+        if not gerichtet:
+            for eid, k in self._kanten_am_knoten(source_ref, "out", rel_type):
+                if self._ungerichtet(k) and (
+                        {k["source"], k["target"]} == {source_ref, target_ref}):
+                    raise KanteExistiert(
+                        f"Die ungerichtete Kante '{rel_type}' zwischen "
+                        f"'{source_ref}' und '{target_ref}' gibt es schon ({eid}).")
 
         edge_id = f"link_{uuid.uuid4().hex[:12]}"
         edge_data = {
@@ -2327,6 +2372,8 @@ class FlatGraphDB:
         }
         if cascade_delete:
             edge_data["_cascade_delete"] = True
+        if not gerichtet:
+            edge_data["gerichtet"] = False
         if meta:
             safe_meta = {k: v for k, v in meta.items() if k not in _RESERVED_EDGE_FIELDS}
             edge_data.update(safe_meta)
@@ -2384,11 +2431,70 @@ class FlatGraphDB:
             for eid, e in bucket.items()
         }
 
+    def _kanten_am_knoten(self, node_ref, direction, rel_type, mit_gegenueber=False):
+        """Die Kanten dieses Knotens in einer Richtung, aus dem Index:
+        [(kanten_id, kante)] bzw. mit `mit_gegenueber` [(id, kante, anderes_ende)].
+
+        Die eine Stelle fuer 'out', 'in' und 'both'. `both` liefert eine
+        ungerichtete Kante (steht in beiden Verzeichnissen) nur einmal.
+        Bei einer ungerichteten Kante ist das andere Ende das, das nicht
+        `node_ref` ist, unabhaengig davon, wie sie angelegt wurde.
+        """
+        if direction not in ("out", "in", "both"):
+            raise ValueError("direction muss 'out', 'in' oder 'both' sein.")
+        richtungen = ("out", "in") if direction == "both" else (direction,)
+        gesehen = set() if direction == "both" else None
+        ergebnis = []
+        for richtung in richtungen:
+            index = self._out_index if richtung == "out" else self._in_index
+            beim_knoten = index.get(node_ref)
+            if not beim_knoten:
+                continue
+            if rel_type is not None:
+                eimer_liste = (beim_knoten.get(rel_type, {}),)
+            else:
+                eimer_liste = beim_knoten.values()
+            for eimer in eimer_liste:
+                for eid, kante in eimer.items():
+                    if gesehen is not None:
+                        if eid in gesehen:
+                            continue
+                        gesehen.add(eid)
+                    if not mit_gegenueber:
+                        ergebnis.append((eid, kante))
+                        continue
+                    if kante.get("gerichtet") is False:
+                        andere = (kante["source"] if kante["target"] == node_ref
+                                  else kante["target"])
+                    else:
+                        andere = kante["target"] if richtung == "out" else kante["source"]
+                    ergebnis.append((eid, kante, andere))
+        return ergebnis
+
+    def _kanten_einer_richtung(self, node_ref, direction, rel_type):
+        """Kanten (nur die Daten) in EINER Richtung, ohne Kennungen."""
+        if direction not in ("out", "in"):
+            raise ValueError("direction muss 'out', 'in' oder 'both' sein.")
+        index = self._out_index if direction == "out" else self._in_index
+        beim_knoten = index.get(node_ref)
+        if not beim_knoten:
+            return ()
+        if rel_type is not None:
+            return beim_knoten.get(rel_type, {}).values()
+        return [e for eimer in beim_knoten.values() for e in eimer.values()]
+
+    @staticmethod
+    def _gegenueber(kante, node_ref, richtung):
+        if kante.get("gerichtet") is False:
+            return kante["source"] if kante["target"] == node_ref else kante["target"]
+        return kante["target"] if richtung == "out" else kante["source"]
+
     def get_connected(self, node_ref, direction="out", rel_type=None,
                       target_collection=None, include_deleted=False):
         """
         Find connected node references.
-        :param direction: 'out' (outgoing) or 'in' (incoming)
+        :param direction: 'out' (outgoing), 'in' (incoming) or 'both'. Eine
+                          ungerichtete Kante zaehlt in jeder Richtung.
         :param rel_type:  optional filter by relationship type
         :param target_collection: optional filter by target collection
                                   (e.g. 'equipments' returns only refs starting with 'equipments/')
@@ -2399,22 +2505,22 @@ class FlatGraphDB:
         # haengen jetzt an der Zahl der Nachbarn DIESES Knotens, nicht an der
         # Gesamtzahl der Kanten. Das ist der Unterschied zwischen einer
         # Graphdatenbank und einer Liste von Kanten.
-        index = self._out_index if direction == "out" else self._in_index
-        beim_knoten = index.get(node_ref)
-        if not beim_knoten:
-            return []
-        if rel_type is not None:
-            kanten = beim_knoten.get(rel_type, {}).values()
-        else:
-            kanten = [e for eimer in beim_knoten.values() for e in eimer.values()]
-
         # Die Reihenfolge bleibt die Einfuegereihenfolge und Doppelte bleiben
         # doppelt — beides war vorher so, und ein Aufrufer koennte sich
         # darauf eingerichtet haben.
+        if direction == "both":
+            kanten = self._kanten_am_knoten(node_ref, direction, rel_type,
+                                            mit_gegenueber=True)
+        else:
+            # Der Regelfall ohne Umweg ueber Tupel: bei 16 Kanten je Knoten
+            # kostete der allgemeine Weg mehr als das Doppelte.
+            kanten = self._kanten_einer_richtung(node_ref, direction, rel_type)
         results = []
-        for edge in kanten:
-            target = edge["target"] if direction == "out" else edge["source"]
-
+        for eintrag in kanten:
+            if direction == "both":
+                target = eintrag[2]
+            else:
+                target = self._gegenueber(eintrag, node_ref, direction)
             if target_collection and not target.startswith(f"{target_collection}/"):
                 continue
 
@@ -2432,16 +2538,8 @@ class FlatGraphDB:
         Like get_connected, but returns the full edge objects (including metadata).
         Format: [(edge_id, edge_data), ...]
         """
-        index = self._out_index if direction == "out" else self._in_index
-        beim_knoten = index.get(node_ref)
-        if not beim_knoten:
-            return []
-        if rel_type is not None:
-            paare = beim_knoten.get(rel_type, {}).items()
-        else:
-            paare = [(eid, e) for eimer in beim_knoten.values()
-                     for eid, e in eimer.items()]
-        return [(eid, _kopie(e)) for eid, e in paare]
+        return [(eid, _kopie(e)) for eid, e in
+                self._kanten_am_knoten(node_ref, direction, rel_type)]
 
     def traverse(self, start_ref, rel_type=None, direction="out",
                  max_depth=None, target_collection=None, include_deleted=False,
@@ -2452,7 +2550,8 @@ class FlatGraphDB:
 
         :param start_ref: starting node
         :param rel_type: filter by relationship type (None = follow all types)
-        :param direction: 'out' follows edges forward, 'in' follows backward
+        :param direction: 'out' follows edges forward, 'in' follows backward,
+                          'both' in beide Richtungen
         :param max_depth: maximum depth (None = unlimited)
         :param target_collection: optional filter by target collection
         :param include_start: include start node in result (default False)
@@ -2506,21 +2605,13 @@ class FlatGraphDB:
     def _nachbarn_gefiltert(self, node_ref, direction, rel_type, target_collection,
                             include_deleted, kantenfilter):
         """Wie get_connected, aber nur ueber Kanten, die `kantenfilter` erfuellen."""
-        index = self._out_index if direction == "out" else self._in_index
-        beim_knoten = index.get(node_ref)
-        if not beim_knoten:
-            return []
-        if rel_type is not None:
-            kanten = beim_knoten.get(rel_type, {}).values()
-        else:
-            kanten = [e for eimer in beim_knoten.values() for e in eimer.values()]
         results = []
-        for edge in kanten:
+        for _, edge, target in self._kanten_am_knoten(
+                node_ref, direction, rel_type, mit_gegenueber=True):
             # MappingProxyType statt Kopie: kostet nichts und verhindert,
             # dass ein Filter die Kante im Zwischenspeicher veraendert.
             if not kantenfilter(types.MappingProxyType(edge)):
                 continue
-            target = edge["target"] if direction == "out" else edge["source"]
             if target_collection and not target.startswith(f"{target_collection}/"):
                 continue
             if not include_deleted:

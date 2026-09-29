@@ -237,6 +237,50 @@ ein Rollback danach zurücknahm. `webhooks=` wirft ab 4.0 einen
 `TypeError`, statt still wirkungslos zu sein. Geprüft in
 `tests/test_flatgraph_rueckruf.py`.
 
+### 2.8 Ungerichtete Kanten und `direction="both"`
+
+Ab `4.0.0-entwurf` (Schritt 1 aus graphatlas §17).
+`create_edge(quelle, ziel, art, gerichtet=False)` legt eine Kante an, die
+von **beiden Enden** gilt („grenzt an“, „ist verbunden mit“). Ohne die
+Angabe ist eine Kante gerichtet, wie bisher.
+
+- **Gespeichert wird nur die Ausnahme:** eine ungerichtete Kante trägt
+  `"gerichtet": false`, eine gerichtete hat das Feld nicht. Bestände und
+  Aufrufer, die es nicht kennen, sehen dieselben Kanten wie vorher. Die
+  **Speicherform bleibt 3**: es kommt ein optionales Feld hinzu, nichts
+  wird umgezogen. Umgekehrt gilt: eine ältere flatgraph-Fassung, die einen
+  Bestand mit ungerichteten Kanten öffnet, hält sie für gerichtet und
+  schreibt das Feld unverändert zurück; sie richtet keinen Schaden an,
+  findet die Kante aber nur von der Quelle aus.
+- **Beide Enden, beide Verzeichnisse:** die Kante steht im Index bei der
+  Quelle und beim Ziel, jeweils ausgehend und eingehend. `get_connected`,
+  `get_connected_edges`, `traverse` und `collect_related` finden sie von
+  jedem Ende, mit `"out"`, `"in"` und `"both"`.
+- **`direction="both"`** gibt es einheitlich in `get_connected`,
+  `get_connected_edges`, `traverse` und `verwendungen` (dort schon vorher).
+  Eine ungerichtete Kante zählt in `"both"` einmal. Eine unbekannte
+  Richtung wirft `ValueError`; bis 3.x behandelte flatgraph alles ausser
+  `"out"` als `"in"`.
+- **Doppelschutz:** A–B und B–A sind dieselbe ungerichtete Kante. Eine
+  zweite derselben Art wirft `KanteExistiert` (auch `ValueError`, wie die
+  anderen Fehler von `create_edge`). Nur unter ungerichteten Kanten:
+  gerichtete Duplikate bleiben erlaubt, und eine gerichtete neben einer
+  ungerichteten derselben Art ebenso. Die Prüfung liest die Kanten des
+  Knotens, kostet also so viel wie dessen Kantenzahl.
+- **Kantenregeln** (`edge_constraints`): für eine ungerichtete Kante gilt
+  ein Paar in jeder Reihenfolge.
+- **Löschen:** `delete_edge`, Papierkorb, `restore_node` und der
+  Müllsammler behandeln beide Enden. Kaskadenlöschen mit
+  `gerichtet=False` wird abgewiesen (`ValueError`): dort gibt es kein
+  Ziel, das an der Quelle hängt.
+- `gerichtet` gehört flatgraph: aus `meta` wird es wie `source` und
+  `target` verworfen.
+- **Interning:** `source`, `target` und die Kantenart werden beim Einlesen
+  und in `create_edge` mit `sys.intern` geführt. Gleiche Verweise gibt es im
+  Speicher nur einmal, nicht einmal je Kante und Index.
+
+Geprüft in `tests/test_flatgraph_ungerichtet.py`. Kosten: Abschnitt 5.
+
 ## 3. Was ausdrücklich NICHT zugesagt wird
 
 ### 3.1 Threadsicherheit — ab `3.0.0-entwurf` zugesagt
@@ -384,7 +428,7 @@ Alle erben von `FlatGraphFehler` — wer alles fangen will, fängt die. Und
 **zusätzlich von dem Typ, der vorher geworfen wurde**:
 
     KnotenFehlt, KnotenExistiert, KanteFehlt   auch KeyError
-    UngueltigeReferenz                          auch ValueError
+    UngueltigeReferenz, KanteExistiert          auch ValueError
     DateiKaputt                                 auch RuntimeError
     AbschlussHaengt                             auch OSError
 
@@ -489,6 +533,18 @@ nach jeder Änderung:
   nicht gemessen. Bis Speicherform 2 stand hier ein anderer Grund — jede
   Änderung schrieb die ganze Sammlung neu. Seit den Fächern schreibt sie
   nur ihr Fach.
+
+- **Ungerichtete Kanten und Interning, nachgemessen am 29.09.2026**
+  (Linux, `bench/lauf.py nachbarschaft`, Median; 2000 Knoten):
+  Der Index einer ungerichteten Kante hat vier Einträge statt zwei, kostet
+  also entsprechend mehr Hauptspeicher; das Interning holt mehr herein,
+  als es kostet — an einem Bestand mit 20 000 Knoten und 80 000
+  gerichteten Kanten (`tracemalloc`, nach dem Öffnen):
+  **80.2 → 66.8 MB** (−17 %, Spitze 73.6 MB). Abfragen: `get_connected`
+  bei 16 Kanten je Knoten 4.8 → 5.7 µs (+19 %, die Prüfung auf `gerichtet`
+  je Kante), bei 1 und 4 Kanten je Knoten im Rauschen;
+  `get_connected_edges` 13.1 → 13.1 µs. Nicht gemessen: ein Bestand mit
+  überwiegend ungerichteten Kanten.
 
 ---
 
