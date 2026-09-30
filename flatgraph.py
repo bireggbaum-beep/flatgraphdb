@@ -552,6 +552,11 @@ class FlatGraphDB:
         #   ("kantenart", art)        -> die Kantenart gab es vorher nicht
         self._undo = None
         self._purged_nodes   = {}    # {collection: set(node_ids)} — vom Muellsammler endgueltig geloescht
+        # Hoechste je vergebene Nummer: {sammlung: {praefix: zahl}}. Damit
+        # next_id nach dem endgueltigen Loeschen der hoechsten Kennung nicht
+        # dieselbe Nummer noch einmal vergibt. Kein Teil der Speicherform:
+        # fehlt die Datei, gilt wie bisher, was im Bestand steht.
+        self._nummern = self._load_json_from_disk(self._nummern_datei())
         # Vor dem Einlesen, nicht danach: ein Bestand in neuerer Form soll
         # gar nicht erst halb geladen werden.
         self._speicherform_pruefen()
@@ -704,6 +709,40 @@ class FlatGraphDB:
 
     def _meta_datei(self):
         return os.path.join(self.root, "datenbank", "_meta.json")
+
+    def _nummern_datei(self):
+        return os.path.join(self.root, "datenbank", "_nummern.json")
+
+    @staticmethod
+    def _nummer_teilen(kennung):
+        """'d_000042' -> ('d_', 42); keine Zahl am Ende -> None. Das Praefix
+        ist die Kennung ohne ihre letzten Ziffern, wie man next_id aufruft."""
+        m = re.fullmatch(r"(.*?)(\d+)", kennung)
+        return (m.group(1), int(m.group(2))) if m else None
+
+    def _nummern_merken(self, kennungen_je_sammlung):
+        """Die hoechsten Nummern der Kennungen, die gleich endgueltig
+        verschwinden, dauerhaft festhalten — VOR dem Loeschen. Bricht es
+        dazwischen ab, ist die Marke zu hoch (ungefaehrlich) und nicht zu
+        niedrig (dann waere die Nummer wieder frei). Der Speicher aendert
+        sich erst, wenn die Datei geschrieben ist."""
+        neu = {}
+        for sammlung, kennungen in kennungen_je_sammlung.items():
+            for kennung in kennungen:
+                teile = self._nummer_teilen(kennung)
+                if teile is None:
+                    continue
+                praefix, zahl = teile
+                if zahl > self._nummern.get(sammlung, {}).get(praefix, 0):
+                    eimer = neu.setdefault(sammlung, {})
+                    eimer[praefix] = max(zahl, eimer.get(praefix, 0))
+        if not neu:
+            return
+        zusammen = {sam: dict(eimer) for sam, eimer in self._nummern.items()}
+        for sammlung, eimer in neu.items():
+            zusammen.setdefault(sammlung, {}).update(eimer)
+        self._save_json_atomic(self._nummern_datei(), zusammen)
+        self._nummern = zusammen
 
     def _speicherform_pruefen(self):
         """Verweigern, statt kommentarlos einen leeren Bestand zu laden.
@@ -2061,7 +2100,12 @@ class FlatGraphDB:
     def next_id(self, collection_name, prefix="", padding=0):
         """
         Return the next available ID in a collection.
-        Scans existing IDs with the given prefix and returns max+1.
+        Scans existing IDs with the given prefix and returns max+1. Nummern,
+        die der Muellsammler endgueltig entfernt hat, zaehlen weiter mit
+        (`datenbank/_nummern.json`, seit 4.0): die hoechste Nummer wird nie
+        noch einmal vergeben. Fuer Bestaende aus der Zeit davor gilt das erst
+        ab dem naechsten endgueltigen Loeschen; was frueher verschwand, ist
+        nicht mehr bekannt.
 
         :param collection_name: collection to scan
         :param prefix: ID prefix, e.g. 'DOC-' or 'EQ-'
@@ -2073,7 +2117,9 @@ class FlatGraphDB:
             -> 'DOC-0001' wenn leer, 'DOC-0042' wenn DOC-0041 existiert
         """
         existing = self._cache["nodes"].get(collection_name, {})
-        max_num = 0
+        # Auch was schon endgueltig geloescht ist zaehlt: eine Nummer wird
+        # nie zweimal vergeben, solange der Bestand lebt.
+        max_num = self._nummern.get(collection_name, {}).get(prefix, 0)
         for nid in existing:
             if prefix and not nid.startswith(prefix):
                 continue
@@ -2712,6 +2758,11 @@ class FlatGraphDB:
             print(f"[GC] {stats['edges_removed']} dangling edge(s) removed.")
 
         # --- PHASE C: Purger ---
+        # Erst die hoechsten Nummern festhalten, dann loeschen.
+        je_sammlung = {}
+        for col, nid, _ in to_delete:
+            je_sammlung.setdefault(col, []).append(nid)
+        self._nummern_merken(je_sammlung)
         for col, nid, node_data in to_delete:
             archived = self._purge_node(col, nid, node_data)
             stats["nodes_purged"] += 1

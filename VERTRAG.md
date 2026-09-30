@@ -619,8 +619,16 @@ Form 2 (3.0.0) hatte eine Datei je Knoten und eine je Kantenart.
 - `next_id(sammlung, prefix, padding)` liefert die höchste vorhandene Zahl
   mit diesem Präfix plus eins, aufgefüllt. Auf leerer Sammlung mit
   `padding=4`: `n_0001`. **Nachgemessen.**
-- Die Zahl wird nie wiederverwendet, solange die höchste Kennung im
-  Bestand bleibt — nach dem Löschen des höchsten Knotens schon.
+- **Die Zahl wird nie wiederverwendet (ab `4.0.0`, Issue #37).** Der
+  Müllsammler hält vor dem endgültigen Löschen die höchste Nummer je
+  Sammlung und Präfix in `datenbank/_nummern.json` fest
+  (`{sammlung: {präfix: zahl}}`), und `next_id` geht nie darunter, auch nicht
+  nach einem Neustart oder bei leerer Sammlung. Das Präfix ist die Kennung
+  ohne ihre letzten Ziffern (`d_000042` → `d_`), also so, wie `next_id`
+  aufgerufen wird. Nicht geschützt ist, was **vor** dieser Fassung endgültig
+  verschwand, und was nur im Papierkorb liegt, zählt wie bisher über den
+  Knoten selbst. Die Datei ist kein Teil der Speicherform: fehlt sie, gilt
+  der Bestand wie bisher. Geprüft in `tests/test_flatgraph_nummern.py`.
 - **Kennungen** sind ab `3.0.0-entwurf` nicht leere Zeichenketten und
   dürfen sonst alles enthalten, auch Schrägstriche und Leerzeichen, in
   beliebiger Länge. (Bis Speicherform 2 waren sie Dateinamen und deshalb
