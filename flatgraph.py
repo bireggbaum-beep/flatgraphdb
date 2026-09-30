@@ -76,7 +76,7 @@ from datetime import datetime, timezone
 # 3d6f67b bis aa6a993. Eine Nummer, die nichts unterscheidet, ist keine.
 # Deshalb hier mit dem Stand als Baumetadaten (semver "+"):
 #   3.0.0          ist die uebernommene Fassung in flatgraph/flatgraph.py
-#   4.0.0-entwurf  ist dieser Entwurf (Neueinstufung 24.09.2026, Issue #36:
+#   4.0.0          ist diese Fassung (Neueinstufung 24.09.2026, Issue #36:
 #                  Speicherform 3 und die geaenderten Verhaltensweisen sind
 #                  eine neue Hauptversion) — ab hier wird die naechste daraus
 class FlatGraphFehler(Exception):
@@ -243,7 +243,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.0.0-entwurf"
+__version__ = "4.0.0"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert

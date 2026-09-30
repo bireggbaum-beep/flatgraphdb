@@ -1,7 +1,7 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
-4.0.0 (Entwurf, Speicherform 3)
+4.0.0 (Speicherform 3)
 Nach dem pDMS-Pin 8779e66 (noch nicht in pDMS):
 - next_id vergibt eine Nummer nicht mehr neu, auch nicht nach dem endgültigen Löschen der höchsten (neue Datei datenbank/_nummern.json). pDMS: behebt d_/q_/l_-Wiederverwendung, gilt erst ab dem nächsten endgültigen Löschen.
 - Ungerichtete Kanten: create_edge(..., gerichtet=False), Doppelschutz (KanteExistiert). pDMS: keine, Speicherform bleibt 3. (2d1d217)

@@ -1,7 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `2.0.0-entwurf` und für die Basislinie, soweit nicht anders
-vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.0.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -239,7 +238,7 @@ ein Rollback danach zurücknahm. `webhooks=` wirft ab 4.0 einen
 
 ### 2.8 Ungerichtete Kanten und `direction="both"`
 
-Ab `4.0.0-entwurf` (Schritt 1 aus graphatlas §17).
+Ab `4.0.0` (Schritt 1 aus graphatlas §17).
 `create_edge(quelle, ziel, art, gerichtet=False)` legt eine Kante an, die
 von **beiden Enden** gilt („grenzt an“, „ist verbunden mit“). Ohne die
 Angabe ist eine Kante gerichtet, wie bisher.
