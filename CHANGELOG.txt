@@ -1,0 +1,28 @@
+flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
+"pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
+
+4.0.0 (Entwurf, Speicherform 3)
+Nach dem pDMS-Pin 8779e66 (noch nicht in pDMS):
+- Ungerichtete Kanten: create_edge(..., gerichtet=False), Doppelschutz (KanteExistiert). pDMS: keine, Speicherform bleibt 3. (2d1d217)
+- direction="both" in get_connected, get_connected_edges, traverse. pDMS: keine, es nutzt nur "out" und "in". (2d1d217)
+- Unbekannte direction wirft ValueError statt wie "in" zu gelten. pDMS: keine. (2d1d217)
+- String-Interning für Quelle, Ziel, Kantenart: 80.2 auf 66.8 MB bei 80 000 Kanten. pDMS: keine. (2d1d217)
+- Kantenfeld "gerichtet" ist reserviert und wird aus meta verworfen. pDMS: keine. (2d1d217)
+- Speicherbarkeit per Typgang statt JSON hin und zurück; einzelnes Surrogat in Kennung oder Wert wird abgewiesen. pDMS: Upload mit fremd kodiertem Dateinamen gibt womöglich Fehler statt Datenverlust, ungeprüft. (2e653b4)
+- Eigene Kopie statt copy.deepcopy: 100 000 Knoten 995 auf 435 ms. pDMS: keine. (2e653b4)
+Bis zum pDMS-Pin 8779e66 (in pDMS seit 0.5.0):
+- Speicherform 3, Fächer mit bis zu 25 Knoten je Datei. pDMS: Umzug beim ersten Start ohne Rückweg, pDMS sichert vorher.
+- Absichtsdatei: Transaktion auch auf der Platte ganz oder gar nicht. pDMS: keine.
+- Löschen mit Vorschau: verwendungen(), loeschfolgen(), Kaskade in den Papierkorb, traverse(kantenfilter=). pDMS: nutzt keine Kaskadenkanten.
+- Müllsammler ist Methode der Instanz (run_garbage_collection), läuft nicht in Transaktionen. pDMS: services/aufraeumen.py umgestellt.
+- Rückruf bei_aenderung statt webhooks=; webhooks= wirft TypeError. pDMS: nutzt beides nicht.
+- Ein Bestand, eine offene Instanz (BestandBelegt); file_lock ohne Wirkung. pDMS: hält seine eigene Sperre zusätzlich.
+- Threadsicherheit: jede öffentliche Methode unter einer Sperre der Instanz. pDMS: keine.
+- Transaktion mit Undo-Log. pDMS: keine.
+- Feldindex nur im Speicher, nachgeführt. pDMS: keine.
+- Speicher ändert sich erst, wenn die Platte die Änderung aufnimmt (Werte, Namen, Kennungen). pDMS: ungültige Namen werden jetzt abgewiesen.
+- Namensregeln für Sammlungen und Kantenarten; Kennungen ohne Längengrenze. pDMS: keine.
+- Langtext-Dateien heissen mit Hash im Namen, alte bleiben lesbar. pDMS: nutzt longtext_threshold.
+
+3.0.0 (Speicherform 2, eine Datei je Knoten)
+- Stand von pDMS vor 0.5.0.
