@@ -78,7 +78,9 @@ from datetime import datetime, timezone
 #   3.0.0          ist die uebernommene Fassung in flatgraph/flatgraph.py
 #   4.0.0          ist diese Fassung (Neueinstufung 24.09.2026, Issue #36:
 #                  Speicherform 3 und die geaenderten Verhaltensweisen sind
-#                  eine neue Hauptversion) — ab hier wird die naechste daraus
+#                  eine neue Hauptversion)
+#   4.1.0          ist diese Fassung: purge() entfernt gezielt aus dem
+#                  Papierkorb — ab hier wird die naechste daraus
 class FlatGraphFehler(Exception):
     """Oberklasse aller flatgraph-Fehler. Wer alles fangen will, fängt die."""
 
@@ -209,6 +211,15 @@ class NichtInTransaktion(FlatGraphFehler, RuntimeError):
     """
 
 
+class NichtImPapierkorb(FlatGraphFehler, ValueError):
+    """`purge` nimmt nur, was schon im Papierkorb liegt.
+
+    Endgueltig entfernt wird nie in einem Schritt aus dem Lebenden heraus:
+    erst `soft_delete`, dann `purge`. Ein Aufruf auf einen lebenden Knoten
+    ist ein Fehler des Aufrufers, kein Normalfall.
+    """
+
+
 class DateiKaputt(FlatGraphFehler, RuntimeError):
     """Eine Datei des Bestands ist nicht lesbar oder kein gueltiges JSON."""
 
@@ -243,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -2789,6 +2800,107 @@ class FlatGraphDB:
 
         self._write_maintenance_log(stats)
         return stats
+
+    def purge(self, collection_name, node_id, verbose=False):
+        """Einen Knoten aus dem Papierkorb endgueltig entfernen — mit genau
+        dem, was `soft_delete` mit ihm hineingelegt hat (`_geloescht_durch`).
+
+        Der Weg fuer Anwendungen. `run_garbage_collection` raeumt den GANZEN
+        Papierkorb ab und ist fuer die Wartung gedacht: in partAtlas hat ein
+        „Papierkorb leeren“ damit auch entfernte Ordner und Baugruppen
+        mitgenommen, an die beim Klick niemand dachte.
+
+        Alles andere im Papierkorb bleibt, auch dessen lange Texte. Anhaenge
+        gehen wie beim Muellsammler: mit `keep_asset=False` ins Archiv,
+        sonst bleiben sie liegen.
+
+        Wie der Muellsammler nicht in einer Transaktion: er verschiebt
+        Anhaenge und schreibt sofort. Abbrechen darf er jederzeit; ein
+        zweiter Aufruf findet den Knoten dann nicht mehr (`KnotenFehlt`)
+        oder macht zu Ende, was fehlt.
+        :return: Statistik wie beim Muellsammler, plus `ref`
+        """
+        self._offen_pruefen()
+        if self._transaction_depth > 0:
+            raise NichtInTransaktion(
+                "purge laeuft nicht in einer Transaktion: es verschiebt "
+                "Anhaenge und schreibt sofort, ein Rollback koennte das nicht "
+                "zuruecknehmen.")
+        knoten = self._cache["nodes"].get(collection_name, {}).get(node_id)
+        if knoten is None:
+            raise KnotenFehlt(f"Node '{node_id}' does not exist in "
+                              f"collection '{collection_name}'.")
+        if not self._is_deleted(knoten):
+            raise NichtImPapierkorb(
+                f"'{collection_name}/{node_id}' liegt nicht im Papierkorb; "
+                f"erst soft_delete, dann purge.")
+        ref = f"{collection_name}/{node_id}"
+
+        # Genau die Markierten, nicht was heute per Kaskade erreichbar waere:
+        # eine Kante kann seit dem Loeschen dazugekommen sein, und ein
+        # unabhaengig Geloeschter gehoert zu SEINEM Loeschen.
+        weg = [(collection_name, node_id, knoten)]
+        for col, daten in self._cache["nodes"].items():
+            for nid, d in daten.items():
+                if d.get("_geloescht_durch") == ref and self._is_deleted(d):
+                    weg.append((col, nid, d))
+        stats = {"ref": ref, "scanned": len(weg), "edges_removed": 0,
+                 "nodes_purged": 0, "assets_archived": 0, "assets_kept": 0,
+                 "vault_text_removed": 0, "faecher_verdichtet": 0}
+
+        refs = {f"{col}/{nid}" for col, nid, _ in weg}
+        stats["edges_removed"] = self._cascade_delete_edges(refs)
+
+        # Ihre langen Texte merken, solange die Knoten noch da sind.
+        texte = self._vault_text_verweise(d for _, _, d in weg)
+
+        je_sammlung = {}
+        for col, nid, _ in weg:
+            je_sammlung.setdefault(col, []).append(nid)
+        self._nummern_merken(je_sammlung)
+        for col, nid, daten in weg:
+            archiviert = self._purge_node(col, nid, daten)
+            stats["nodes_purged"] += 1
+            if archiviert is True:
+                stats["assets_archived"] += 1
+            elif archiviert is False:
+                stats["assets_kept"] += 1
+            self._log_audit("purge", col, nid)
+        for col in je_sammlung:
+            self._persist_collection_full(col)
+
+        # Erst wenn die Knoten von der Platte sind: bricht es vorher ab, zeigt
+        # kein Knoten auf eine fehlende Datei. Nicht _collect_vault_text_orphans
+        # — der raeumt bestandsweit alle Waisen ab. Hier nur die Texte der
+        # entfernten Knoten, und nur, wenn kein anderer Knoten auf dieselbe
+        # Datei zeigt (gleiche Kennung, gleiches Feld, gleicher Text).
+        texte -= self._vault_text_verweise(
+            d for daten in self._cache["nodes"].values() for d in daten.values())
+        for pfad in sorted(texte):
+            if os.path.isfile(pfad):
+                os.remove(pfad)
+                stats["vault_text_removed"] += 1
+
+        stats["faecher_verdichtet"] = self._verdichten()
+        if verbose:
+            print(f"[purge] {ref}: {stats['nodes_purged']} node(s), "
+                  f"{stats['edges_removed']} edge(s) removed.")
+        self._write_maintenance_log(stats)
+        return stats
+
+    def _vault_text_verweise(self, knoten):
+        """Die vault_text-Dateien, auf die diese Knoten zeigen, als
+        normalisierte Pfade — nur solche innerhalb von vault_text/."""
+        vt_dir = os.path.normpath(self.dirs["vault_text"])
+        prefix = FlatGraphDB._VAULT_TEXT_PREFIX
+        pfade = set()
+        for daten in knoten:
+            for wert in daten.values():
+                if isinstance(wert, str) and wert.startswith(prefix):
+                    pfad = os.path.normpath(os.path.join(self.root, wert[len(prefix):]))
+                    if os.path.dirname(pfad) == vt_dir:
+                        pfade.add(pfad)
+        return pfade
 
     def _verdichten(self):
         """Duenne Faecher zusammenlegen. Gibt die Zahl der aufgeloesten zurueck.

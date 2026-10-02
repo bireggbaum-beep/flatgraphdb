@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.0.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.1.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -117,9 +117,10 @@ Stelle des Abschlusses.
 ### 2.4 Löschen ist zweistufig und wiederholbar
 
 `soft_delete` setzt nur eine Marke; der Knoten verschwindet aus `get_node`
-und `list_nodes`, bleibt aber lesbar über `get_node_raw`. Erst
-`run_garbage_collection` entfernt ihn endgültig, und dieser Lauf darf
-jederzeit abbrechen und neu starten, ohne Schaden anzurichten.
+und `list_nodes`, bleibt aber lesbar über `get_node_raw`. Erst `purge`
+(gezielt, Abschnitt 2.9) oder `run_garbage_collection` (alles) entfernt ihn
+endgültig, und beides darf jederzeit abbrechen und neu starten, ohne
+Schaden anzurichten.
 
 **Kaskade (ab `3.0.0-entwurf`, Issue #34).** Eine Kante mit
 `cascade_delete=True` nimmt ihr Ziel mit, über beliebig viele Stufen, nur
@@ -280,6 +281,48 @@ Angabe ist eine Kante gerichtet, wie bisher.
 
 Geprüft in `tests/test_flatgraph_ungerichtet.py`. Kosten: Abschnitt 5.
 
+### 2.9 Gezielt endgültig entfernen: `purge`
+
+Ab `4.1.0`. `purge(sammlung, kennung)` entfernt **einen** Knoten aus dem
+Papierkorb endgültig, zusammen mit genau den Knoten, die `soft_delete` mit
+ihm hineingelegt hat (`_geloescht_durch` gleich seiner Referenz) — sonst
+nichts.
+
+- **Der Weg für Anwendungen.** `run_garbage_collection` räumt den ganzen
+  Papierkorb des Bestands auf einmal ab und ist für die Wartung gedacht.
+  Anlass: in partAtlas rief „Papierkorb leeren“ den Müllsammler auf und
+  nahm damit auch entfernte Ordner, Baugruppen und Drucke mit, an die beim
+  Klick niemand dachte.
+- **Nur aus dem Papierkorb.** Ein lebender Knoten wird mit
+  `NichtImPapierkorb` (auch ein `ValueError`) abgewiesen, ein fehlender
+  mit `KnotenFehlt`. Es ändert sich dabei nichts.
+- **Genau die Markierten**, nicht was heute per Kaskade erreichbar wäre:
+  eine Kante kann seit dem Löschen dazugekommen sein. Ein Knoten, den der
+  Müllsammler früher mit einem Mitgelöschten als Grund markiert hat,
+  gehört zu dessen Kaskade, nicht zu dieser; er bleibt im Papierkorb.
+- **Was erhalten bleibt:** alle anderen Einträge im Papierkorb samt ihrer
+  Kanten und langen Texte; zurückholen lassen sie sich wie vorher.
+  Anhänge gehen wie beim Müllsammler: mit `keep_asset=False` nach
+  `vault_archive/`, sonst bleiben sie in `vault/`.
+- **Lange Texte:** entfernt werden nur die Dateien, auf die die entfernten
+  Knoten zeigten, und nur, wenn kein verbliebener Knoten auf dieselbe
+  zeigt (`k.1` und `k_1` teilen sich mit gleichem Text eine Datei). Alte
+  Fassungen von Texten (Waisen) räumt weiter nur der Müllsammler ab —
+  `purge` räumt nicht bestandsweit auf.
+- **Ablauf:** Kanten der Entfernten weg, Nummern merken (Abschnitt 7),
+  Knoten von der Platte, dann ihre Texte, dann dünne Fächer verdichten.
+  Fehlt nach einem Abbruch etwas, zeigt höchstens eine Datei auf nichts
+  mehr — nie ein Knoten auf eine fehlende Datei.
+- **Wie der Müllsammler:** unter der Sperre der Instanz, nicht in einer
+  Transaktion (`NichtInTransaktion`), keine Meldung über `bei_aenderung`.
+  Je entferntem Knoten ein Eintrag `purge` im Audit-Protokoll (mit
+  `audit=True`), eine Zeile in `datenbank/maintenance.log`.
+- **Rückgabe:** `{"ref", "scanned", "edges_removed", "nodes_purged",
+  "assets_archived", "assets_kept", "vault_text_removed",
+  "faecher_verdichtet"}`.
+
+Geprüft in `tests/test_flatgraph_purge.py`.
+
 ## 3. Was ausdrücklich NICHT zugesagt wird
 
 ### 3.1 Threadsicherheit — ab `3.0.0-entwurf` zugesagt
@@ -415,6 +458,9 @@ bevor der Speicher knapp wird.
 | Öffnen, während eine andere Instanz den Bestand offen hat (ab Entwurf) | `BestandBelegt` |
 | Schreiben nach `close()` (ab Entwurf) | `BestandGeschlossen` |
 | `run_garbage_collection` in einer Transaktion (ab Entwurf) | `NichtInTransaktion` |
+| `purge` auf lebenden Knoten (ab 4.1.0) | `NichtImPapierkorb` |
+| `purge` auf fehlenden Knoten (ab 4.1.0) | `KnotenFehlt` |
+| `purge` in einer Transaktion (ab 4.1.0) | `NichtInTransaktion` |
 | Abschluss einer Transaktion scheitert NACH dem Festschreiben (ab Entwurf) | `AbschlussHaengt` — die Transaktion gilt |
 | `FlatGraphDB(..., webhooks=...)` (ab Entwurf) | `TypeError` |
 | `create_node`/`update_node`/`create_edge` mit Wert ohne unveränderte JSON-Form (ab Entwurf) | `NichtSpeicherbar` |
@@ -427,7 +473,8 @@ Alle erben von `FlatGraphFehler` — wer alles fangen will, fängt die. Und
 **zusätzlich von dem Typ, der vorher geworfen wurde**:
 
     KnotenFehlt, KnotenExistiert, KanteFehlt   auch KeyError
-    UngueltigeReferenz, KanteExistiert          auch ValueError
+    UngueltigeReferenz, KanteExistiert,
+    NichtImPapierkorb                           auch ValueError
     DateiKaputt                                 auch RuntimeError
     AbschlussHaengt                             auch OSError
 
