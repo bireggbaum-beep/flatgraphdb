@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.1.0"
+__version__ = "4.1.1"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -846,11 +846,15 @@ class FlatGraphDB:
         wurzel = self.dirs["nodes"]
         if not os.path.isdir(wurzel):
             return
-        sammeldateien = sorted(
-            d for d in os.listdir(wurzel)
-            if d.endswith(".json") and not d.endswith("_temp.json"))
-        for dateiname in sammeldateien:
-            collection = dateiname[:-5]
+        # Sammlungen aus Sammeldatei UND Delta: eine Sammlung, die nie
+        # verdichtet wurde, hat nur die _temp-Datei. Wer nur nach der
+        # Sammeldatei sucht, zieht sie als leer um und loescht sie danach —
+        # am 04.10.2026 hat das 874 Dokumente aus dem Bestand genommen
+        # (Sicherung vorhanden, sonst weg).
+        sammlungen = sorted({
+            d[:-len("_temp.json")] if d.endswith("_temp.json") else d[:-5]
+            for d in os.listdir(wurzel) if d.endswith(".json")})
+        for collection in sammlungen:
             basis = self._load_json_from_disk(self._sammeldatei(collection))
             delta = self._load_json_from_disk(self._temp_file(collection))
             zusammen = {**basis, **delta}

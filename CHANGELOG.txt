@@ -1,6 +1,9 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.1.1 (Speicherform 3)
+- Fehler behoben: der Umzug von Form 1 übersprang Sammlungen, die nur eine _temp-Datei hatten (nie verdichtet), und löschte sie danach — der Bestand kam leer an, ohne Fehlermeldung. pDMS: ein 0.2.0-Bestand zog am 04.10.2026 ohne Dokumente um; Wiederherstellung aus der Sicherung vor dem Umzug, dann mit diesem Stand erneut öffnen.
+
 4.1.0 (Speicherform 3)
 - purge(sammlung, kennung): einen Knoten aus dem Papierkorb endgültig entfernen, mit genau seiner Kaskade; lebende wirft NichtImPapierkorb. run_garbage_collection bleibt für die Wartung. pDMS: keine, kann aber ein „endgültig löschen“ je Eintrag bauen.
 

@@ -108,6 +108,20 @@ marke = json.load(open(os.path.join(wurzel, "datenbank", "_meta.json"), encoding
 check("Die Marke steht auf der aktuellen Form",
       marke.get("speicherform") == fg.SPEICHERFORM, str(marke))
 
+# 04.10.2026 im Betrieb: eine Sammlung, die nie verdichtet wurde, hat nur
+# die _temp-Datei. Der Umzug suchte nur Sammeldateien, fand nichts, setzte
+# die Marke und loeschte das Alte — 874 Dokumente weg, ohne Fehlermeldung.
+wurzel = tempfile.mkdtemp(dir=WURZEL)
+ordner = os.path.join(wurzel, *NODES)
+os.makedirs(ordner)
+with open(os.path.join(ordner, "d_temp.json"), "w", encoding="utf-8") as f:
+    json.dump({"d_1": {"titel": "nur im Delta"}}, f)
+db = fg.FlatGraphDB(wurzel)
+check("Eine Sammlung nur mit Delta-Datei geht beim Umzug nicht verloren",
+      set(db.list_nodes("d")) == {"d_1"}, str(sorted(db.list_nodes("d"))))
+check("Sie steht danach auch auf der Platte",
+      set(platte(wurzel).get("d", {})) == {"d_1"}, str(platte(wurzel)))
+
 # =========================================================================
 # Die Reihenfolge — ein Abbruch darf nichts kosten
 # =========================================================================
