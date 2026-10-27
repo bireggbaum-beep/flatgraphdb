@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.2.0"
+__version__ = "4.3.0"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -2497,6 +2497,42 @@ class FlatGraphDB:
         self._melden("delete_edge", edge_id, kantenart=rel_type,
                      quelle=alt["source"], ziel=alt["target"])
         return True
+
+    def reverse_edge(self, edge_id):
+        """Eine gerichtete Kante umdrehen: Quelle und Ziel tauschen.
+
+        Kennung und `created_at` bleiben — wer eine Kante loescht und neu
+        anlegt, verliert beides, obwohl nur die Richtung falsch war.
+
+        Abgewiesen (`ValueError`, die Kante bleibt wie sie ist): ungerichtete
+        Kante (es gibt nichts zu drehen), Kante mit Kaskadenloeschen (danach
+        haengte die Quelle am Ziel und ein Loeschen risse die falsche Seite
+        mit) und ein Paar, das `edge_constraints` nicht erlaubt.
+        :return: edge_id
+        """
+        self._offen_pruefen()
+        rel_type = self._edge_type_index.get(edge_id)
+        if not (rel_type and edge_id in self._cache["edges"].get(rel_type, {})):
+            raise KanteFehlt(f"Edge '{edge_id}' does not exist.")
+        alt = self._cache["edges"][rel_type][edge_id]
+        if self._ungerichtet(alt):
+            raise ValueError(f"Edge '{edge_id}' ist ungerichtet: es gibt nichts zu drehen.")
+        if alt.get("_cascade_delete"):
+            raise ValueError(f"Edge '{edge_id}' loescht ihr Ziel mit: gedreht wuerde "
+                             f"ein Loeschen die falsche Seite mitnehmen.")
+        self._validate_edge(alt["target"], alt["source"], rel_type)
+
+        # Ein neues Objekt statt Tausch am alten: das Undo-Log haelt das alte
+        # Objekt selbst (siehe _vormerken_kante).
+        neu = {**alt, "source": alt["target"], "target": alt["source"]}
+        self._vormerken_kante(rel_type, edge_id)
+        self._unindex_edge(edge_id, alt)
+        self._cache["edges"][rel_type][edge_id] = neu
+        self._index_edge(edge_id, neu)
+        self._persist_kanten(rel_type, [edge_id])
+        self._melden("reverse_edge", edge_id, kantenart=rel_type,
+                     quelle=neu["source"], ziel=neu["target"])
+        return edge_id
 
     def list_edges(self, rel_type=None):
         """

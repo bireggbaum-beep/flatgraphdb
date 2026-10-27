@@ -1,6 +1,9 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.3.0 (Speicherform 3)
+- reverse_edge(edge_id): dreht eine gerichtete Kante, Kennung und created_at bleiben. Wirft ValueError bei ungerichteter Kante, Kaskadenkante und nicht erlaubtem Paar. Neues Ereignis reverse_edge in bei_aenderung. pDMS: keine.
+
 4.2.0 (Speicherform 3)
 - Schema: "optional": True an jeder Spec ({"type": int, "optional": True}); das Feld darf fehlen oder None sein, sonst wird es wie bisher geprüft. Die dict-Form gilt jetzt auch für int, float, bool. pDMS: keine, alte Schemata bleiben Pflicht.
 - schema_verstoesse(sammlung=None): meldet (ref, feld, grund), wo der Bestand gegen sein Schema verstösst, wirft nicht; gleiche Prüfung wie beim Schreiben. pDMS: keine.

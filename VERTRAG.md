@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.2.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.3.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -213,7 +213,7 @@ ruft `f(meldung)` nach jeder Änderung auf, mit einem Dict:
 `{"ereignis", "ref", "zeit"}` plus `"sammlung"` bei Knoten bzw.
 `"kantenart"`, `"quelle"`, `"ziel"` bei Kanten. Ereignisse:
 `create_node`, `update_node`, `soft_delete`, `restore_node`,
-`create_edge`, `delete_edge`. Interne Sammlungen (`_audit_log`) werden
+`create_edge`, `delete_edge`, `reverse_edge` (ab 4.3.0). Interne Sammlungen (`_audit_log`) werden
 nicht gemeldet.
 
 - **In einer Transaktion** wird erst nach dem erfolgreichen Abschluss
@@ -431,6 +431,27 @@ Alles liegt im Arbeitsspeicher. Es gibt keine gemessene Obergrenze; die
 Kosten in Abschnitt 5 wachsen linear und werden irgendwann untragbar,
 bevor der Speicher knapp wird.
 
+### 2.10 Eine Kante umdrehen: `reverse_edge`
+
+Ab `4.3.0`. `reverse_edge(edge_id)` tauscht Quelle und Ziel einer
+gerichteten Kante und gibt die Kennung zurück. **Kennung, `created_at` und
+Meta bleiben** — löschen und neu anlegen verlöre die Kennung und stempelte
+ein neues Datum. Index, Platte und Transaktion (Rollback stellt die alte
+Richtung her) verhalten sich wie bei `create_edge`/`delete_edge`; gemeldet
+wird `reverse_edge` mit der neuen Quelle und dem neuen Ziel.
+
+Abgewiesen mit `ValueError`, die Kante bleibt unverändert:
+
+- **ungerichtete Kante** — es gibt nichts zu drehen,
+- **Kante mit Kaskadenlöschen** — danach hinge die Quelle am Ziel, und ein
+  Löschen risse die falsche Seite mit,
+- **ein Paar, das `edge_constraints` nicht erlaubt.**
+
+Eine fehlende Kante wirft `KanteFehlt`. Dass die Kante gedreht wurde, steht
+nur in der Meldung, nicht an der Kante selbst.
+
+Geprüft in `tests/test_flatgraph_kante_drehen.py`.
+
 ---
 
 ## 4. Verhalten im Fehlerfall
@@ -449,6 +470,8 @@ bevor der Speicher knapp wird.
 | `restore_node` auf fehlenden Knoten | `KnotenFehlt` |
 | `loeschfolgen` auf fehlenden Knoten (ab Entwurf) | `KnotenFehlt` |
 | `delete_edge` auf fehlende Kante | `KanteFehlt` |
+| `reverse_edge` auf fehlende Kante (ab 4.3.0) | `KanteFehlt` |
+| `reverse_edge` auf ungerichtete Kante, Kaskadenkante oder nicht erlaubtes Paar (ab 4.3.0) | `ValueError` |
 | `get_node` mit kaputter Referenz | `UngueltigeReferenz` |
 | `get_node` auf fehlenden Knoten | `None` |
 | `get_edge` auf fehlende Kante | `None` |
