@@ -189,7 +189,8 @@ class Editor:
                     "ref": ref, "typ": _anzeige(typ),
                     "name": d.get(nf) or kid,
                     "felder": {k: v for k, v in d.items()
-                               if k != nf and not k.startswith("_") and v != ""},
+                               if k not in (nf, "notiz") and not k.startswith("_") and v != ""},
+                    "notiz": d.get("notiz") or "",
                     "fehlt": fehlt,
                 })
         kanten = []
@@ -252,7 +253,7 @@ class Editor:
         self.db.create_node(typ, kid, daten)
         return f"{typ}/{kid}", True
 
-    def knoten_aendern(self, ref, name=None, felder=None):
+    def knoten_aendern(self, ref, name=None, felder=None, notiz=None):
         typ, _, kid = ref.partition("/")
         nf = self._namefeld(typ)
         daten = {}
@@ -265,8 +266,24 @@ class Editor:
             k = k.strip()
             if k and k != nf and not k.startswith("_"):
                 daten[k] = v
-        if daten:
+        if notiz is not None:
+            daten["notiz"] = notiz
+        if not daten:
+            return
+        with self.db.transaction():
+            alt = (self.db.get_node(ref, readonly=True) or {}).get(nf)
             self.db.update_node(typ, kid, daten)
+            if name is not None and alt and alt != daten[nf]:
+                self._erwaehnungen_umbenennen(alt, daten[nf])
+
+    def _erwaehnungen_umbenennen(self, alt, neu):
+        """[[Alt]] in allen Notizen -> [[Neu]], damit Verweise eine Umbenennung überleben."""
+        muster = re.compile(r"\[\[\s*" + re.escape(alt) + r"\s*\]\]", re.IGNORECASE)
+        for typ in self.db.list_collections():
+            for kid, d in self.db.list_nodes(typ, readonly=True).items():
+                n = d.get("notiz")
+                if isinstance(n, str) and muster.search(n):
+                    self.db.update_node(typ, kid, {"notiz": muster.sub(lambda _: f"[[{neu}]]", n)})
 
     def knoten_loeschen(self, ref):
         typ, _, kid = ref.partition("/")
@@ -389,7 +406,7 @@ def _aktionen(ed):
         return {"hinweis": ", ".join(teile)}
 
     def aendern(d):
-        ed.knoten_aendern(d["ref"], d.get("name"), d.get("felder"))
+        ed.knoten_aendern(d["ref"], d.get("name"), d.get("felder"), d.get("notiz"))
 
     def loeschen(d):
         ed.knoten_loeschen(d["ref"])

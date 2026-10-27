@@ -5,354 +5,562 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Graph-Editor</title>
 <style>
-:root{--bg:#f6f7f9;--pan:#fff;--tx:#1d2330;--mut:#6b7385;--lin:#dfe3ea;--akz:#2563eb;--akzb:#e3ecff;--warn:#b42318;--ok:#067647}
-@media (prefers-color-scheme:dark){:root{--bg:#14171d;--pan:#1c2029;--tx:#e6e9f0;--mut:#8b93a7;--lin:#2c3240;--akz:#6b9bff;--akzb:#22305a;--warn:#ff8a80;--ok:#5fd39a}}
+:root{--bg:#fbfbfc;--side:#f3f4f7;--pan:#fff;--tx:#1f2430;--mut:#7a8194;--lin:#e4e7ee;--akz:#4f6df5;--akzb:#eaeefe;--warn:#d4351c;--hover:#eef0f5;--sh:0 8px 30px rgba(20,30,60,.14)}
+@media (prefers-color-scheme:dark){:root{--bg:#15171c;--side:#1b1e25;--pan:#1f232b;--tx:#e7eaf1;--mut:#8b93a7;--lin:#2b303c;--akz:#7f95ff;--akzb:#252c4d;--warn:#ff7b6b;--hover:#262b35;--sh:0 8px 30px rgba(0,0,0,.5)}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.4 system-ui,sans-serif;height:100vh;display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,1.3fr) minmax(300px,1fr);gap:10px;padding:10px}
-section{background:var(--pan);border:1px solid var(--lin);border-radius:8px;display:flex;flex-direction:column;min-height:0;min-width:0}
-h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:0;padding:10px 12px 6px}
-.scroll{overflow:auto;flex:1;padding:4px 6px 10px}
-input,select,textarea,button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--lin);border-radius:6px;padding:5px 8px}
-button{cursor:pointer}button:hover{border-color:var(--akz)}
-textarea{width:100%;resize:vertical;min-height:34px}
-.kopf{padding:0 12px 8px;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid var(--lin)}
-.zeile{display:flex;gap:6px;align-items:center}.zeile>input{flex:1;min-width:0}
-#ntyp{flex:none!important;width:110px}
-.row{display:flex;align-items:center;gap:6px;padding:3px 6px;border-radius:5px;cursor:pointer;border:1px solid transparent}
-.row:hover{background:var(--bg)}
-.row.sel{background:var(--akzb)}
-.row.ueber{border-color:var(--akz);background:var(--akzb)}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-columns:248px 1fr}
+button,input,select,textarea{font:inherit;color:inherit}
+input,select,textarea{background:var(--pan);border:1px solid var(--lin);border-radius:8px;padding:6px 10px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--akz)}
+button{cursor:pointer;background:none;border:none;padding:0}
+a{color:var(--akz);cursor:pointer;text-decoration:none}
+
+/* Seitenleiste */
+#side{background:var(--side);border-right:1px solid var(--lin);padding:12px 10px;display:flex;flex-direction:column;gap:2px;height:100vh;overflow:auto;position:sticky;top:0}
+.suchknopf{display:flex;justify-content:space-between;align-items:center;background:var(--pan);border:1px solid var(--lin);border-radius:9px;padding:8px 10px;color:var(--mut);margin-bottom:8px;width:100%}
+.suchknopf kbd{font:11px system-ui;border:1px solid var(--lin);border-radius:5px;padding:0 5px}
+.sk{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);padding:12px 10px 4px}
+.nav{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:7px;width:100%;text-align:left}
+.nav:hover{background:var(--hover)}.nav.on{background:var(--akzb);font-weight:600}
+.nav .n{margin-left:auto;color:var(--mut);font-size:12px}
+.nav .plus{margin-left:6px;color:var(--mut);opacity:0;width:18px;text-align:center;border-radius:4px}
+.nav:hover .plus{opacity:1}.nav .plus:hover{background:var(--lin);color:var(--tx)}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+
+/* Hauptfläche */
+main{padding:28px 40px 80px;max-width:1280px;width:100%;min-width:0}
+h1{font-size:28px;margin:0;font-weight:700;border:none;padding:2px 6px;margin-left:-6px;width:100%;background:none;border-radius:8px;outline:none}
+h1:hover{background:var(--hover)}h1:focus{background:var(--pan);box-shadow:0 0 0 1px var(--akz)}
+.kopfzeile{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.tchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--akzb);border-radius:12px;padding:1px 10px;white-space:nowrap}
+.seite{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:36px;margin-top:18px}
+@media (max-width:1100px){.seite{grid-template-columns:1fr}body{grid-template-columns:1fr}#side{position:static;height:auto}}
+h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:26px 0 8px;font-weight:600}
+h3:first-child{margin-top:0}
+.felder{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;align-items:center}
+.felder label{color:var(--mut);font-size:13px}.pf{color:var(--warn)}
+.felder input,.felder select{width:100%;border-color:transparent;background:var(--hover)}
+.felder input:focus,.felder select:focus{border-color:var(--akz);background:var(--pan)}
+.felder .leer{border-color:var(--warn)}
+.notiz{min-height:70px;padding:8px 10px;border-radius:8px;background:var(--hover);white-space:pre-wrap;cursor:text;line-height:1.55}
+.notiz:empty::before{content:attr(data-ph);color:var(--mut)}
+textarea.notiz{width:100%;resize:vertical;display:block;font:inherit;background:var(--pan)}
+.ref{color:var(--akz);border-radius:4px;padding:0 3px;background:var(--akzb);cursor:pointer}.ref.tot{color:var(--warn);background:none;text-decoration:underline dotted;cursor:default}
+.gruppe{margin:0 0 12px}.gl{font-size:12px;color:var(--mut);margin-bottom:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--pan);border:1px solid var(--lin);border-radius:9px;padding:3px 6px 3px 9px;cursor:pointer}
+.chip:hover{border-color:var(--akz)}
+.chip small{color:var(--mut)}
+.x{color:var(--mut);padding:0 4px;border-radius:4px}.x:hover{background:var(--lin);color:var(--warn)}
+.attr{margin:4px 0 0 4px;font-size:12px}.attr select{padding:1px 6px;font-size:12px}
+.addrel{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}.addrel input{flex:1;min-width:160px}
+.hint{color:var(--mut);font-size:12px}
+.leertext{color:var(--mut);padding:6px 0}
+.karte{background:var(--pan);border:1px solid var(--lin);border-radius:12px;padding:10px}
+svg text{fill:var(--tx);font-size:10.5px;text-anchor:middle;pointer-events:none}
+svg .kante{stroke:var(--lin);stroke-width:1.2}svg .kante.m{stroke:var(--mut);stroke-width:1.5}
+svg g[data-act]{cursor:pointer}svg g[data-act]:hover circle{stroke:var(--akz);stroke-width:2}
+.tief{display:inline-flex;gap:0;border:1px solid var(--lin);border-radius:7px;overflow:hidden;float:right;margin-top:-4px}
+.tief button{padding:1px 9px;font-size:12px}.tief .on{background:var(--akzb)}
+.gefahr{color:var(--warn);font-size:12px;margin-top:30px}
+
+/* Tabelle */
+table{border-collapse:collapse;width:100%}
+th{font-size:12px;text-align:left;color:var(--mut);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--lin);cursor:pointer;white-space:nowrap}
+td{padding:7px 10px;border-bottom:1px solid var(--lin)}
+tr.z{cursor:pointer}tr.z:hover{background:var(--hover)}
 .luecke{color:var(--warn);font-weight:700}
-.pf{color:var(--warn)}
-.felder label{font-size:12px;color:var(--mut);align-self:center}
-.typ{font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--lin);border-radius:9px;padding:0 6px;white-space:nowrap}
-.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.zahl{color:var(--mut);font-size:12px}
-.caret{width:14px;text-align:center;color:var(--mut);user-select:none}
-.kinder{margin-left:16px;border-left:1px dashed var(--lin);padding-left:2px}
-.leer{color:var(--mut);padding:14px 12px}
-.wurzel{margin:8px 6px 0;padding:8px;border:1px dashed var(--lin);border-radius:6px;color:var(--mut);text-align:center;font-size:12px}
+.kachel{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.kachel .k{background:var(--pan);border:1px solid var(--lin);border-radius:12px;padding:12px 14px;text-align:left;cursor:pointer}
+.kachel .k:hover{border-color:var(--akz)}.kachel .k b{font-size:22px;display:block}
+.liste .r{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:7px;cursor:pointer}.liste .r:hover{background:var(--hover)}
+.zeilebaum{display:flex;align-items:center;gap:7px;padding:3px 6px;border-radius:6px;cursor:pointer;border:1px solid transparent}
+.zeilebaum:hover{background:var(--hover)}.zeilebaum.ueber{border-color:var(--akz);background:var(--akzb)}
+.kinder{margin-left:18px;border-left:1px dashed var(--lin);padding-left:3px}
+.caret{width:14px;text-align:center;color:var(--mut)}
+.wurzel{margin-top:10px;padding:8px;border:1px dashed var(--lin);border-radius:8px;color:var(--mut);text-align:center;font-size:12px}
 .wurzel.ueber{border-color:var(--akz);color:var(--akz)}
-.sekt{padding:8px 12px 2px;font-size:12px;color:var(--mut)}
-.rel{display:flex;gap:6px;align-items:center;padding:3px 12px}
-.rel .art{color:var(--mut);font-size:12px;min-width:70px}
-.rel a{flex:1;cursor:pointer;color:var(--akz);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.x{border:none;background:none;color:var(--mut);padding:0 6px}.x:hover{color:var(--warn)}
-.felder{padding:0 12px;display:grid;grid-template-columns:110px 1fr;gap:4px}
-#name{font-size:17px;font-weight:600;width:calc(100% - 24px);margin:10px 12px 0}
-#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:8px 14px;border-radius:8px;display:none;z-index:9;max-width:80vw}
-#toast.fehler{background:var(--warn);color:#fff}#toast button{margin-left:10px}
-.hint{font-size:12px;color:var(--mut);padding:0 12px 6px}
-label.chk{font-size:12px;color:var(--mut);display:flex;gap:4px;align-items:center}
-@media (max-width:900px){body{grid-template-columns:1fr;height:auto}section{max-height:70vh}}
+
+/* Palette, Dialog, Vorschläge, Hinweis */
+#schleier{position:fixed;inset:0;background:rgba(10,14,25,.35);display:none;align-items:flex-start;justify-content:center;padding-top:14vh;z-index:20}
+#box{background:var(--pan);border:1px solid var(--lin);border-radius:14px;box-shadow:var(--sh);width:min(620px,94vw);max-height:70vh;overflow:auto;padding:10px}
+#box>input{width:100%;font-size:16px;border:none;border-bottom:1px solid var(--lin);border-radius:0;padding:8px 6px}
+.pz{display:flex;gap:9px;align-items:center;padding:7px 8px;border-radius:8px;cursor:pointer}
+.pz.on,.pz:hover{background:var(--akzb)}.pz small{color:var(--mut);margin-left:auto}
+#sug{position:fixed;background:var(--pan);border:1px solid var(--lin);border-radius:10px;box-shadow:var(--sh);z-index:30;display:none;min-width:240px;padding:4px}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:8px 14px;border-radius:9px;display:none;z-index:40;max-width:80vw}
+#toast.fehler{background:var(--warn);color:#fff}#toast button{margin-left:12px;text-decoration:underline}
+.dlg label{display:block;font-size:12px;color:var(--mut);margin:10px 0 3px}.dlg textarea{width:100%;min-height:180px;font-family:ui-monospace,monospace;font-size:13px}
+.zeile{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{background:var(--akz);color:#fff;border-radius:8px;padding:6px 14px}
+.btn.zweit{background:var(--hover);color:var(--tx)}
 </style>
 </head>
 <body>
-
-<section id="links">
-  <h2>Objekte</h2>
-  <div class="kopf">
-    <div class="zeile">
-      <input id="ntyp" list="typen" placeholder="Typ" title="Typ – neu eintippen erlaubt">
-      <textarea id="nname" rows="2" placeholder="Name + Enter (mehrere Zeilen einfügen: Einrücken = darunter)" style="min-height:48px"></textarea>
-    </div>
-    <div class="zeile">
-      <label class="chk"><input type="checkbox" id="unter"> unter die Auswahl hängen</label>
-    </div>
-    <div class="zeile">
-      <input id="suche" placeholder="Suchen …">
-      <select id="tf"></select>
-    </div>
-    <div class="zeile">
-      <label class="chk"><input type="checkbox" id="lose"> ohne Beziehung</label>
-      <label class="chk"><input type="checkbox" id="luecke"> unvollständig</label>
-    </div>
-  </div>
-  <div class="scroll" id="liste"></div>
-</section>
-
-<section id="mitte">
-  <h2>Baum</h2>
-  <div class="kopf">
-    <div class="zeile">
-      <span class="zahl">Beziehung:</span>
-      <input id="art" list="arten" placeholder="z. B. ist Teil von">
-      <select id="umg" title="Wie liest sich die Beziehung im Baum?">
-        <option value="0">A → B: B hängt unter A</option>
-        <option value="1">A → B: A hängt unter B</option>
-      </select>
-    </div>
-    <div class="hint" style="padding:0">Ziehen: auf ein Objekt = darunterhängen · im Baum = verschieben · Strg/Alt gedrückt = zusätzlich einhängen</div>
-  </div>
-  <div class="scroll" id="baum"></div>
-</section>
-
-<section id="rechts">
-  <h2>Details</h2>
-  <div class="scroll" id="detail"></div>
-</section>
-
-<datalist id="typen"></datalist>
-<datalist id="arten"></datalist>
-<datalist id="ziele"></datalist>
+<nav id="side"></nav>
+<main id="haupt"></main>
+<div id="schleier"><div id="box"></div></div>
+<div id="sug"></div>
 <div id="toast"></div>
 
 <script>
-let S = {knoten: [], kanten: []};
-let sel = null;
-const zu = new Set();               // eingeklappte Baumknoten
+/* ============ Zustand ============ */
+let S = {knoten: [], kanten: [], modell: null};
+let M = new Map(), AUS = new Map(), EIN = new Map();
 const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ls = {
-  get: (k, d) => { try { return localStorage.getItem(k) ?? d } catch (e) { return d } },
+  get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v } catch (e) { return d } },
   set: (k, v) => { try { localStorage.setItem(k, v) } catch (e) {} }
 };
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const zuAdd = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
+function indexieren() {
+  M = new Map(S.knoten.map(k => [k.ref, k])); AUS = new Map(); EIN = new Map();
+  for (const e of S.kanten) { zuAdd(AUS, e.von, e); zuAdd(EIN, e.nach, e); }
+}
+const typenListe = () => S.modell ? Object.keys(S.modell.typen) : [...new Set(S.knoten.map(k => k.typ))].sort();
+const artenListe = () => S.modell ? S.modell.arten : [...new Set(S.kanten.map(k => k.art))].sort();
+const farbe = typ => `hsl(${(Math.max(0, typenListe().indexOf(typ)) * 47 + 215) % 360} 62% 52%)`;
+const punkt = typ => `<i class="dot" style="background:${farbe(typ)}"></i>`;
+const nameVon = ref => (M.get(ref) || {name: ref}).name;
+const kf = art => (S.modell && S.modell.kantenfelder[art]) || [];
+const KIND_ZU_ELTERN = ['ist teil von', 'gehört zu', 'steht in'];
 
-// ---------- Server ----------
+/* ============ Server ============ */
 let tt;
 function toast(text, fehler, rueck) {
   const t = $('toast');
-  t.className = fehler ? 'fehler' : '';
-  t.textContent = text;
+  t.className = fehler ? 'fehler' : ''; t.textContent = text;
   if (rueck) { const b = document.createElement('button'); b.textContent = 'Rückgängig'; b.onclick = () => { t.style.display = 'none'; rueck(); }; t.appendChild(b); }
-  t.style.display = 'block';
-  clearTimeout(tt); tt = setTimeout(() => t.style.display = 'none', rueck ? 7000 : 3500);
+  t.style.display = 'block'; clearTimeout(tt); tt = setTimeout(() => t.style.display = 'none', rueck ? 7000 : 4500);
 }
 async function api(aktion, daten) {
   const r = await fetch('/api/' + aktion, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(daten || {})});
   const j = await r.json();
   if (!r.ok) { toast(j.fehler || 'Fehler', true); return null; }
-  S = j.zustand;
-  if (sel && !byRef(sel)) sel = null;
+  S = j.zustand; indexieren();
   if (j.hinweis) toast(j.hinweis);
   render();
   return j;
 }
-async function laden() {
-  const r = await fetch('/api/zustand'); S = (await r.json()).zustand; render();
+
+/* ============ Navigation ============ */
+const enc = encodeURIComponent;
+function route() {
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (h.startsWith('o/')) return {v: 'o', ref: h.slice(2)};
+  if (h.startsWith('t/')) return {v: 't', typ: h.slice(2)};
+  if (h === 'baum') return {v: 'baum'};
+  return {v: 'start'};
+}
+const gehe = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
+const oeffne = ref => gehe('o/' + enc(ref));
+window.addEventListener('hashchange', render);
+function zuletzt(ref) {
+  let l = []; try { l = JSON.parse(ls.get('zuletzt', '[]')); } catch (e) {}
+  ls.set('zuletzt', JSON.stringify([ref, ...l.filter(r => r !== ref)].slice(0, 12)));
+}
+const zuletztListe = () => { try { return JSON.parse(ls.get('zuletzt', '[]')).filter(r => M.has(r)); } catch (e) { return []; } };
+
+/* ============ Vorschläge (Autocomplete) ============ */
+const sug = {items: [], i: 0, pick: null};
+function sugZeige(anker, items, pick) {
+  const el = $('sug');
+  sug.items = items; sug.i = 0; sug.pick = pick;
+  if (!items.length) { el.style.display = 'none'; return; }
+  const r = anker.getBoundingClientRect();
+  el.style.left = r.left + 'px'; el.style.top = (r.bottom + 4) + 'px'; el.style.display = 'block';
+  sugMalen();
+}
+function sugMalen() {
+  $('sug').innerHTML = sug.items.map((k, i) => `<div class="pz${i === sug.i ? ' on' : ''}" data-sug="${i}">${punkt(k.typ)}<span>${esc(k.name)}</span><small>${esc(k.typ)}</small></div>`).join('');
+}
+const sugZu = () => { $('sug').style.display = 'none'; sug.items = []; };
+function sugTaste(e) {
+  if (!sug.items.length) return false;
+  if (e.key === 'ArrowDown') { sug.i = (sug.i + 1) % sug.items.length; sugMalen(); }
+  else if (e.key === 'ArrowUp') { sug.i = (sug.i - 1 + sug.items.length) % sug.items.length; sugMalen(); }
+  else if (e.key === 'Enter' || e.key === 'Tab') { const k = sug.items[sug.i], f = sug.pick; sugZu(); f(k); }
+  else if (e.key === 'Escape') sugZu();
+  else return false;
+  e.preventDefault(); return true;
+}
+$('sug').addEventListener('mousedown', e => {
+  const z = e.target.closest('[data-sug]'); if (!z) return;
+  e.preventDefault(); const k = sug.items[+z.dataset.sug], f = sug.pick; sugZu(); f(k);
+});
+function treffer(q, ausser, n = 8) {
+  q = q.trim().toLowerCase();
+  if (!q) return [];
+  return S.knoten.filter(k => k.ref !== ausser && k.name.toLowerCase().includes(q))
+    .sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.localeCompare(b.name, 'de')).slice(0, n);
 }
 
-// ---------- Hilfen ----------
-const byRef = ref => S.knoten.find(k => k.ref === ref);
-const nameVon = ref => (byRef(ref) || {name: ref}).name;
-function arten() { return S.modell ? S.modell.arten : [...new Set(S.kanten.map(k => k.art))].sort(); }
-function aktArt() { return $('art').value.trim() || 'ist Teil von'; }
-// Arten, die sich vom Kind zum Elternteil lesen
-const KIND_ZU_ELTERN = ['ist teil von', 'gehört zu', 'steht in'];
-function umgekehrt() { return $('umg').value === '1'; }
-function artGewechselt() {
-  const gespeichert = ls.get('umg:' + aktArt().toLowerCase(), null);
-  $('umg').value = gespeichert ?? (KIND_ZU_ELTERN.includes(aktArt().toLowerCase()) ? '1' : '0');
-}
-// Kanten dieser Art als {kante, kind}: je nach Leserichtung des Baums
-function kinderVon(ref, art) {
-  const u = umgekehrt();
-  return S.kanten.filter(k => k.gerichtet && k.art === art && (u ? k.nach : k.von) === ref)
-    .map(k => ({id: k.id, nach: u ? k.von : k.nach}));
-}
-function istKind(ref, art) {
-  const u = umgekehrt();
-  return S.kanten.some(k => k.gerichtet && k.art === art && (u ? k.von : k.nach) === ref);
-}
-function hatBeziehung(ref) { return S.kanten.some(k => k.von === ref || k.nach === ref); }
-function auswahl(ref) { sel = ref; render(); }
-
-// ---------- Ziehen ----------
-function ziehbar(el, daten) {
-  el.draggable = true;
-  el.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', JSON.stringify(daten)); e.dataTransfer.effectAllowed = 'copyMove'; e.stopPropagation(); });
-}
-function ablage(el, beiDrop) {
-  el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('ueber'); e.stopPropagation(); });
-  el.addEventListener('dragleave', () => el.classList.remove('ueber'));
-  el.addEventListener('drop', e => {
-    e.preventDefault(); e.stopPropagation(); el.classList.remove('ueber');
-    let d; try { d = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (x) { return; }
-    beiDrop(d, e.ctrlKey || e.altKey);
-  });
-}
-function einhaengen(eltern, d, kopie) {
-  if (d.ref === eltern) return;
-  ls.set('art', aktArt());
-  ls.set('umg:' + aktArt().toLowerCase(), $('umg').value);
-  api('einhaengen', {eltern, kind: d.ref, art: aktArt(), umgekehrt: umgekehrt(), alte_kante: (d.kante && !kopie) ? d.kante : null});
-}
-
-// ---------- Darstellung ----------
-function zeile(k, extra) {
-  const r = document.createElement('div');
-  r.className = 'row' + (k.ref === sel ? ' sel' : '');
-  r.innerHTML = `<span class="typ">${esc(k.typ)}</span><span class="name">${esc(k.name)}</span>${k.fehlt && k.fehlt.length ? `<span class="luecke" title="Fehlt: ${esc(k.fehlt.join(', '))}">!</span>` : ''}`;
-  r.onclick = () => auswahl(k.ref);
-  return r;
-}
-function renderListe() {
-  const q = $('suche').value.trim().toLowerCase(), tf = $('tf').value, lose = $('lose').checked, luecke = $('luecke').checked;
-  const L = $('liste'); L.innerHTML = '';
-  const treffer = S.knoten.filter(k =>
-    (!tf || k.typ === tf) && (!q || k.name.toLowerCase().includes(q)) && (!lose || !hatBeziehung(k.ref)) && (!luecke || k.fehlt.length))
-    .sort((a, b) => a.typ.localeCompare(b.typ) || a.name.localeCompare(b.name, 'de'));
-  if (!S.knoten.length) L.innerHTML = '<div class="leer">Noch nichts erfasst. Oben Typ und Name eintippen, Enter.</div>';
-  for (const k of treffer) {
-    const r = zeile(k);
-    ziehbar(r, {ref: k.ref});
-    ablage(r, (d, kopie) => einhaengen(k.ref, d, kopie));
-    L.appendChild(r);
+/* ============ Hilfen für Verknüpfungen ============ */
+// Was wurde zwischen diesen beiden Typen bisher benutzt? Häufigstes gewinnt; sonst die letzte Wahl.
+function vorhersage(typA, typB) {
+  const z = new Map();
+  for (const e of S.kanten) {
+    const a = (M.get(e.von) || {}).typ, b = (M.get(e.nach) || {}).typ;
+    if (a === typA && b === typB) z.set('aus|' + e.art, (z.get('aus|' + e.art) || 0) + 1);
+    if (a === typB && b === typA) z.set('ein|' + e.art, (z.get('ein|' + e.art) || 0) + 1);
   }
+  const best = [...z.entries()].sort((x, y) => y[1] - x[1])[0];
+  if (best) { const [dir, art] = best[0].split('|'); return {art, dir}; }
+  try { return JSON.parse(ls.get('paar:' + typA + '>' + typB, 'null')); } catch (e) { return null; }
 }
-function renderBaum() {
-  const art = aktArt(), B = $('baum'); B.innerHTML = '';
-  const wurzeln = S.knoten.filter(k => kinderVon(k.ref, art).length && !istKind(k.ref, art))
-    .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  if (!wurzeln.length) {
-    B.innerHTML = `<div class="leer">Noch keine „${esc(art)}“-Hierarchie.<br>Ein Objekt aus der Liste links auf ein anderes ziehen, oder beim Erfassen „unter die Auswahl hängen“ ankreuzen, oder Zeilen mit Einrückung einfügen.</div>`;
-    return;
-  }
-  const zeichne = (k, kante, pfad, ziel) => {
-    const kids = kinderVon(k.ref, art), zugeklappt = zu.has(k.ref);
-    const r = zeile(k);
-    const c = document.createElement('span'); c.className = 'caret'; c.textContent = kids.length ? (zugeklappt ? '▸' : '▾') : '';
-    c.onclick = e => { e.stopPropagation(); zugeklappt ? zu.delete(k.ref) : zu.add(k.ref); render(); };
-    r.prepend(c);
-    if (kids.length) r.insertAdjacentHTML('beforeend', `<span class="zahl">${kids.length}</span>`);
-    ziehbar(r, {ref: k.ref, kante});
-    ablage(r, (d, kopie) => einhaengen(k.ref, d, kopie));
-    ziel.appendChild(r);
-    if (kids.length && !zugeklappt && !pfad.includes(k.ref)) {
-      const box = document.createElement('div'); box.className = 'kinder';
-      for (const e of kids.sort((a, b) => nameVon(a.nach).localeCompare(nameVon(b.nach), 'de')))
-        if (byRef(e.nach)) zeichne(byRef(e.nach), e.id, [...pfad, k.ref], box);
-      ziel.appendChild(box);
-    }
-  };
-  for (const w of wurzeln) zeichne(w, null, [], B);
-  const wz = document.createElement('div'); wz.className = 'wurzel'; wz.textContent = 'hierher ziehen = aus dem Baum lösen';
-  ablage(wz, d => { if (d.kante) api('kante_weg', {id: d.kante}); });
-  B.appendChild(wz);
+const artRichtung = art => KIND_ZU_ELTERN.includes(art.toLowerCase());
+
+/* ============ Notiz mit [[Verweisen]] ============ */
+const findeNachName = name => S.knoten.find(k => k.name.toLowerCase() === name.trim().toLowerCase());
+function notizHtml(text) {
+  return text.split(/(\[\[[^\]]+\]\])/).map(teil => {
+    const m = teil.match(/^\[\[([^\]]+)\]\]$/);
+    if (!m) return esc(teil);
+    const k = findeNachName(m[1]);
+    return k ? `<span class="ref" data-act="open" data-ref="${esc(k.ref)}">${esc(k.name)}</span>` : `<span class="ref tot" title="Kein Objekt mit diesem Namen">${esc(m[1])}</span>`;
+  }).join('');
 }
-function renderDetail() {
-  const D = $('detail'), k = sel && byRef(sel);
-  if (!k) { D.innerHTML = '<div class="leer">Ein Objekt wählen.</div>'; return; }
-  const aus = S.kanten.filter(e => e.von === k.ref), ein = S.kanten.filter(e => e.nach === k.ref);
+function erwaehntIn(k) {
+  const n = k.name.toLowerCase();
+  return S.knoten.filter(o => o.ref !== k.ref && [...o.notiz.matchAll(/\[\[([^\]]+)\]\]/g)].some(m => m[1].trim().toLowerCase() === n));
+}
+
+/* ============ Graph (Nachbarschaft) ============ */
+function graphSvg(ref, tiefe) {
+  const W = 360, H = 340, cx = W / 2, cy = H / 2;
+  const nb = r => [...(AUS.get(r) || []).map(e => e.nach), ...(EIN.get(r) || []).map(e => e.von)].filter(x => M.has(x));
+  const ring1 = [...new Set(nb(ref))].slice(0, 14);
+  const gesehen = new Set([ref, ...ring1]), ring2 = [];
+  if (tiefe > 1) for (const r of ring1) for (const o of nb(r)) if (!gesehen.has(o) && ring2.length < 30) { gesehen.add(o); ring2.push(o); }
+  const pos = new Map([[ref, [cx, cy]]]);
+  const kreis = (liste, rad, versatz) => liste.forEach((r, i) => { const w = 2 * Math.PI * i / liste.length - Math.PI / 2 + versatz; pos.set(r, [cx + rad * Math.cos(w), cy + rad * Math.sin(w)]); });
+  kreis(ring1, tiefe > 1 ? 82 : 110, 0); kreis(ring2, 150, 0.3);
+  const linien = S.kanten.filter(e => pos.has(e.von) && pos.has(e.nach)).map(e => {
+    const [x1, y1] = pos.get(e.von), [x2, y2] = pos.get(e.nach), m = e.von === ref || e.nach === ref;
+    return `<line class="kante${m ? ' m' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"><title>${esc(nameVon(e.von))} ${esc(e.art)} ${esc(nameVon(e.nach))}</title></line>`;
+  }).join('');
+  const knoten = [...pos.entries()].map(([r, [x, y]]) => {
+    const k = M.get(r), mitte = r === ref, t = k.name.length > 18 ? k.name.slice(0, 17) + '…' : k.name;
+    return `<g data-act="open" data-ref="${esc(r)}"><circle cx="${x}" cy="${y}" r="${mitte ? 11 : 7}" fill="${farbe(k.typ)}"/><text x="${x}" y="${y + (mitte ? 25 : 19)}"${mitte ? ' style="font-weight:700"' : ''}>${esc(t)}</text><title>${esc(k.name)} · ${esc(k.typ)}</title></g>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">${linien}${knoten}</svg>`;
+}
+
+/* ============ Darstellung ============ */
+function renderSeite() {
+  const r = route(), typen = typenListe();
+  $('side').innerHTML = `
+    <button class="suchknopf" data-act="palette"><span>Suchen oder anlegen …</span><kbd>Strg K</kbd></button>
+    <button class="nav${r.v === 'start' ? ' on' : ''}" data-act="start">⌂ Übersicht</button>
+    <button class="nav${r.v === 'baum' ? ' on' : ''}" data-act="baum">⛶ Baum</button>
+    <div class="sk">Typen</div>
+    ${typen.map(t => `<button class="nav${r.v === 't' && r.typ === t ? ' on' : ''}" data-act="typ" data-typ="${esc(t)}">${punkt(t)}<span>${esc(t)}</span><span class="n">${S.knoten.filter(k => k.typ === t).length}</span><span class="plus" data-act="neu_typ" data-typ="${esc(t)}" title="Neu anlegen">＋</span></button>`).join('')}
+    ${zuletztListe().length ? `<div class="sk">Zuletzt</div>` + zuletztListe().slice(0, 6).map(ref => { const k = M.get(ref); return `<button class="nav" data-act="open" data-ref="${esc(ref)}">${punkt(k.typ)}<span>${esc(k.name)}</span></button>`; }).join('') : ''}
+    <div style="flex:1"></div>
+    <button class="nav" data-act="import">☰ Liste einfügen …</button>`;
+}
+
+function renderStart() {
+  const luecken = S.knoten.filter(k => k.fehlt && k.fehlt.length), lose = S.knoten.filter(k => !AUS.has(k.ref) && !EIN.has(k.ref));
+  const zeile = k => `<div class="r" data-act="open" data-ref="${esc(k.ref)}">${punkt(k.typ)}<span>${esc(k.name)}</span><small class="hint">${esc(k.typ)}${k.fehlt && k.fehlt.length ? ' · fehlt: ' + esc(k.fehlt.join(', ')) : ''}</small></div>`;
+  return `<h1 style="font-size:24px;cursor:default" contenteditable="false">Übersicht</h1>
+    <h3 style="margin-top:18px">Objekte</h3>
+    <div class="kachel">${typenListe().map(t => `<button class="k" data-act="typ" data-typ="${esc(t)}"><span class="hint">${punkt(t)} ${esc(t)}</span><b>${S.knoten.filter(k => k.typ === t).length}</b></button>`).join('')}</div>
+    ${S.knoten.length ? '' : '<p class="leertext">Noch nichts erfasst. Strg K drücken, tippen, Enter – oder links bei einem Typ auf ＋.</p>'}
+    ${luecken.length ? `<h3>Unvollständig (${luecken.length})</h3><div class="liste">${luecken.slice(0, 12).map(zeile).join('')}</div>` : ''}
+    ${lose.length ? `<h3>Ohne jede Verknüpfung (${lose.length})</h3><div class="liste">${lose.slice(0, 12).map(zeile).join('')}</div>` : ''}`;
+}
+
+let sortSp = 'name', sortR = 1, nurLuecke = false, filterText = '';
+function renderTyp(typ) {
+  const mt = S.modell && S.modell.typen[typ];
+  const spalten = mt ? mt.felder.filter(f => f.name !== mt.namefeld).slice(0, 5).map(f => f.name) : [];
+  const liste = S.knoten.filter(k => k.typ === typ && (!nurLuecke || k.fehlt.length) && (!filterText || k.name.toLowerCase().includes(filterText.toLowerCase())));
+  const wert = (k, sp) => sp === 'name' ? k.name : sp === '_b' ? (AUS.get(k.ref) || []).length + (EIN.get(k.ref) || []).length : (k.felder[sp] ?? '');
+  liste.sort((a, b) => { const x = wert(a, sortSp), y = wert(b, sortSp); return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'de')) * sortR; });
+  const kopf = (sp, t) => `<th data-act="sort" data-sp="${esc(sp)}">${esc(t)}${sortSp === sp ? (sortR > 0 ? ' ▴' : ' ▾') : ''}</th>`;
+  return `<div class="kopfzeile">${punkt(typ)}<h1 style="cursor:default" contenteditable="false">${esc(typ)}</h1></div>
+    <div class="zeile" style="margin:10px 0 16px">
+      <input id="neuname" placeholder="Neu: Name + Enter" style="min-width:240px">
+      <input id="ftext" placeholder="Filtern …" value="${esc(filterText)}">
+      ${S.modell ? `<label class="hint"><input type="checkbox" id="nurl" ${nurLuecke ? 'checked' : ''}> nur unvollständig</label>` : ''}
+    </div>
+    <table><thead><tr>${kopf('name', 'Name')}${spalten.map(s => kopf(s, s)).join('')}${kopf('_b', 'Verknüpfungen')}<th></th></tr></thead>
+    <tbody>${liste.map(k => `<tr class="z" data-act="open" data-ref="${esc(k.ref)}"><td>${esc(k.name)}</td>${spalten.map(s => `<td>${esc(k.felder[s] ?? '')}</td>`).join('')}<td>${wert(k, '_b')}</td><td>${k.fehlt && k.fehlt.length ? `<span class="luecke" title="Fehlt: ${esc(k.fehlt.join(', '))}">!</span>` : ''}</td></tr>`).join('')}</tbody></table>
+    ${liste.length ? '' : '<p class="leertext">Keine Objekte.</p>'}`;
+}
+
+function relGruppen(ref) {
+  const g = new Map(), gesehen = new Set();
+  const add = (key, label, e, andere) => { if (!g.has(key)) g.set(key, {label, eintraege: []}); g.get(key).eintraege.push({e, andere}); };
+  for (const e of AUS.get(ref) || []) { gesehen.add(e.id); add(e.gerichtet ? 'aus|' + e.art : 'un|' + e.art, e.gerichtet ? e.art + ' →' : '— ' + e.art, e, e.nach); }
+  for (const e of EIN.get(ref) || []) if (!gesehen.has(e.id)) add(e.gerichtet ? 'ein|' + e.art : 'un|' + e.art, e.gerichtet ? '← ' + e.art : '— ' + e.art, e, e.von);
+  return [...g.values()];
+}
+let graphTiefe = +ls.get('tiefe', '1');
+function renderObjekt(k) {
   const mt = S.modell && S.modell.typen[k.typ];
-  const feld = (f, wert, pflicht, optionen) => {
-    const marke = `<label title="${pflicht ? 'Pflichtfeld' : ''}">${esc(f)}${pflicht ? ' <span class="pf">*</span>' : ''}</label>`;
-    const leer = pflicht && !wert ? ' style="border-color:var(--warn)"' : '';
-    const ctl = optionen
-      ? `<select class="fv" data-f="${esc(f)}"${leer}><option value="">–</option>${optionen.map(o => `<option${o === wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
-      : `<input class="fv" data-f="${esc(f)}" value="${esc(wert || '')}"${leer}>`;
-    return marke + ctl;
+  const feld = (f, wert, pflicht, opt) => {
+    const leer = pflicht && !wert ? ' leer' : '';
+    return `<label for="f_${esc(f)}">${esc(f)}${pflicht ? ' <span class="pf">*</span>' : ''}</label>` + (opt
+      ? `<select id="f_${esc(f)}" class="fv${leer}" data-f="${esc(f)}"><option value="">–</option>${opt.map(o => `<option${o === wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input id="f_${esc(f)}" class="fv${leer}" data-f="${esc(f)}" value="${esc(wert || '')}">`);
   };
-  let felderZeilen;
+  let felder = '';
   if (mt) {
-    const bekannt = new Set(mt.felder.map(f => f.name));
-    felderZeilen = mt.felder.filter(f => f.name !== mt.namefeld).map(f => feld(f.name, k.felder[f.name], f.pflicht, f.optionen)).join('')
-      + Object.entries(k.felder).filter(([f]) => !bekannt.has(f)).map(([f, v]) => feld(f, v, false, null)).join('');
+    const bek = new Set(mt.felder.map(f => f.name));
+    felder = mt.felder.filter(f => f.name !== mt.namefeld).map(f => feld(f.name, k.felder[f.name], f.pflicht, f.optionen)).join('')
+      + Object.entries(k.felder).filter(([f]) => !bek.has(f)).map(([f, v]) => feld(f, v, false, null)).join('');
   } else {
-    felderZeilen = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('');
+    felder = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('')
+      + `<input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">`;
   }
-  const kf = art => (S.modell && S.modell.kantenfelder[art]) || [];
-  const relZeile = (e, richtung) => {
-    const andere = richtung === 'aus' ? e.nach : e.von, pfeil = !e.gerichtet ? '—' : (richtung === 'aus' ? '→' : '←');
-    const attr = kf(e.art).map(f => `<select class="kf" data-k="${esc(e.id)}" data-f="${esc(f.name)}" title="${esc(f.name)}"><option value="">${esc(f.name)}: –</option>${(f.optionen || []).map(o => `<option${o === (e.felder || {})[f.name] ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`).join('');
-    return `<div class="rel" style="flex-wrap:wrap"><span class="art">${pfeil} ${esc(e.art)}</span><a data-ref="${esc(andere)}">${esc(nameVon(andere))}</a><span class="typ">${esc((byRef(andere) || {}).typ || '')}</span><button class="x" data-k="${esc(e.id)}" title="Beziehung entfernen">×</button>${attr ? `<div style="width:100%;padding-left:76px">${attr}</div>` : ''}</div>`;
-  };
-  D.innerHTML = `
-    <input id="name" value="${esc(k.name)}">
-    <div class="hint" style="padding-top:2px">${esc(k.typ)}</div>
-    <div class="sekt">Beziehungen</div>
-    ${aus.map(e => relZeile(e, 'aus')).join('')}${ein.map(e => relZeile(e, 'ein')).join('') || ''}
-    ${!aus.length && !ein.length ? '<div class="hint">Noch keine.</div>' : ''}
-    <div class="rel" style="margin-top:6px">
-      <input id="ra" list="arten" placeholder="Art" style="width:96px" value="${esc(aktArt())}">
-      <select id="rr"><option value="aus">→ zu</option><option value="ein">← von</option><option value="ungerichtet">— mit</option></select>
-      <input id="rz" list="ziele" placeholder="Objekt (Name; neu = wird angelegt) + Enter" style="flex:1;min-width:0">
+  const gruppen = relGruppen(k.ref);
+  const rel = gruppen.map(g => `<div class="gruppe"><div class="gl">${esc(g.label)}</div><div class="chips">${g.eintraege.map(({e, andere}) => {
+    const o = M.get(andere);
+    const attr = kf(e.art).map(f => `<select class="kf" data-id="${esc(e.id)}" data-f="${esc(f.name)}" title="${esc(f.name)}"><option value="">${esc(f.name)}: –</option>${(f.optionen || []).map(x => `<option${x === (e.felder || {})[f.name] ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`).join('');
+    return `<div><span class="chip" data-act="open" data-ref="${esc(andere)}">${punkt(o.typ)}<span>${esc(o.name)}</span><small>${esc(o.typ)}</small><button class="x" data-act="kante_weg" data-id="${esc(e.id)}" title="Verknüpfung entfernen">×</button></span>${attr ? `<div class="attr">${attr}</div>` : ''}</div>`;
+  }).join('')}</div></div>`).join('');
+  const erw = erwaehntIn(k);
+  return `<div class="kopfzeile"><h1 id="titel" contenteditable="plaintext-only" spellcheck="false">${esc(k.name)}</h1><span class="tchip">${punkt(k.typ)}${esc(k.typ)}</span></div>
+  <div class="seite">
+    <div>
+      <h3>Eigenschaften</h3>
+      <div class="felder">${felder}</div>
+      <h3>Notiz</h3>
+      <div id="notiz" class="notiz" data-ph="Notiz … mit [[ andere Objekte erwähnen">${notizHtml(k.notiz)}</div>
+      <h3>Verknüpfungen</h3>
+      ${rel || '<div class="leertext">Noch keine.</div>'}
+      <div class="addrel">
+        <select id="rart"><option value="">Art …</option>${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
+        <select id="rdir"><option value="aus">→ zu</option><option value="ein">← von</option><option value="ungerichtet">— mit</option></select>
+        <input id="rziel" autocomplete="off" placeholder="Verknüpfen mit … (oder „Typ: Name“ = neu anlegen)">
+      </div>
+      <div id="rattr" class="attr"></div>
+      <button class="gefahr" data-act="loeschen">Objekt löschen</button>
     </div>
-    <div class="rel" id="rfz" style="display:none"></div>
-    <div class="sekt">Felder</div>
-    <div class="felder">${felderZeilen}
-      ${mt ? '' : '<input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">'}
+    <div>
+      <div class="karte"><div class="tief"><button data-act="tiefe" data-t="1" class="${graphTiefe === 1 ? 'on' : ''}">1</button><button data-act="tiefe" data-t="2" class="${graphTiefe === 2 ? 'on' : ''}">2</button></div><h3 style="margin:0 0 4px">Nachbarschaft</h3>${gruppen.length ? graphSvg(k.ref, graphTiefe) : '<div class="leertext">Noch keine Verknüpfungen.</div>'}</div>
+      ${erw.length ? `<h3>Erwähnt in</h3><div class="liste">${erw.map(o => `<div class="r" data-act="open" data-ref="${esc(o.ref)}">${punkt(o.typ)}<span>${esc(o.name)}</span><small class="hint">${esc(o.typ)}</small></div>`).join('')}</div>` : ''}
     </div>
-    <div style="padding:14px 12px"><button id="del" style="color:var(--warn)">Objekt löschen</button></div>`;
-  $('name').onchange = e => api('aendern', {ref: k.ref, name: e.target.value});
-  D.querySelectorAll('.fv').forEach(i => i.onchange = () => api('aendern', {ref: k.ref, felder: {[i.dataset.f]: i.value}}));
-  if ($('fw')) $('fw').onkeydown = e => { if (e.key === 'Enter' && $('fn').value.trim()) api('aendern', {ref: k.ref, felder: {[$('fn').value.trim()]: $('fw').value}}); };
-  D.querySelectorAll('select.kf').forEach(i => i.onchange = () => api('kante_felder', {id: i.dataset.k, felder: {[i.dataset.f]: i.value}}));
-  // Kanten-Attribut gleich beim Anlegen, wenn die gewählte Art eins hat
-  const rfz = $('rfz');
-  const rfZeigen = () => {
-    const fs = kf($('ra').value.trim());
-    rfz.style.display = fs.length ? '' : 'none';
-    rfz.innerHTML = fs.map(f => `<span class="art">${esc(f.name)}</span><select id="rf_${esc(f.name)}" data-f="${esc(f.name)}" class="rf"><option value="">–</option>${(f.optionen || []).map(o => `<option>${esc(o)}</option>`).join('')}</select>`).join('');
-  };
-  $('ra').oninput = rfZeigen; rfZeigen();
-  D.querySelectorAll('a[data-ref]').forEach(a => a.onclick = () => auswahl(a.dataset.ref));
-  D.querySelectorAll('button[data-k]').forEach(b => b.onclick = () => api('kante_weg', {id: b.dataset.k}));
-  $('del').onclick = loeschen;
-  const rz = $('rz'), dl = $('ziele'); dl.innerHTML = '';
-  const marken = new Map();
-  for (const n of S.knoten) { if (n.ref === k.ref) continue; let m = `${n.name} · ${n.typ}`; if (marken.has(m)) m += ' · ' + n.ref; marken.set(m, n.ref); dl.insertAdjacentHTML('beforeend', `<option value="${esc(m)}">`); }
-  rz.onkeydown = async e => {
-    if (e.key !== 'Enter' || !rz.value.trim()) return;
-    const art = $('ra').value.trim(); if (!art) { toast('Beziehungsart fehlt.', true); return; }
-    let ziel = marken.get(rz.value.trim());
-    if (!ziel) {   // kein Treffer: nach reinem Namen suchen, sonst neu anlegen
-      const roh = rz.value.trim().toLowerCase(), t = S.knoten.filter(n => n.name.toLowerCase() === roh && n.ref !== k.ref);
-      if (t.length === 1) ziel = t[0].ref;
-      else if (!t.length) { const j = await api('anlegen', {typ: $('ntyp').value.trim() || (S.modell ? Object.keys(S.modell.typen)[0] : 'Objekt'), name: rz.value.trim()}); if (!j) return; ziel = j.ref; }
-      else { toast('Name mehrdeutig – aus der Vorschlagsliste wählen.', true); return; }
-    }
-    ls.set('art', art);
-    const felder = {}; document.querySelectorAll('select.rf').forEach(i => { if (i.value) felder[i.dataset.f] = i.value; });
-    await api('kante', {ref: k.ref, ziel, art, richtung: $('rr').value, felder});
-    const n = $('rz'); if (n) n.focus();
-  };
-  ablage(D, (d) => { if (d.ref !== k.ref) api('kante', {ref: k.ref, ziel: d.ref, art: $('ra').value.trim() || aktArt(), richtung: 'aus', felder: {}}); });
+  </div>`;
 }
+
+/* Baum: Hierarchie einer Beziehungsart, mit Ziehen */
+let baumArt = ls.get('baumart', 'ist Teil von'), baumUmg = null;
+const zu = new Set();
+const umgekehrt = () => baumUmg !== null ? baumUmg : artRichtung(baumArt);
+function kinderVon(ref) { const u = umgekehrt(); return S.kanten.filter(k => k.gerichtet && k.art === baumArt && (u ? k.nach : k.von) === ref).map(k => ({id: k.id, nach: u ? k.von : k.nach})); }
+function istKind(ref) { const u = umgekehrt(); return S.kanten.some(k => k.gerichtet && k.art === baumArt && (u ? k.von : k.nach) === ref); }
+function renderBaum() {
+  const wurzeln = S.knoten.filter(k => kinderVon(k.ref).length && !istKind(k.ref)).sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  const zeichne = (k, kante, pfad) => {
+    const kids = kinderVon(k.ref), zugeklappt = zu.has(k.ref);
+    let h = `<div class="zeilebaum" draggable="true" data-drag='${esc(JSON.stringify({ref: k.ref, kante}))}' data-ziel="${esc(k.ref)}" data-act="open" data-ref="${esc(k.ref)}"><span class="caret" data-act="klapp" data-ref="${esc(k.ref)}">${kids.length ? (zugeklappt ? '▸' : '▾') : ''}</span>${punkt(k.typ)}<span>${esc(k.name)}</span><small class="hint">${esc(k.typ)}</small>${kids.length ? `<small class="hint" style="margin-left:auto">${kids.length}</small>` : ''}</div>`;
+    if (kids.length && !zugeklappt && !pfad.includes(k.ref))
+      h += `<div class="kinder">${kids.sort((a, b) => nameVon(a.nach).localeCompare(nameVon(b.nach), 'de')).filter(e => M.has(e.nach)).map(e => zeichne(M.get(e.nach), e.id, [...pfad, k.ref])).join('')}</div>`;
+    return h;
+  };
+  return `<h1 style="font-size:24px;cursor:default" contenteditable="false">Baum</h1>
+    <div class="zeile" style="margin:10px 0 6px"><span class="hint">Beziehung</span>
+      <select id="bart">${artenListe().map(a => `<option${a === baumArt ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <select id="bumg"><option value="0"${!umgekehrt() ? ' selected' : ''}>A → B: B hängt unter A</option><option value="1"${umgekehrt() ? ' selected' : ''}>A → B: A hängt unter B</option></select></div>
+    <p class="hint">Ziehen: auf ein Objekt = darunterhängen · Strg/Alt gedrückt = zusätzlich einhängen (sonst verschieben).</p>
+    ${wurzeln.length ? wurzeln.map(w => zeichne(w, null, [])).join('') : `<p class="leertext">Noch keine „${esc(baumArt)}“-Hierarchie. Im Objekt unter „Verknüpfungen“ anlegen, oder Liste einfügen (Einrücken = darunter).</p>`}
+    <div class="wurzel" data-ziel="__wurzel">hierher ziehen = aus dem Baum lösen</div>`;
+}
+
 function render() {
-  const tf = $('tf'), alt = tf.value, typen = [...new Set(S.knoten.map(k => k.typ))].sort();
-  tf.innerHTML = '<option value="">alle Typen</option>' + typen.map(t => `<option ${t === alt ? 'selected' : ''}>${esc(t)}</option>`).join('');
-  const erlaubt = S.modell ? Object.keys(S.modell.typen) : typen;
-  $('typen').innerHTML = erlaubt.map(t => `<option value="${esc(t)}">`).join('');
-  $('arten').innerHTML = arten().map(a => `<option value="${esc(a)}">`).join('');
-  renderListe(); renderBaum();
-  renderDetail();
+  const fo = document.activeElement, fokus = fo && fo.id && fo.id !== 'notiz' ? {id: fo.id, a: fo.selectionStart, b: fo.selectionEnd} : null;
+  const r = route(); let html = '';
+  if (r.v === 'o' && !M.has(r.ref)) { if (location.hash) location.hash = ''; else render(); return; }
+  if (r.v === 'o') { zuletzt(r.ref); html = renderObjekt(M.get(r.ref)); }
+  else if (r.v === 't') html = renderTyp(r.typ);
+  else if (r.v === 'baum') html = renderBaum();
+  else html = renderStart();
+  renderSeite();
+  $('haupt').innerHTML = html;
+  if (r.v === 'o') nachObjekt(M.get(r.ref));
+  if (fokus && $(fokus.id)) { const e = $(fokus.id); e.focus(); try { e.setSelectionRange(fokus.a, fokus.b); } catch (x) {} }
 }
 
-// ---------- Aktionen ----------
-async function erfassen() {
-  const text = $('nname').value.replace(/\s+$/, '');
-  if (!text.trim()) return;
-  const typ = $('ntyp').value.trim() || (S.modell ? Object.keys(S.modell.typen)[0] : 'Objekt'), unter = $('unter').checked && sel ? sel : null;
-  ls.set('typ', typ); ls.set('art', aktArt());
-  const mehrzeilig = text.includes('\n') || /^\s/.test(text);
-  const j = mehrzeilig
-    ? await api('massen', {text, typ, art: aktArt(), unter, umgekehrt: umgekehrt()})
-    : await api('anlegen', {typ, name: text, art: aktArt(), unter, umgekehrt: umgekehrt()});
-  if (j) { $('nname').value = ''; $('nname').rows = 2; if (j.ref && !unter) sel = j.ref; render(); $('nname').focus(); }
+/* ============ Verhalten der Objektseite ============ */
+function nachObjekt(k) {
+  const t = $('titel');
+  t.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); t.blur(); } };
+  t.onblur = () => { const n = t.textContent.trim(); if (n && n !== k.name) api('aendern', {ref: k.ref, name: n}); else t.textContent = k.name; };
+  $('notiz').onclick = e => { if (!e.target.closest('[data-act]')) notizBearbeiten(k); };
+  const ra = $('rart'), rz = $('rziel');
+  const attrZeigen = () => { $('rattr').innerHTML = kf(ra.value).map(f => `${esc(f.name)} <select class="rf" data-f="${esc(f.name)}"><option value="">–</option>${(f.optionen || []).map(o => `<option>${esc(o)}</option>`).join('')}</select>`).join(' '); };
+  ra.onchange = attrZeigen;
+  const verknuepfen = async ziel => {
+    if (!ra.value) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
+    const felder = {}; document.querySelectorAll('select.rf').forEach(i => { if (i.value) felder[i.dataset.f] = i.value; });
+    const dir = $('rdir').value, zt = M.get(ziel);
+    ls.set('paar:' + k.typ + '>' + zt.typ, JSON.stringify({art: ra.value, dir}));
+    ls.set('paar:' + zt.typ + '>' + k.typ, JSON.stringify({art: ra.value, dir: dir === 'aus' ? 'ein' : dir === 'ein' ? 'aus' : dir}));
+    const j = await api('kante', {ref: k.ref, ziel, art: ra.value, richtung: dir, felder});
+    if (j && $('rziel')) $('rziel').focus();
+  };
+  const gewaehlt = o => {
+    rz.value = o.name; rz.dataset.ref = o.ref;
+    const v = vorhersage(k.typ, o.typ);
+    if (v) { ra.value = v.art; $('rdir').value = v.dir; attrZeigen(); }
+    if (ra.value) verknuepfen(o.ref); else ra.focus();
+  };
+  rz.oninput = () => { delete rz.dataset.ref; sugZeige(rz, treffer(rz.value, k.ref), gewaehlt); };
+  rz.onkeydown = async e => {
+    if (sugTaste(e)) return;
+    if (e.key !== 'Enter' || !rz.value.trim()) return;
+    const eindeutig = rz.dataset.ref || (findeNachName(rz.value) || {}).ref;
+    if (eindeutig && eindeutig !== k.ref) return verknuepfen(eindeutig);
+    const m = rz.value.match(/^([^:]+):\s*(.+)$/);   // „Typ: Name“ legt neu an
+    if (m && !ra.value) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
+    if (m) { const j = await api('anlegen', {typ: m[1].trim(), name: m[2].trim()}); if (j) return verknuepfen(j.ref); }
+    else toast('Kein Objekt mit diesem Namen. Zum Anlegen „Typ: Name“ schreiben.', true);
+  };
+  rz.onblur = () => setTimeout(sugZu, 120);
+  const fw = $('fw');
+  if (fw) fw.onkeydown = e => { if (e.key === 'Enter' && $('fn').value.trim()) api('aendern', {ref: k.ref, felder: {[$('fn').value.trim()]: fw.value}}); };
 }
-function loeschen() {
-  if (!sel) return;
-  const ref = sel, n = nameVon(ref);
-  api('loeschen', {ref}).then(j => { if (j) toast(`„${n}“ gelöscht`, false, () => api('zurueck', {ref}).then(() => auswahl(ref))); });
+function notizBearbeiten(k) {
+  const nz = $('notiz'); if (nz.tagName === 'TEXTAREA') return;
+  const ta = document.createElement('textarea');
+  ta.id = 'notiz'; ta.className = 'notiz'; ta.value = k.notiz; ta.rows = Math.max(4, k.notiz.split('\n').length + 1);
+  nz.replaceWith(ta); ta.focus();
+  let fertig = false;
+  const speichern = () => { if (fertig) return; fertig = true; sugZu(); if (ta.value !== k.notiz) api('aendern', {ref: k.ref, notiz: ta.value}); else render(); };
+  ta.onblur = () => setTimeout(speichern, 130);
+  ta.oninput = () => {
+    const vor = ta.value.slice(0, ta.selectionStart), m = vor.match(/\[\[([^\]\n]*)$/);
+    if (!m) return sugZu();
+    sugZeige(ta, treffer(m[1], k.ref), o => {
+      const von = ta.selectionStart - m[1].length;
+      ta.value = ta.value.slice(0, von) + o.name + ']]' + ta.value.slice(ta.selectionStart);
+      ta.selectionStart = ta.selectionEnd = von + o.name.length + 2; ta.focus();
+    });
+  };
+  ta.onkeydown = e => { if (sugTaste(e)) return; if (e.key === 'Escape') { ta.value = k.notiz; ta.blur(); } };
 }
 
-$('nname').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); erfassen(); } });
-$('nname').addEventListener('input', e => { e.target.rows = Math.max(2, Math.min(8, e.target.value.split('\n').length)); });
-['suche', 'tf', 'lose', 'luecke'].forEach(i => $(i).addEventListener('input', renderListe));
-$('art').addEventListener('input', () => { artGewechselt(); renderBaum(); });
-$('umg').addEventListener('change', () => { ls.set('umg:' + aktArt().toLowerCase(), $('umg').value); renderBaum(); });
-$('art').addEventListener('change', () => ls.set('art', aktArt()));
+/* ============ Palette (Suchen / Anlegen) ============ */
+let pal = {liste: [], i: 0};
+function palette(vor) {
+  $('schleier').style.display = 'flex';
+  $('box').innerHTML = `<input id="palq" autocomplete="off" placeholder="Objekt suchen – oder „Typ: Name“ zum Anlegen"><div id="palr"></div>`;
+  $('palq').value = vor || ''; $('palq').focus(); pal.i = 0; palMalen();
+  $('palq').oninput = () => { pal.i = 0; palMalen(); };
+  $('palq').onkeydown = e => {
+    if (e.key === 'ArrowDown') { pal.i = Math.min(pal.i + 1, pal.liste.length - 1); palMalen(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { pal.i = Math.max(pal.i - 1, 0); palMalen(); e.preventDefault(); }
+    else if (e.key === 'Enter') { e.preventDefault(); palAus(pal.liste[pal.i]); }
+    else if (e.key === 'Escape') zuMachen();
+  };
+}
+const zuMachen = () => { $('schleier').style.display = 'none'; $('box').innerHTML = ''; };
+function palMalen() {
+  const q = $('palq').value, m = q.match(/^([^:]+):\s*(.*)$/);
+  const typ = m ? (typenListe().find(t => t.toLowerCase().startsWith(m[1].trim().toLowerCase())) || null) : null;
+  const name = typ ? m[2].trim() : q.trim();
+  pal.liste = treffer(name, null, 8).map(k => ({k}));
+  if (typ && name) pal.liste.unshift({neu: true, typ, name});
+  if (!q.trim()) pal.liste = zuletztListe().slice(0, 8).map(r => ({k: M.get(r)}));
+  pal.i = Math.min(pal.i, Math.max(0, pal.liste.length - 1));
+  const chips = !typ && q.trim() ? `<div class="hint" style="padding:8px 8px 2px">Neu anlegen als:</div><div class="chips" style="padding:0 8px 8px">${typenListe().map(t => `<button class="chip" data-act="palneu" data-typ="${esc(t)}">${punkt(t)}${esc(t)}</button>`).join('')}</div>` : '';
+  $('palr').innerHTML = pal.liste.map((x, i) => x.neu
+    ? `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">＋ ${punkt(x.typ)}<span>${esc(x.typ)} „${esc(x.name)}“ anlegen</span><small>Enter</small></div>`
+    : `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">${punkt(x.k.typ)}<span>${esc(x.k.name)}</span><small>${esc(x.k.typ)}</small></div>`).join('')
+    + (pal.liste.length || !q.trim() ? '' : '<div class="leertext" style="padding:8px">Nichts gefunden.</div>') + chips;
+}
+async function palAus(x) {
+  if (!x) return;
+  if (x.neu) return neuAnlegen(x.typ, x.name);
+  zuMachen(); oeffne(x.k.ref);
+}
+async function neuAnlegen(typ, name) {
+  const j = await api('anlegen', {typ, name}); if (j) { zuMachen(); oeffne(j.ref); }
+}
+
+/* ============ Liste einfügen ============ */
+function importDialog() {
+  const r = route(), unter = r.v === 'o' && M.get(r.ref);
+  $('schleier').style.display = 'flex';
+  $('box').innerHTML = `<div class="dlg" style="padding:6px 10px 10px">
+    <b>Liste einfügen</b>
+    <label>Eine Zeile pro Objekt. Einrücken = hängt unter der Zeile darüber. „Typ: Name“ setzt den Typ der Zeile.</label>
+    <textarea id="imptext" placeholder="Plant: Linie 1&#10;  Equipment: Autoklav&#10;  Raum: Reinraum C"></textarea>
+    <div class="zeile" style="margin-top:8px">
+      <select id="imptyp">${typenListe().map(t => `<option>${esc(t)}</option>`).join('')}</select><span class="hint">Standardtyp</span>
+      <select id="impart">${artenListe().map(a => `<option${a === baumArt ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <select id="impumg"><option value="0">A → B: B darunter</option><option value="1">A → B: A darunter</option></select>
+    </div>
+    ${unter ? `<label><input type="checkbox" id="impunter" checked> erste Ebene unter „${esc(unter.name)}“ hängen</label>` : ''}
+    <div class="zeile" style="margin-top:12px;justify-content:flex-end"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="impgo">Anlegen</button></div></div>`;
+  const vorschlag = () => { $('impumg').value = artRichtung($('impart').value) ? '1' : '0'; };
+  $('impart').onchange = vorschlag; vorschlag(); $('imptext').focus();
+}
+
+/* ============ Ereignisse ============ */
+const AKT = {
+  open: t => oeffne(t.dataset.ref),
+  start: () => gehe(''), baum: () => gehe('baum'), typ: t => gehe('t/' + enc(t.dataset.typ)),
+  neu_typ: t => palette(t.dataset.typ + ': '),
+  palette: () => palette(''), zu: zuMachen, import: importDialog,
+  palneu: t => { const n = $('palq').value.trim(); if (n) neuAnlegen(t.dataset.typ, n); },
+  kante_weg: t => api('kante_weg', {id: t.dataset.id}),
+  tiefe: t => { graphTiefe = +t.dataset.t; ls.set('tiefe', graphTiefe); render(); },
+  sort: t => { sortR = sortSp === t.dataset.sp ? -sortR : 1; sortSp = t.dataset.sp; render(); },
+  klapp: t => { zu.has(t.dataset.ref) ? zu.delete(t.dataset.ref) : zu.add(t.dataset.ref); render(); },
+  loeschen: () => {
+    const r = route(), n = nameVon(r.ref);
+    api('loeschen', {ref: r.ref}).then(j => { if (j) { gehe(''); toast(`„${n}“ gelöscht`, false, () => api('zurueck', {ref: r.ref}).then(() => oeffne(r.ref))); } });
+  },
+  impgo: async () => {
+    const r = route(), unter = $('impunter') && $('impunter').checked ? r.ref : null;
+    const j = await api('massen', {text: $('imptext').value, typ: $('imptyp').value, art: $('impart').value, umgekehrt: $('impumg').value === '1', unter});
+    if (j) zuMachen();
+  }
+};
+document.addEventListener('click', e => {
+  const pz = e.target.closest('[data-pi]');
+  if (pz) return palAus(pal.liste[+pz.dataset.pi]);
+  if (e.target === $('schleier')) return zuMachen();
+  const t = e.target.closest('[data-act]');
+  if (t && AKT[t.dataset.act]) { e.stopPropagation(); AKT[t.dataset.act](t, e); }
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.classList.contains('fv')) { const r = route(); api('aendern', {ref: r.ref, felder: {[t.dataset.f]: t.value}}); }
+  else if (t.classList.contains('kf')) api('kante_felder', {id: t.dataset.id, felder: {[t.dataset.f]: t.value}});
+  else if (t.id === 'nurl') { nurLuecke = t.checked; render(); }
+  else if (t.id === 'bart') { baumArt = t.value; baumUmg = null; ls.set('baumart', baumArt); render(); }
+  else if (t.id === 'bumg') { baumUmg = t.value === '1'; render(); }
+});
 document.addEventListener('keydown', e => {
-  if (e.key === 'Delete' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) loeschen();
+  const typt = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); palette(''); }
+  else if (e.key === '/' && !typt) { e.preventDefault(); palette(''); }
+  else if (e.key === 'Escape' && $('schleier').style.display === 'flex') zuMachen();
+  else if (e.key === 'Enter' && e.target.id === 'neuname' && e.target.value.trim()) neuAnlegen(route().typ, e.target.value.trim());
+});
+document.addEventListener('input', e => { if (e.target.id === 'ftext') { filterText = e.target.value; render(); } });
+/* Ziehen im Baum */
+document.addEventListener('dragstart', e => { const z = e.target.closest('[data-drag]'); if (z) { e.dataTransfer.setData('text/plain', z.dataset.drag); e.dataTransfer.effectAllowed = 'copyMove'; } });
+document.addEventListener('dragover', e => { const z = e.target.closest('[data-ziel]'); if (z) { e.preventDefault(); z.classList.add('ueber'); } });
+document.addEventListener('dragleave', e => { const z = e.target.closest('[data-ziel]'); if (z) z.classList.remove('ueber'); });
+document.addEventListener('drop', e => {
+  const z = e.target.closest('[data-ziel]'); if (!z) return;
+  e.preventDefault(); z.classList.remove('ueber');
+  let d; try { d = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (x) { return; }
+  if (z.dataset.ziel === '__wurzel') { if (d.kante) api('kante_weg', {id: d.kante}); return; }
+  if (d.ref === z.dataset.ziel) return;
+  const kopie = e.ctrlKey || e.altKey;
+  api('einhaengen', {eltern: z.dataset.ziel, kind: d.ref, art: baumArt, umgekehrt: umgekehrt(), alte_kante: d.kante && !kopie ? d.kante : null});
 });
 
-$('ntyp').value = ls.get('typ', '');
-$('art').value = ls.get('art', 'ist Teil von');
-artGewechselt();
-$('unter').checked = ls.get('unter', '') === '1';
-$('unter').onchange = () => ls.set('unter', $('unter').checked ? '1' : '');
-laden().then(() => $('nname').focus());
+fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); render(); });
 </script>
 </body>
 </html>

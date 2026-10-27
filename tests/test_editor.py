@@ -234,6 +234,25 @@ check("Neustart mit Modell: Art und Attribut bleiben erhalten",
 e.schliessen()
 shutil.rmtree(W2, ignore_errors=True)
 
+# --- Notiz mit [[Verweisen]] ---
+W3 = tempfile.mkdtemp(prefix="editor_test_")
+e = Editor(os.path.join(W3, "b"))
+x, _ = e.knoten_anlegen("Raum", "Reinraum C")
+y, _ = e.knoten_anlegen("Equipment", "Autoklav")
+e.knoten_aendern(y, notiz="steht im [[Reinraum C]] und [[reinraum c]].")
+ky = next(k for k in e.zustand()["knoten"] if k["ref"] == y)
+check("Notiz: wird als eigenes Feld geliefert, nicht unter den Feldern",
+      ky["notiz"].startswith("steht im") and "notiz" not in ky["felder"])
+e.knoten_aendern(x, name="Reinraum D")
+ky = next(k for k in e.zustand()["knoten"] if k["ref"] == y)
+check("Umbenennen zieht [[Verweise]] in anderen Notizen nach (Gross/klein egal)",
+      ky["notiz"] == "steht im [[Reinraum D]] und [[Reinraum D]].", ky["notiz"])
+e.knoten_aendern(y, name="Autoklav 2")
+check("Umbenennen mit eigener Notiz bleibt heil",
+      next(k for k in e.zustand()["knoten"] if k["ref"] == y)["notiz"].startswith("steht im"))
+e.schliessen()
+shutil.rmtree(W3, ignore_errors=True)
+
 shutil.rmtree(WURZEL, ignore_errors=True)
 bestanden = sum(1 for _, ok, _ in results if ok)
 print(f"\n{bestanden}/{len(results)} Checks bestanden")
