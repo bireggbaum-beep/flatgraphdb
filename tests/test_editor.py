@@ -143,8 +143,8 @@ m = Modell(os.environ.get("MODELL_DATEI", "editor/modell.json"))
 check("Modell: 10 Typen, Namensfeld je Typ aus dem Modell",
       len(m.typen) == 10 and m.typen["Plant"]["namefeld"] == "PlantName"
       and m.typen["Raum"]["namefeld"] == "RoomName", str(list(m.typen)))
-check("Modell: „Steht in“ und „steht in“ sind eine Art",
-      sum(1 for a in m.arten if a.casefold() == "steht in") == 1 and "steht in" in m.arten)
+check("Modell: „Steht in“ der Referenz beginnt wie die übrigen Arten klein",
+      "steht in" in m.arten and "Steht in" not in m.arten)
 check("Modell: Kanten-Attribut hängt an „führt zu Nachfolger (0:n)“",
       list(m.kantenfelder) == ["führt zu Nachfolger (0:n)"], str(m.kantenfelder))
 
@@ -178,7 +178,8 @@ try:
 except Fehler as f:
     check("Modell: unbekannte Beziehungsart wird abgelehnt, mit den erlaubten Arten",
           "im Modell nicht" in str(f) and "steht in" in str(f), str(f))
-e.kante_anlegen(eq, r1, "Steht in")
+pl_m, _ = e.knoten_anlegen("Plant", "Linie M")
+e.kante_anlegen(pl_m, r1, "Steht in")
 check("Modell: „Steht in“ wird als „steht in“ gespeichert und angezeigt",
       [(k["art"]) for k in e.zustand()["kanten"]] == ["steht in"])
 
@@ -189,11 +190,15 @@ e.kante_anlegen(s1, s2, NACH, felder={"ProcessstepType": "Wartezeit / Haltezeit"
 kk = next(k for k in e.zustand()["kanten"] if k["art"] == NACH)
 check("Kanten-Attribut: Art mit Klammern wird original angezeigt, Attribut gespeichert",
       kk["felder"] == {"ProcessstepType": "Wartezeit / Haltezeit"}, str(kk))
+dk, _ = e.knoten_anlegen("Dokument", "Spez")
 try:
-    e.kante_anlegen(eq, r1, "gehört zu", felder={"ProcessstepType": "Standard-Fertigungsschritt"})
+    e.kante_anlegen(dk, eq, "gehört zu", felder={"ProcessstepType": "Standard-Fertigungsschritt"})
     check("Kanten-Attribut: an der falschen Art wird abgelehnt", False)
-except Fehler:
-    check("Kanten-Attribut: an der falschen Art wird abgelehnt", True)
+except Fehler as f:
+    check("Kanten-Attribut: an der falschen Art wird abgelehnt (das Paar selbst ist erlaubt)",
+          "kein Attribut" in str(f), str(f))
+check("Kanten-Attribut: das Modell nennt ProcessstepType als Pflicht der Nachfolger-Kante",
+      m.kantenfelder[NACH][0]["pflicht"] is True)
 try:
     e.kante_aendern(kk["id"], {"ProcessstepType": "irgendwas"})
     check("Kanten-Attribut: Wert ausserhalb der Auswahl wird abgelehnt", False)
@@ -205,21 +210,33 @@ check("Kanten-Attribut ändern: gleiche Enden, neuer Wert, genau eine Kante",
       len(k2) == 1 and (k2[0]["von"], k2[0]["nach"]) == (s1, s2)
       and k2[0]["felder"] == {"ProcessstepType": "Gate / In-Process Control (IPC)"})
 
-e.einhaengen(r1, eq, "gehört zu", umgekehrt=True)
-check("Einhängen umgekehrt: die Kante läuft Kind -> Eltern",
-      any((k["von"], k["nach"], k["art"]) == (eq, r1, "gehört zu") for k in e.zustand()["kanten"]))
+pl2, _ = e.knoten_anlegen("Plant", "Zweite")
+e.einhaengen(r1, pl2, "steht in")
+check("Einhängen: die Richtung folgt dem Regelwerk (Plant steht in Raum, auch wenn der Raum der Eltern ist)",
+      any((k["von"], k["nach"], k["art"]) == (pl2, r1, "steht in") for k in e.zustand()["kanten"]))
 try:
-    e.einhaengen(eq, r1, "gehört zu", umgekehrt=True)
-    check("Einhängen umgekehrt: Kreis wird erkannt", False)
+    e.einhaengen(s2, s1, NACH)
+    check("Einhängen: Kreis in der Nachfolge wird erkannt", False)
 except Fehler:
-    check("Einhängen umgekehrt: Kreis wird erkannt", True)
+    check("Einhängen: Kreis in der Nachfolge wird erkannt", True)
+try:
+    e.einhaengen(r1, pl2, "ist Teil von")
+    check("Einhängen: Art ohne Regel für diese Typen wird abgelehnt", False)
+except Fehler as f:
+    check("Einhängen: Art ohne Regel für diese Typen wird abgelehnt, mit Hinweis auf das Erlaubte",
+          "steht in" in str(f), str(f))
 
-neu, _, hin = e.massen("Plant: Linie 2\n  Equipment: Pumpe\n  Raum: Halle", "Plant", "ist Teil von",
-                       umgekehrt=True)
+neu, _, hin = e.massen("Plant: Linie 2\n  Equipment: Pumpe\n  Raum: Halle", "Plant")
 nm = {k["name"]: k["ref"] for k in e.zustand()["knoten"]}
-check("Massen mit Modell und umgekehrter Art: Kinder zeigen auf das Elternteil",
-      not hin and {(k["von"], k["nach"]) for k in e.zustand()["kanten"] if k["art"] == "ist Teil von"}
-      == {(nm["Pumpe"], nm["Linie 2"]), (nm["Halle"], nm["Linie 2"])}, str(hin))
+check("Massen mit Regelwerk: Art und Richtung ergeben sich aus den Typen (Pumpe ist Teil von Linie 2, Linie 2 steht in Halle)",
+      not hin and {(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"] if k["von"] in (nm["Pumpe"], nm["Linie 2"])}
+      == {(nm["Pumpe"], nm["Linie 2"], "ist Teil von"), (nm["Linie 2"], nm["Halle"], "steht in")}, str(hin))
+_, _, hin = e.massen("Plant: Linie 3\n  Dokument: Plan", "Plant")
+check("Massen: eine Zeile ohne passende Beziehung wird gemeldet, das Objekt aber angelegt",
+      len(hin) == 0 and any(k["name"] == "Plan" for k in e.zustand()["knoten"]))
+_, _, hin = e.massen("Material: Pulver\n  Equipment: Mischer", "Material")
+check("Massen: zwischen Material und Equipment gibt es keine Beziehung -> Hinweis statt Verknüpfung",
+      len(hin) == 1 and "keine Beziehung" in hin[0], str(hin))
 try:
     e.massen("Plant: Nichts", "Plant", "wohnt in")
     check("Massen: unbekannte Art lehnt ab, bevor etwas angelegt wird", False)
@@ -256,13 +273,13 @@ shutil.rmtree(W3, ignore_errors=True)
 # --- Anlegen im Kontext (Werte und Verknüpfungen aus dem Filter) ---
 W4 = tempfile.mkdtemp(prefix="editor_test_")
 e = Editor(os.path.join(W4, "b"), m)
-rm, _ = e.knoten_anlegen("Raum", "Reinraum C")
+rm, _ = e.knoten_anlegen("Plant", "Linie C")
 ref, neu = e.anlegen_im_kontext("Equipment", "Waage", {"EquipmentGXP": "GXP"},
-                                [{"ziel": rm, "art": "steht in", "richtung": "aus"}])
+                                [{"ziel": rm, "art": "ist Teil von", "richtung": "aus"}])
 kn = next(k for k in e.zustand()["knoten"] if k["ref"] == ref)
 check("Kontext: Feld aus dem Filter ist gesetzt", kn["felder"].get("EquipmentGXP") == "GXP")
 check("Kontext: Verknüpfung aus dem Filter ist angelegt",
-      [(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"]] == [(ref, rm, "steht in")])
+      [(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"]] == [(ref, rm, "ist Teil von")])
 try:
     e.anlegen_im_kontext("Equipment", "Pumpe", {"EquipmentGXP": "GXP"},
                          [{"ziel": rm, "art": "wohnt in"}])
@@ -270,10 +287,12 @@ try:
 except Fehler:
     check("Kontext: eine fehlerhafte Verknüpfung nimmt auch das Objekt zurück",
           not any(k["name"] == "Pumpe" for k in e.zustand()["knoten"]))
-e.anlegen_im_kontext("Equipment", "Waage", None, [{"ziel": rm, "art": "gehört zu"}])
-check("Kontext: gab es das Objekt schon, kommt nur die Verknüpfung dazu",
+plk, _ = e.knoten_anlegen("Plant", "Linie K")
+e.anlegen_im_kontext("Equipment", "Waage", None, [{"ziel": plk}])
+check("Kontext: gab es das Objekt schon, kommt nur die Verknüpfung dazu (Art und Richtung aus dem Regelwerk)",
       sum(1 for k in e.zustand()["knoten"] if k["name"] == "Waage") == 1
-      and sum(1 for k in e.zustand()["kanten"]) == 2)
+      and sum(1 for k in e.zustand()["kanten"]) == 2
+      and any((k["von"], k["nach"], k["art"]) == (ref, plk, "ist Teil von") for k in e.zustand()["kanten"]))
 e.schliessen()
 shutil.rmtree(W4, ignore_errors=True)
 
@@ -283,7 +302,7 @@ e = Editor(os.path.join(W5, "b"), m)
 q1, _ = e.knoten_anlegen("Equipment", "Pumpe")
 q2, _ = e.knoten_anlegen("Equipment", "Waage")
 q3, _ = e.knoten_anlegen("Plant", "Linie")
-rm2, _ = e.knoten_anlegen("Raum", "Halle")
+rm2, _ = e.knoten_anlegen("Plant", "Halle")
 g, u = e.mehrere_aendern([q1, q2, q3], {"EquipmentGXP": "GXP"})
 fe = {k["ref"]: k["felder"] for k in e.zustand()["knoten"]}
 check("Masse: Feld wird an allen Objekten des Typs gesetzt",
@@ -307,14 +326,19 @@ try:
 except Fehler:
     check("Masse: ein Fehler beim Verknüpfen nimmt auch die Felder zurück",
           "EquipmentCategory" not in next(k for k in e.zustand()["knoten"] if k["ref"] == q1)["felder"])
-e.mehrere_aendern([q1, q2], None, [{"ziel": rm2, "art": "steht in"}])
+e.mehrere_aendern([q1, q2], None, [{"ziel": rm2, "art": "ist Teil von"}])
 check("Masse: alle werden mit dem Ziel verknüpft",
       {(k["von"], k["nach"]) for k in e.zustand()["kanten"]} == {(q1, rm2), (q2, rm2)})
-e.mehrere_aendern([q1, q2], None, [{"ziel": rm2, "art": "steht in"}])
+e.mehrere_aendern([q1, q2], None, [{"ziel": rm2, "art": "ist Teil von"}])
 check("Masse: nochmal verknüpfen legt nichts doppelt an", len(e.zustand()["kanten"]) == 2)
-e.mehrere_aendern([q1, rm2], None, [{"ziel": rm2, "art": "gehört zu"}])
-check("Masse: das Ziel unter den Objekten wird nicht mit sich selbst verknüpft",
-      {(k["von"], k["nach"]) for k in e.zustand()["kanten"] if k["art"] == "gehört zu"} == {(q1, rm2)})
+e.mehrere_aendern([q1, q3], None, [{"ziel": q3}])
+check("Masse: das Ziel unter den Objekten wird nicht mit sich selbst verknüpft (Art und Richtung aus dem Regelwerk)",
+      {(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"] if k["art"] == "ist Teil von"} == {(q1, q3, "ist Teil von"), (q1, rm2, "ist Teil von"), (q2, rm2, "ist Teil von")})
+try:
+    e.mehrere_aendern([q1, q2], None, [{"ziel": q3, "art": "verwendet"}])
+    check("Masse: eine Art, die zwischen diesen Typen nicht vorgesehen ist, wird abgelehnt", False)
+except Fehler:
+    check("Masse: eine Art, die zwischen diesen Typen nicht vorgesehen ist, wird abgelehnt", True)
 e.mehrere_loeschen([q1, q2])
 check("Masse: löschen legt alle in den Papierkorb",
       not any(k["ref"] in (q1, q2) for k in e.zustand()["knoten"]))
@@ -334,18 +358,17 @@ pa, _ = e.knoten_anlegen("Parameter", "A")
 pb, _ = e.knoten_anlegen("Parameter", "B")
 e1, _ = e.knoten_anlegen("Equipment", "E1")
 e2, _ = e.knoten_anlegen("Equipment", "E2")
-rr, _ = e.knoten_anlegen("Raum", "R")
-for v, n, a in [(s1, pr, "ist Teil von"), (s2, pr, "ist Teil von"), (pa, s1, "ist Teil von"),
-                (pb, s2, "ist Teil von"), (e1, pa, "überwacht/regelt"), (e2, pb, "überwacht/regelt"),
-                (e1, rr, "steht in"), (e2, rr, "steht in")]:
+rr, _ = e.knoten_anlegen("Plant", "PL")
+for v, n, a in [(s1, pr, "ist Teil von"), (s2, pr, "ist Teil von"), (s1, pa, "definiert"),
+                (s2, pb, "definiert"), (e1, pa, "überwacht/regelt"), (e2, pb, "überwacht/regelt"),
+                (e1, rr, "ist Teil von"), (e2, rr, "ist Teil von")]:
     e.kante_anlegen(v, n, a)
 r = e.reichweite([pr], "beide", 3)[pr]
 check("Reichweite: Tiefe je Ziel (Schritte 1, Parameter 2, Equipment 3)",
       r[s1] == 1 and r[s2] == 1 and r[pa] == 2 and r[pb] == 2 and r[e1] == 3 and r[e2] == 3, str(r))
 check("Reichweite: die Tiefe begrenzt", pa not in e.reichweite([pr], "beide", 1)[pr])
 check("Reichweite: Richtung „ein“ folgt nur eingehenden Kanten",
-      set(e.reichweite([pr], "ein", 3)[pr]) == {s1, s2, pa, pb, e1, e2}
-      and e.reichweite([pr], "aus", 3)[pr] == {})
+      set(e.reichweite([pr], "ein", 3)[pr]) == {s1, s2} and e.reichweite([pr], "aus", 3)[pr] == {})
 check("Reichweite: Arten beschränken den Weg",
       set(e.reichweite([e1], "beide", 3, ["überwacht/regelt"])[e1]) == {pa}, str(e.reichweite([e1], "beide", 3, ["überwacht/regelt"])))
 check("Reichweite: die Nachbar-Parameter liegt über Schritt und Prozess in Tiefe 4",
@@ -366,48 +389,125 @@ check("Reichweite: von einem gelöschten Objekt aus gibt es nichts", e.reichweit
 e.schliessen()
 shutil.rmtree(W6, ignore_errors=True)
 
-# --- Regelwerk und Beispielbestand (Teststreifenfertigung) ---
+# --- Regelwerk aus dem Datenmodell und Beispielbestand (Teststreifenfertigung) ---
 import importlib.util as _iu
 _sp = _iu.spec_from_file_location("beispiel_pruefling", "editor/beispiel.py")
 bsp = _iu.module_from_spec(_sp)
 _sp.loader.exec_module(bsp)
 mm = Modell("editor/modell.json")
-fehler = mm.lade_regeln("editor/regeln.json")
-check("Regelwerk: jede Regel passt zu Typen und Arten des Modells", fehler == [] and len(mm.regeln) == 26, str(fehler))
+fehler = mm.lade_wegregeln("editor/regeln.json")
+check("Regelwerk: die 22 Beziehungspaare und 12 Arten kommen aus dem Datenmodell",
+      len(mm.regeln) == 22 and len(mm.arten) == 12, f"{len(mm.regeln)} Paare, {len(mm.arten)} Arten")
+check("Regelwerk: „steht in“ gibt es nur zwischen Plant und Raum — ein Equipment liegt über seine Plant im Raum",
+      {(r["von"], r["nach"]) for r in mm.regeln if r["art"] == "steht in"} == {("Plant", "Raum")})
+check("Regelwerk: Einstellungen für die Wege passen zum Modell", fehler == [], str(fehler))
+check("Regelwerk: zwischen zwei Typen gibt es die erlaubten Arten mit Richtung",
+      mm.zwischen("Raum", "Plant") == [("steht in", "ein")] and mm.zwischen("Plant", "Raum") == [("steht in", "aus")]
+      and mm.zwischen("Material", "Equipment") == [] and mm.zwischen("Equipment", "Raum") == [])
+# Abgleich mit der Referenz (editor/datenmodell.pdf, Tabelle „OBJEKT TYPES“ und „OBJEKT TYP ATTRIBUTES“)
+PDF_PAARE = {("Plant", "steht in", "Raum"), ("Plant", "führt aus", "Prozess"), ("Equipment", "ist Teil von", "Plant"),
+             ("Equipment", "führt aus", "Prozessschritt"), ("Prozessschritt", "ist Teil von", "Prozess"),
+             ("Prozessschritt", "benötigt Input", "Material"), ("Prozessschritt", "erzeugt Output", "Material"),
+             ("Prozessschritt", "führt zu Nachfolger (0:n)", "Prozessschritt"), ("Equipment", "verwendet", "Medium"),
+             ("Dokument", "gehört zu", "Equipment"), ("Dokument", "gehört zu", "Prozess"), ("Dokument", "gehört zu", "Prozessschritt"),
+             ("Dokument", "gehört zu", "Plant"), ("Dokument", "gehört zu", "Raum"), ("Dokument", "gehört zu", "Software"),
+             ("Software", "unterstützt", "Plant"), ("Software", "unterstützt", "Prozess"), ("Software", "unterstützt", "Prozessschritt"),
+             ("Software", "steuert", "Equipment"), ("Prozessschritt", "verwendet", "Medium"),
+             ("Prozessschritt", "definiert", "Parameter"), ("Equipment", "überwacht/regelt", "Parameter")}
+check("Referenz-PDF: die 22 Beziehungspaare stimmen mit dem Datenmodell überein",
+      {(r["von"], r["art"], r["nach"]) for r in mm.regeln} == PDF_PAARE,
+      str({(r["von"], r["art"], r["nach"]) for r in mm.regeln} ^ PDF_PAARE))
+PDF_ATTR = {  # Typ: {Eigenschaft: (Beschriftung, Auswahlwerte oder None)}
+    "Equipment": {"EquipmentName": ("Name", None), "EquipmentID": ("ID", None), "EquipmentGXP": ("GXP-Relevanz", ["GXP", "NGXP"]),
+                  "EquipmentCategory": ("Kategorie", ["Kat 1", "Kat 2", "Kat 3", "Kat 4"])},
+    "Software": {"SoftwareName": ("Name", None), "SoftwareID": ("ID", None), "SoftwareGXP": ("GXP-Relevanz", ["GXP", "NGXP"]),
+                 "SoftwareCategory": ("Kategorie", None), "SoftwareType": ("Typ", ["Embedded / SPS-Software", "System- / Prozess-Software", "Enterprise-Software"]),
+                 "SoftwareScope": ("Scope", ["Equipment-spezifisch (SPS, Firmware)", "Prozess- / Linienbezogen (eBR, Auswertetools)", "Plant-weit / Enterprise (MES, ERP, LIMS, QMS)"])},
+    "Raum": {"RoomName": ("Name", None), "RoomID": ("ID", None), "RoomClass": ("Klasse", ["ISO 5", "ISO 6", "ISO 7", "ISO 8", "ISO 9"])},
+    "Medium": {"MediumName": ("Name", None), "MediumID": ("ID", None), "MediumType": ("Type", ["Process Gases & Compressed Air", "Water Systems", "HVAC / Cleanroom Air"]),
+               "MediumGXP": ("GXP-Relevanz", ["GXP", "NGXP"]), "MediumProductContact": ("Produktkontakt", ["Direct Impact", "Indirect Impact", "No Impact"])},
+    "Prozess": {"ProcessName": ("Name", None), "ProcessID": ("ID", None)},
+    "Prozessschritt": {"ProcessstepName": ("Name", None), "ProcessstepID": ("ID", None)},
+    "Material": {"MaterialName": ("Name", None), "MaterialID": ("ID", None),
+                 "MaterialType": ("Typ", ["Raw Material", "Component / Purchased Part", "Work in Progress (WIP) / Intermediate Product", "Sub-Assembly", "Finished Good", "Finished Medical Device"])},
+    "Plant": {"PlantName": ("Name", None), "PlantID": ("ID", None), "PlantType": ("Type", ["Fertigungslinie", "Funktionsbereich (zB. Labor, QC)", "Einzelplatz"]),
+              "PlantGXP": ("GXP-Relevanz", ["GXP", "NGXP"])},
+    "Dokument": {"DocumentName": ("Name", None), "DocumentID": ("ID", None), "DocumentDMS": ("Ablageort", ["SAP P1U", "DiaDoc"]),
+                 "DocumentType": ("Typ", ["GSP", "Specification", "Batch Record", "Validation Documentation", "Work Instruction", "Form", "Template"])},
+    "Parameter": {"ParameterName": ("Name", None), "ParameterID": ("ID", None), "ParameterClass": ("Klasse", ["CPP", "PP"]),
+                  "ParameterTargetValue": ("Sollwert", None), "ParameterAcceptanceRange": ("Tolerance", None),
+                  "ParameterUnit": ("Einheit", ["°C", "bar", "sec", "min", "h", "rpm", "l", "g", "mg", "kg", "l/min", "%", "%rH"]),
+                  "ParameterControlType": ("Kontrollart", ["Closed Loop", "Logged"])}}
+ist_attr = {t: {f["name"]: (f["titel"], f["optionen"]) for f in mm.typen[t]["felder"]} for t in mm.typen}
+check("Referenz-PDF: alle Eigenschaften mit Beschriftung und Auswahlwerten stimmen mit dem Datenmodell überein",
+      ist_attr == PDF_ATTR, str([t for t in PDF_ATTR if ist_attr.get(t) != PDF_ATTR[t]]))
+check("Referenz-PDF: die Einheit ist Auswahl oder freier Text, der Nachfolger-Typ ein Kanten-Attribut „Typ“",
+      next(f for f in mm.typen["Parameter"]["felder"] if f["name"] == "ParameterUnit")["freitext"] is True
+      and mm.kantenfelder["führt zu Nachfolger (0:n)"][0]["titel"] == "Typ")
 W7 = tempfile.mkdtemp(prefix="editor_test_")
 e = Editor(os.path.join(W7, "b"), mm)
 O = bsp.bauen(e)
 z = e.zustand()
-check("Beispiel: baut mit Modellprüfung durch (Typen, Auswahlwerte, Arten)",
-      len(z["knoten"]) >= 120 and len(z["kanten"]) >= 240, f'{len(z["knoten"])}/{len(z["kanten"])}')
+check("Beispiel: baut mit strikter Prüfung durch (Typen, Auswahlwerte, Arten, Beziehungspaare)",
+      len(z["knoten"]) >= 120 and len(z["kanten"]) >= 215, f'{len(z["knoten"])}/{len(z["kanten"])}')
 typ = {k["ref"]: k["typ"] for k in z["knoten"]}
 erlaubt = {(r["von"], r["art"], r["nach"]) for r in mm.regeln}
 abweichend = [(typ[k["von"]], k["art"], typ[k["nach"]]) for k in z["kanten"] if (typ[k["von"]], k["art"], typ[k["nach"]]) not in erlaubt]
-check("Beispiel: jede Verknüpfung folgt dem Regelwerk", abweichend == [], str(abweichend[:3]))
+check("Beispiel: jede Verknüpfung ist ein erlaubtes Paar", abweichend == [], str(abweichend[:3]))
 unbenutzt = erlaubt - {(typ[k["von"]], k["art"], typ[k["nach"]]) for k in z["kanten"]}
-check("Beispiel: jede Regel kommt im Beispiel mindestens einmal vor", unbenutzt == set(), str(unbenutzt))
+check("Beispiel: jedes der 22 Paare kommt mindestens einmal vor", unbenutzt == set(), str(unbenutzt))
 namen = {k["ref"]: k["name"] for k in z["knoten"]}
-r = e.reichweite([O["p_elek"]], "ein", 2, ["ist Teil von", "gehört zu"])[O["p_elek"]]
-par_el = sorted(namen[x] for x in r if typ[x] == "Parameter")
 erwartet = sorted(namen[O[k]] for k in ("a_rak", "a_nass", "a_tag", "a_zag", "a_rf", "a_rakc", "a_tc", "a_zc", "a_dos", "a_dd", "a_vak", "a_tv", "a_zv"))
-check("Beispiel: „enthält“ (ein, ist Teil von/gehört zu, 2 Schritte) liefert genau die 13 Parameter der Elektrodenfertigung",
-      par_el == erwartet, str(par_el))
-r = e.reichweite([O["plm"]], "ein", 2, ["ist Teil von", "steht in"])[O["plm"]]
-check("Beispiel: Equipment der Plant Montage über Raum (ein, 2 Schritte) = Laminierer, Schneider, Verpackung",
-      sorted(namen[x] for x in r if typ[x] == "Equipment") == sorted(namen[O[k]] for k in ("ma01", "sn01", "vp01")))
-mit_dok = {k["nach"] for k in z["kanten"] if k["art"] == "unterstützt" and typ[k["von"]] == "Dokument"}
+mit_dok = {k["nach"] for k in z["kanten"] if k["art"] == "gehört zu" and typ[k["von"]] == "Dokument"}
 ohne = sorted(namen[x] for x in typ if typ[x] == "Equipment" and x not in mit_dok)
-check("Beispiel: Equipment ohne Qualifizierungsdokument sind genau die absichtlichen Lücken",
+check("Beispiel: Equipment ohne Dokument sind genau die absichtlichen Lücken",
       ohne == sorted(namen[O[k]] for k in ("oi01", "tr02", "sn01", "vp01", "w01", "rw01", "vk01", "ks01", "ms01", "kl01")), str(ohne))
 check("Beispiel: eine Pflichtfeld-Lücke (Mikroskop ohne Kategorie)",
       [k["name"] for k in z["knoten"] if "EquipmentCategory" in k["fehlt"]] == [namen[O["ms01"]]])
+
+# Strenge: nur die Paare des Modells
+try:
+    e.verknuepfe(O["w01"], O["m_ag"])
+    check("Strikt: Equipment und Material haben keine Beziehung -> abgelehnt", False)
+except Fehler as f:
+    check("Strikt: Equipment und Material haben keine Beziehung -> abgelehnt, mit Erklärung",
+          "keine Beziehung" in str(f), str(f))
+try:
+    e.kante_anlegen(O["rca"], O["plc"], "steht in")
+    check("Strikt: die falsche Richtung (Raum steht in Plant) wird abgelehnt", False)
+except Fehler as f:
+    check("Strikt: die falsche Richtung (Raum steht in Plant) wird abgelehnt, mit dem Erlaubten",
+          "Plant steht in Raum" in str(f), str(f))
+n_vor = len(e.zustand()["kanten"])
+e.verknuepfe(O["rca"], O["plc"])      # Art und Richtung ergeben sich aus den Typen
+check("Verknüpfen ohne Art: Raum und Plant ergibt „Plant steht in Raum“ (schon vorhanden, kein Duplikat)",
+      len(e.zustand()["kanten"]) == n_vor)
+eq_neu, _ = e.knoten_anlegen("Equipment", "Neues Gerät")
+e.verknuepfe(eq_neu, O["plq"])
+e.verknuepfe(eq_neu, O["sw_ps"])
+check("Verknüpfen ohne Art: die Richtung folgt dem Modell, egal in welcher Reihenfolge die Objekte genannt werden",
+      {(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"] if eq_neu in (k["von"], k["nach"])}
+      == {(eq_neu, O["plq"], "ist Teil von"), (O["sw_ps"], eq_neu, "steuert")})
+try:
+    e.verknuepfe(eq_neu, O["plq"], "wohnt in")
+    check("Strikt: eine unbekannte Art wird nicht stillschweigend ersetzt", False)
+except Fehler:
+    check("Strikt: eine unbekannte Art wird nicht stillschweigend ersetzt", True)
+lo = Editor(os.path.join(W7, "locker"), mm, strikt=False)
+a1, _ = lo.knoten_anlegen("Equipment", "A")
+m1, _ = lo.knoten_anlegen("Material", "M")
+lo.kante_anlegen(a1, m1, "verwendet")
+check("Locker: ohne Strenge sind Art und Typen frei kombinierbar, nur die Art muss im Modell stehen",
+      len(lo.zustand()["kanten"]) == 1)
+lo.schliessen()
+
 # Wege nach Regelwerk
 mp = e.metapfade("Prozess", "Material", 2)
 check("Regelwerk-Wege: Prozess -> Material nur über den Schritt (Input und Output)",
       sorted(tuple((x["art"], x["richtung"], x["typ"]) for x in w) for w in mp) == sorted([
           (("ist Teil von", "ein", "Prozessschritt"), ("benötigt Input", "aus", "Material")),
           (("ist Teil von", "ein", "Prozessschritt"), ("erzeugt Output", "aus", "Material"))]), str(mp))
-check("Regelwerk-Wege: ein Dokument verbindet nicht zwei Dinge, die es nur gemeinsam definiert",
+check("Regelwerk-Wege: ein Dokument verbindet nicht zwei Dinge, die es nur gemeinsam betrifft",
       not any(x["typ"] == "Dokument" for w in e.metapfade("Prozess", "Material", 3) for x in w[:-1]))
 check("Regelwerk-Wege: Dokument ist aber als Ziel erreichbar",
       any(w[-1]["typ"] == "Dokument" for w in e.metapfade("Prozess", "Dokument", 1)))
@@ -418,27 +518,27 @@ check("Regelwerk-Wege: ein Weg mit „Nachfolger“ besteht nur aus diesem einen
           if any(x["art"].startswith("führt zu Nachfolger") for x in w)))
 check("Regelwerk-Wege: die Reihenfolge selbst bleibt als einzelner Schritt erreichbar (vor und zurück)",
       sorted(w[0]["richtung"] for w in e.metapfade("Prozessschritt", "Prozessschritt", 1) if w[0]["art"].startswith("führt zu Nachfolger")) == ["aus", "ein"])
-check("Regelwerk: Schritte, die zum Prozess gehören — nur die eigenen, nicht die Schritte des Nachfolgeprozesses",
-      sorted(namen[k] for k, v in e.reichweite([O[x] for x in ("s_lam", "s_kuehl", "s_ag", "s_vak")], modus="regel", tiefe=2, typen=["Prozess"]).items()
-             for k2 in v if k2 == O["p_elek"] for k in [k]) == sorted(namen[O[x]] for x in ("s_ag", "s_vak")))
 check("Regelwerk-Wege: kein Weg über Geschwister (Equipment -> Raum -> Equipment gibt es nicht)",
       e.metapfade("Equipment", "Equipment", 3) == [])
-check("Regelwerk-Wege: Selbstbezug nur als erster Schritt (Prozess -> Prozess, 1 Schritt)",
-      [[(x["art"], x["richtung"]) for x in w] for w in e.metapfade("Prozess", "Prozess", 1)] ==
-      [[("ist Teil von", "aus")], [("ist Teil von", "ein")]])
-check("Regelwerk-Wege: ohne Regelwerk keine Wege", Editor(os.path.join(W7, "x"), Modell("editor/modell.json")).metapfade("Prozess", "Material", 2) == [])
+ohne_modell = Editor(os.path.join(W7, "x"))
+check("Regelwerk-Wege: ohne Modell keine Wege", ohne_modell.metapfade("Prozess", "Material", 2) == [])
+ohne_modell.schliessen()
 rg = e.reichweite([O["p_elek"]], modus="regel", tiefe=2, typen=["Parameter"])[O["p_elek"]]
+check("Regelwerk: Parameter des Prozesses sind genau die 13 (Schritt definiert Parameter)",
+      sorted(namen[x] for x in rg) == erwartet, f"{len(rg)}")
 frei = e.reichweite([O["p_elek"]], "beide", 3)[O["p_elek"]]
-check("Regelwerk: Parameter des Prozesses sind genau die 13 — frei über alles wären es mehr (Streuung über den Ablauf)",
-      sorted(namen[x] for x in rg) == erwartet and len([x for x in frei if typ[x] == "Parameter" and "Parameter" in typ[x]]) > 13,
-      f'{len(rg)} / {len([x for x in frei if typ[x] == "Parameter"])}')
-check("Regelwerk: Equipment, das einen Parameter steuert oder überwacht (1 Schritt)",
+check("Regelwerk: frei über alle Beziehungen wären es mehr Parameter (Streuung über Ablauf und Equipment)",
+      len([x for x in frei if typ[x] == "Parameter"]) > 13, str(len([x for x in frei if typ[x] == "Parameter"])))
+check("Regelwerk: Equipment, das einen Parameter überwacht (1 Schritt)",
       set(e.reichweite([O["a_tag"]], modus="regel", tiefe=1, typen=["Equipment"])[O["a_tag"]]) == {O["tr01"]})
-check("Regelwerk: Plant eines Equipments über den Raum (2 Schritte), nicht darüber hinaus",
-      set(e.reichweite([O["ma01"]], modus="regel", tiefe=2, typen=["Plant"])[O["ma01"]]) == {O["plm"]})
-check("Regelwerk: die Tiefe zählt Typ-Schritte",
-      e.reichweite([O["ma01"]], modus="regel", tiefe=2, typen=["Plant"])[O["ma01"]][O["plm"]] == 2
-      and e.reichweite([O["ma01"]], modus="regel", tiefe=1, typen=["Plant"])[O["ma01"]] == {})
+check("Regelwerk: Equipment der Plant Montage (1 Schritt: Equipment ist Teil von Plant)",
+      sorted(namen[x] for x in e.reichweite([O["plm"]], modus="regel", tiefe=1, typen=["Equipment"])[O["plm"]]) == sorted(namen[O[k]] for k in ("ma01", "sn01", "vp01")))
+check("Regelwerk: die Tiefe zählt Typ-Schritte (Equipment -> Schritt -> Prozess = 2)",
+      e.reichweite([O["ma01"]], modus="regel", tiefe=2, typen=["Prozess"])[O["ma01"]][O["p_mont"]] == 2
+      and e.reichweite([O["ma01"]], modus="regel", tiefe=1, typen=["Prozess"])[O["ma01"]] == {})
+check("Regelwerk: Schritte, die zum Prozess gehören — nur die eigenen, nicht die des Nachbarprozesses",
+      {k for k, v in e.reichweite([O[x] for x in ("s_lam", "s_kuehl", "s_ag", "s_vak")], modus="regel", tiefe=2, typen=["Prozess"]).items()
+       if O["p_elek"] in v} == {O["s_ag"], O["s_vak"]})
 e.schliessen()
 shutil.rmtree(W7, ignore_errors=True)
 

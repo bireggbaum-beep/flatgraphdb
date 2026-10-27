@@ -1,56 +1,173 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Medizintechnik Fertigungsgraph Metamodell",
-  "description": "JSON-Schema für Objekte, Relationen und Kanten-Attribute in der Produktion",
+  "description": "Striktes JSON-Schema mit expliziten Beziehungspaaren (fromType -> relation -> toType). Referenz: datenmodell.pdf (22 Paare).",
   "type": "object",
-  "required": ["nodes", "edges"],
+  "required": [
+    "nodes",
+    "edges"
+  ],
   "properties": {
     "nodes": {
       "type": "array",
-      "description": "Liste aller Knoten (Objekte) im Produktionssystem",
       "items": {
         "oneOf": [
-          { "$ref": "#/$defs/PlantNode" },
-          { "$ref": "#/$defs/RoomNode" },
-          { "$ref": "#/$defs/EquipmentNode" },
-          { "$ref": "#/$defs/SoftwareNode" },
-          { "$ref": "#/$defs/MediumNode" },
-          { "$ref": "#/$defs/ProcessNode" },
-          { "$ref": "#/$defs/ProcessstepNode" },
-          { "$ref": "#/$defs/MaterialNode" },
-          { "$ref": "#/$defs/DocumentNode" },
-          { "$ref": "#/$defs/ParameterNode" }
+          {
+            "$ref": "#/$defs/PlantNode"
+          },
+          {
+            "$ref": "#/$defs/RoomNode"
+          },
+          {
+            "$ref": "#/$defs/EquipmentNode"
+          },
+          {
+            "$ref": "#/$defs/SoftwareNode"
+          },
+          {
+            "$ref": "#/$defs/MediumNode"
+          },
+          {
+            "$ref": "#/$defs/ProcessNode"
+          },
+          {
+            "$ref": "#/$defs/ProcessstepNode"
+          },
+          {
+            "$ref": "#/$defs/MaterialNode"
+          },
+          {
+            "$ref": "#/$defs/DocumentNode"
+          },
+          {
+            "$ref": "#/$defs/ParameterNode"
+          }
         ]
       }
     },
     "edges": {
       "type": "array",
-      "description": "Liste aller typisierten Kanten (Relationen) zwischen den Knoten",
+      "description": "Erlaubt NUR die exakt definierten 22 Beziehungspaare",
       "items": {
-        "$ref": "#/$defs/GraphEdge"
+        "oneOf": [
+          {
+            "$ref": "#/$defs/Edge_Plant_StehtIn_Raum"
+          },
+          {
+            "$ref": "#/$defs/Edge_Plant_FuehrtAus_Prozess"
+          },
+          {
+            "$ref": "#/$defs/Edge_Equipment_IstTeilVon_Plant"
+          },
+          {
+            "$ref": "#/$defs/Edge_Equipment_FuehrtAus_Prozessschritt"
+          },
+          {
+            "$ref": "#/$defs/Edge_Prozessschritt_IstTeilVon_Prozess"
+          },
+          {
+            "$ref": "#/$defs/Edge_Prozessschritt_BenoetigtInput_Material"
+          },
+          {
+            "$ref": "#/$defs/Edge_Prozessschritt_ErzeugtOutput_Material"
+          },
+          {
+            "$ref": "#/$defs/Edge_Prozessschritt_FuehrtZuNachfolger_Prozessschritt"
+          },
+          {
+            "$ref": "#/$defs/Edge_Equipment_Verwendet_Medium"
+          },
+          {
+            "$ref": "#/$defs/Edge_Dokument_GehoertZu_Equipment"
+          },
+          {
+            "$ref": "#/$defs/Edge_Dokument_GehoertZu_Prozess"
+          },
+          {
+            "$ref": "#/$defs/Edge_Dokument_GehoertZu_Prozessschritt"
+          },
+          {
+            "$ref": "#/$defs/Edge_Dokument_GehoertZu_Plant"
+          },
+          {
+            "$ref": "#/$defs/Edge_Dokument_GehoertZu_Raum"
+          },
+          {
+            "$ref": "#/$defs/Edge_Dokument_GehoertZu_Software"
+          },
+          {
+            "$ref": "#/$defs/Edge_Software_Unterstuetzt_Plant"
+          },
+          {
+            "$ref": "#/$defs/Edge_Software_Unterstuetzt_Prozess"
+          },
+          {
+            "$ref": "#/$defs/Edge_Software_Unterstuetzt_Prozessschritt"
+          },
+          {
+            "$ref": "#/$defs/Edge_Software_Steuert_Equipment"
+          },
+          {
+            "$ref": "#/$defs/Edge_Prozessschritt_Verwendet_Medium"
+          },
+          {
+            "$ref": "#/$defs/Edge_Prozessschritt_Definiert_Parameter"
+          },
+          {
+            "$ref": "#/$defs/Edge_Equipment_UeberwachtRegelt_Parameter"
+          }
+        ]
       }
     }
   },
   "$defs": {
     "PlantNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Plant" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Plant"
+        },
         "properties": {
           "type": "object",
-          "required": ["PlantID", "PlantName", "PlantType", "PlantGXP"],
+          "required": [
+            "PlantID",
+            "PlantName",
+            "PlantType",
+            "PlantGXP"
+          ],
           "properties": {
-            "PlantID": { "type": "string" },
-            "PlantName": { "type": "string" },
+            "PlantID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "PlantName": {
+              "type": "string",
+              "title": "Name"
+            },
             "PlantType": {
               "type": "string",
-              "enum": ["Fertigungslinie", "Funktionsbereich (zB. Labor, QC)", "Einzelplatz"]
+              "enum": [
+                "Fertigungslinie",
+                "Funktionsbereich (zB. Labor, QC)",
+                "Einzelplatz"
+              ],
+              "title": "Type"
             },
             "PlantGXP": {
               "type": "string",
-              "enum": ["GXP", "NGXP"]
+              "enum": [
+                "GXP",
+                "NGXP"
+              ],
+              "title": "GXP-Relevanz"
             }
           }
         }
@@ -58,19 +175,44 @@
     },
     "RoomNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Raum" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Raum"
+        },
         "properties": {
           "type": "object",
-          "required": ["RoomID", "RoomName", "RoomClass"],
+          "required": [
+            "RoomID",
+            "RoomName",
+            "RoomClass"
+          ],
           "properties": {
-            "RoomID": { "type": "string" },
-            "RoomName": { "type": "string" },
+            "RoomID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "RoomName": {
+              "type": "string",
+              "title": "Name"
+            },
             "RoomClass": {
               "type": "string",
-              "enum": ["ISO 5", "ISO 6", "ISO 7", "ISO 8", "ISO 9"]
+              "enum": [
+                "ISO 5",
+                "ISO 6",
+                "ISO 7",
+                "ISO 8",
+                "ISO 9"
+              ],
+              "title": "Klasse"
             }
           }
         }
@@ -78,23 +220,52 @@
     },
     "EquipmentNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Equipment" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Equipment"
+        },
         "properties": {
           "type": "object",
-          "required": ["EquipmentID", "EquipmentName", "EquipmentGXP", "EquipmentCategory"],
+          "required": [
+            "EquipmentID",
+            "EquipmentName",
+            "EquipmentGXP",
+            "EquipmentCategory"
+          ],
           "properties": {
-            "EquipmentID": { "type": "string" },
-            "EquipmentName": { "type": "string" },
+            "EquipmentID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "EquipmentName": {
+              "type": "string",
+              "title": "Name"
+            },
             "EquipmentGXP": {
               "type": "string",
-              "enum": ["GXP", "NGXP"]
+              "enum": [
+                "GXP",
+                "NGXP"
+              ],
+              "title": "GXP-Relevanz"
             },
             "EquipmentCategory": {
               "type": "string",
-              "enum": ["Kat 1", "Kat 2", "Kat 3", "Kat 4"]
+              "enum": [
+                "Kat 1",
+                "Kat 2",
+                "Kat 3",
+                "Kat 4"
+              ],
+              "title": "Kategorie"
             }
           }
         }
@@ -102,23 +273,48 @@
     },
     "SoftwareNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Software" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Software"
+        },
         "properties": {
           "type": "object",
-          "required": ["SoftwareID", "SoftwareName", "SoftwareGXP", "SoftwareType", "SoftwareScope"],
+          "required": [
+            "SoftwareID",
+            "SoftwareName",
+            "SoftwareGXP",
+            "SoftwareType",
+            "SoftwareScope"
+          ],
           "properties": {
-            "SoftwareID": { "type": "string" },
-            "SoftwareName": { "type": "string" },
+            "SoftwareID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "SoftwareName": {
+              "type": "string",
+              "title": "Name"
+            },
             "SoftwareGXP": {
               "type": "string",
-              "enum": ["GXP", "NGXP"]
+              "enum": [
+                "GXP",
+                "NGXP"
+              ],
+              "title": "GXP-Relevanz"
             },
             "SoftwareCategory": {
               "type": "string",
-              "description": "GAMP-Kategorie (z. B. Kat 1, 3, 4, 5)"
+              "title": "Kategorie",
+              "description": "tbd (laut Referenz noch nicht festgelegt)"
             },
             "SoftwareType": {
               "type": "string",
@@ -126,7 +322,8 @@
                 "Embedded / SPS-Software",
                 "System- / Prozess-Software",
                 "Enterprise-Software"
-              ]
+              ],
+              "title": "Typ"
             },
             "SoftwareScope": {
               "type": "string",
@@ -134,7 +331,8 @@
                 "Equipment-spezifisch (SPS, Firmware)",
                 "Prozess- / Linienbezogen (eBR, Auswertetools)",
                 "Plant-weit / Enterprise (MES, ERP, LIMS, QMS)"
-              ]
+              ],
+              "title": "Scope"
             }
           }
         }
@@ -142,31 +340,61 @@
     },
     "MediumNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Medium" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Medium"
+        },
         "properties": {
           "type": "object",
-          "required": ["MediumID", "MediumName", "MediumType", "MediumGXP", "MediumProductContact"],
+          "required": [
+            "MediumID",
+            "MediumName",
+            "MediumType",
+            "MediumGXP",
+            "MediumProductContact"
+          ],
           "properties": {
-            "MediumID": { "type": "string" },
-            "MediumName": { "type": "string" },
+            "MediumID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "MediumName": {
+              "type": "string",
+              "title": "Name"
+            },
             "MediumType": {
               "type": "string",
               "enum": [
                 "Process Gases & Compressed Air",
                 "Water Systems",
                 "HVAC / Cleanroom Air"
-              ]
+              ],
+              "title": "Type"
             },
             "MediumGXP": {
               "type": "string",
-              "enum": ["GXP", "NGXP"]
+              "enum": [
+                "GXP",
+                "NGXP"
+              ],
+              "title": "GXP-Relevanz"
             },
             "MediumProductContact": {
               "type": "string",
-              "enum": ["Direct Impact", "Indirect Impact", "No Impact"]
+              "enum": [
+                "Direct Impact",
+                "Indirect Impact",
+                "No Impact"
+              ],
+              "title": "Produktkontakt"
             }
           }
         }
@@ -174,48 +402,100 @@
     },
     "ProcessNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Prozess" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Prozess"
+        },
         "properties": {
           "type": "object",
-          "required": ["ProcessID", "ProcessName"],
+          "required": [
+            "ProcessID",
+            "ProcessName"
+          ],
           "properties": {
-            "ProcessID": { "type": "string" },
-            "ProcessName": { "type": "string" }
+            "ProcessID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "ProcessName": {
+              "type": "string",
+              "title": "Name"
+            }
           }
         }
       }
     },
     "ProcessstepNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Prozessschritt" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Prozessschritt"
+        },
         "properties": {
           "type": "object",
-          "required": ["ProcessstepID", "ProcessstepName"],
+          "required": [
+            "ProcessstepID",
+            "ProcessstepName"
+          ],
           "properties": {
-            "ProcessstepID": { "type": "string" },
-            "ProcessstepName": { "type": "string" }
+            "ProcessstepID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "ProcessstepName": {
+              "type": "string",
+              "title": "Name"
+            }
           }
         }
       }
     },
     "MaterialNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Material" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Material"
+        },
         "properties": {
           "type": "object",
-          "required": ["MaterialID", "MaterialName", "MaterialType"],
+          "required": [
+            "MaterialID",
+            "MaterialName",
+            "MaterialType"
+          ],
           "properties": {
-            "MaterialID": { "type": "string" },
-            "MaterialName": { "type": "string" },
+            "MaterialID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "MaterialName": {
+              "type": "string",
+              "title": "Name"
+            },
             "MaterialType": {
               "type": "string",
               "enum": [
@@ -225,7 +505,8 @@
                 "Sub-Assembly",
                 "Finished Good",
                 "Finished Medical Device"
-              ]
+              ],
+              "title": "Typ"
             }
           }
         }
@@ -233,19 +514,42 @@
     },
     "DocumentNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Dokument" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Dokument"
+        },
         "properties": {
           "type": "object",
-          "required": ["DocumentID", "DocumentName", "DocumentDMS", "DocumentType"],
+          "required": [
+            "DocumentID",
+            "DocumentName",
+            "DocumentDMS",
+            "DocumentType"
+          ],
           "properties": {
-            "DocumentID": { "type": "string" },
-            "DocumentName": { "type": "string" },
+            "DocumentID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "DocumentName": {
+              "type": "string",
+              "title": "Name"
+            },
             "DocumentDMS": {
               "type": "string",
-              "enum": ["SAP P1U", "DiaDoc"]
+              "enum": [
+                "SAP P1U",
+                "DiaDoc"
+              ],
+              "title": "Ablageort"
             },
             "DocumentType": {
               "type": "string",
@@ -257,7 +561,8 @@
                 "Work Instruction",
                 "Form",
                 "Template"
-              ]
+              ],
+              "title": "Typ"
             }
           }
         }
@@ -265,87 +570,695 @@
     },
     "ParameterNode": {
       "type": "object",
-      "required": ["id", "type", "properties"],
+      "required": [
+        "id",
+        "type",
+        "properties"
+      ],
       "properties": {
-        "id": { "type": "string" },
-        "type": { "const": "Parameter" },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "Parameter"
+        },
         "properties": {
           "type": "object",
-          "required": ["ParameterID", "ParameterName", "ParameterClass"],
+          "required": [
+            "ParameterID",
+            "ParameterName",
+            "ParameterClass"
+          ],
           "properties": {
-            "ParameterID": { "type": "string" },
-            "ParameterName": { "type": "string" },
+            "ParameterID": {
+              "type": "string",
+              "title": "ID"
+            },
+            "ParameterName": {
+              "type": "string",
+              "title": "Name"
+            },
             "ParameterClass": {
               "type": "string",
-              "enum": ["CPP", "PP"]
+              "enum": [
+                "CPP",
+                "PP"
+              ],
+              "title": "Klasse"
             },
             "ParameterTargetValue": {
-              "type": ["string", "number"]
+              "type": [
+                "string",
+                "number"
+              ],
+              "title": "Sollwert"
             },
             "ParameterAcceptanceRange": {
-              "type": "string"
+              "type": "string",
+              "title": "Tolerance"
             },
             "ParameterUnit": {
               "type": "string",
               "enum": [
-                "°C", "bar", "sec", "min", "h",
-                "rpm", "l", "g", "mg", "kg",
-                "l/min", "%", "%rH"
-              ]
+                "°C",
+                "bar",
+                "sec",
+                "min",
+                "h",
+                "rpm",
+                "l",
+                "g",
+                "mg",
+                "kg",
+                "l/min",
+                "%",
+                "%rH"
+              ],
+              "title": "Einheit",
+              "x-freitext": true
             },
             "ParameterControlType": {
               "type": "string",
-              "enum": ["Closed Loop", "Logged"]
+              "enum": [
+                "Closed Loop",
+                "Logged"
+              ],
+              "title": "Kontrollart"
             }
           }
         }
       }
     },
-    "GraphEdge": {
+    "Edge_Plant_StehtIn_Raum": {
       "type": "object",
-      "required": ["from", "relation", "to"],
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
       "properties": {
         "from": {
-          "type": "string",
-          "description": "ID des Ausgangsknotens"
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Plant"
         },
         "relation": {
-          "type": "string",
-          "enum": [
-            "Steht in",
-            "führt aus",
-            "ist Teil von",
-            "steht in",
-            "benötigt Input",
-            "erzeugt Output",
-            "führt zu Nachfolger (0:n)",
-            "verwendet",
-            "gehört zu",
-            "unterstützt",
-            "steuert",
-            "definiert",
-            "überwacht/regelt"
-          ]
+          "const": "Steht in"
+        },
+        "toType": {
+          "const": "Raum"
         },
         "to": {
-          "type": "string",
-          "description": "ID des Zielknotens"
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Plant_FuehrtAus_Prozess": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Plant"
+        },
+        "relation": {
+          "const": "führt aus"
+        },
+        "toType": {
+          "const": "Prozess"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Equipment_IstTeilVon_Plant": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Equipment"
+        },
+        "relation": {
+          "const": "ist Teil von"
+        },
+        "toType": {
+          "const": "Plant"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Equipment_FuehrtAus_Prozessschritt": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Equipment"
+        },
+        "relation": {
+          "const": "führt aus"
+        },
+        "toType": {
+          "const": "Prozessschritt"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Prozessschritt_IstTeilVon_Prozess": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Prozessschritt"
+        },
+        "relation": {
+          "const": "ist Teil von"
+        },
+        "toType": {
+          "const": "Prozess"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Prozessschritt_BenoetigtInput_Material": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Prozessschritt"
+        },
+        "relation": {
+          "const": "benötigt Input"
+        },
+        "toType": {
+          "const": "Material"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Prozessschritt_ErzeugtOutput_Material": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Prozessschritt"
+        },
+        "relation": {
+          "const": "erzeugt Output"
+        },
+        "toType": {
+          "const": "Material"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Prozessschritt_FuehrtZuNachfolger_Prozessschritt": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to",
+        "properties"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Prozessschritt"
+        },
+        "relation": {
+          "const": "führt zu Nachfolger (0:n)"
+        },
+        "toType": {
+          "const": "Prozessschritt"
+        },
+        "to": {
+          "type": "string"
         },
         "properties": {
           "type": "object",
-          "description": "Kanten-Attribute",
+          "required": [
+            "ProcessstepType"
+          ],
           "properties": {
             "ProcessstepType": {
               "type": "string",
-              "description": "Gilt für 'führt zu Nachfolger (0:n)'",
               "enum": [
                 "Standard-Fertigungsschritt",
                 "Gate / In-Process Control (IPC)",
                 "Wartezeit / Haltezeit",
                 "Schleifen-Knoten (Loop)"
-              ]
+              ],
+              "title": "Typ"
             }
           }
+        }
+      }
+    },
+    "Edge_Equipment_Verwendet_Medium": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Equipment"
+        },
+        "relation": {
+          "const": "verwendet"
+        },
+        "toType": {
+          "const": "Medium"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Dokument_GehoertZu_Equipment": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Dokument"
+        },
+        "relation": {
+          "const": "gehört zu"
+        },
+        "toType": {
+          "const": "Equipment"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Dokument_GehoertZu_Prozess": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Dokument"
+        },
+        "relation": {
+          "const": "gehört zu"
+        },
+        "toType": {
+          "const": "Prozess"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Dokument_GehoertZu_Prozessschritt": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Dokument"
+        },
+        "relation": {
+          "const": "gehört zu"
+        },
+        "toType": {
+          "const": "Prozessschritt"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Dokument_GehoertZu_Plant": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Dokument"
+        },
+        "relation": {
+          "const": "gehört zu"
+        },
+        "toType": {
+          "const": "Plant"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Dokument_GehoertZu_Raum": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Dokument"
+        },
+        "relation": {
+          "const": "gehört zu"
+        },
+        "toType": {
+          "const": "Raum"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Dokument_GehoertZu_Software": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Dokument"
+        },
+        "relation": {
+          "const": "gehört zu"
+        },
+        "toType": {
+          "const": "Software"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Software_Unterstuetzt_Plant": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Software"
+        },
+        "relation": {
+          "const": "unterstützt"
+        },
+        "toType": {
+          "const": "Plant"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Software_Unterstuetzt_Prozess": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Software"
+        },
+        "relation": {
+          "const": "unterstützt"
+        },
+        "toType": {
+          "const": "Prozess"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Software_Unterstuetzt_Prozessschritt": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Software"
+        },
+        "relation": {
+          "const": "unterstützt"
+        },
+        "toType": {
+          "const": "Prozessschritt"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Software_Steuert_Equipment": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Software"
+        },
+        "relation": {
+          "const": "steuert"
+        },
+        "toType": {
+          "const": "Equipment"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Prozessschritt_Verwendet_Medium": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Prozessschritt"
+        },
+        "relation": {
+          "const": "verwendet"
+        },
+        "toType": {
+          "const": "Medium"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Prozessschritt_Definiert_Parameter": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Prozessschritt"
+        },
+        "relation": {
+          "const": "definiert"
+        },
+        "toType": {
+          "const": "Parameter"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Edge_Equipment_UeberwachtRegelt_Parameter": {
+      "type": "object",
+      "required": [
+        "from",
+        "fromType",
+        "relation",
+        "toType",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "fromType": {
+          "const": "Equipment"
+        },
+        "relation": {
+          "const": "überwacht/regelt"
+        },
+        "toType": {
+          "const": "Parameter"
+        },
+        "to": {
+          "type": "string"
         }
       }
     }

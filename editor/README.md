@@ -8,26 +8,39 @@ Objekte anlegen, verknüpfen und erkunden. Nur Standardbibliothek.
 Der Bestand liegt in `editor/bestand/` (nicht im Git). Dunkles Design.
 
 **Datenmodell:** `editor/modell.json` (JSON-Schema mit `*Node`-Typen und
-`GraphEdge`) gibt Typen, Felder, Auswahlwerte und Beziehungsarten vor. Es
-erzwingt nichts beim Erfassen: ein Objekt braucht nur Typ und Name, fehlende
-Pflichtfelder erscheinen als Lücke (rotes „!“, Filter „Datenqualität“).
-Auswahlfelder nehmen nur Werte aus dem Modell; unbekannte Typen und
-Beziehungsarten werden abgelehnt. Ohne Modell: `--modell keins`.
+`Edge_*`-Definitionen) gibt Typen, Felder, Auswahlwerte, deutsche Bezeichnungen
+(`title`) und **die erlaubten Beziehungen zwischen den Typen** vor. Referenz ist
+`editor/datenmodell.pdf`; `tests/test_editor.py` vergleicht die 22 Typpaare und
+die Attribute wörtlich damit. Fehlende Pflichtfelder erscheinen als Lücke (rotes
+„!“, Filter „Datenqualität“), erzwungen werden sie beim Anlegen nicht.
+Auswahlfelder nehmen nur Werte aus dem Modell; „Einheit“ eines Parameters ist
+Auswahl **oder** freier Text.
+
+**Streng:** Eine Verknüpfung gibt es nur, wenn das Modell das Typpaar kennt.
+Zwischen zwei Typen mit genau einer Beziehung ergänzt der Editor Art **und**
+Richtung selbst; bei mehreren fragt er, bei keiner lehnt er mit einer Erklärung
+ab („Zwischen Plant und Material gibt es im Modell keine Beziehung“). Pflicht-
+attribute einer Beziehung (zum Beispiel der Typ des Prozessschritts) werden
+beim Verknüpfen verlangt. Wer ohne diese Prüfung arbeiten will:
+`--locker`; ohne Modell: `--modell keins`.
 
 ## Regelwerk und Beispiel
 
-- `editor/regeln.json` sagt, **welche Beziehung zwischen welchen Typen** gilt
-  („Equipment steht in Raum“, „Parameter gehört zu Prozessschritt“, …). Das
-  Datenmodell nennt nur die Beziehungsarten, nicht die Typpaare; die 26 Regeln
-  sind **Annahmen** und frei änderbar. Sie warnen nur (⚠ am Verknüpfungs-Chip,
-  Filter „Gegen das Regelwerk“, Menü ⋯ → Regelwerk anzeigen) und steuern die
-  Wege „nach Regelwerk“. `nicht_durchlaufen` (Dokument, Medium, Software) sind
-  Ziele, aber keine Zwischenschritte; `nur_einzeln` (Nachfolger) wird nicht mit
-  weiteren Schritten verkettet.
+- Das Regelwerk **ist das Modell**: jede `Edge_*`-Definition ist ein Paar
+  „Typ –Beziehung→ Typ“ (Equipment *ist Teil von* Plant, Parameter *gehört zu*
+  Prozessschritt, …). Ein Equipment liegt demnach nur über seine Plant in einem
+  Raum, nicht direkt. Es steuert die strenge Prüfung, die Wege „nach Regelwerk“
+  und die Warnung ⚠ am Verknüpfungs-Chip bei Altdaten (Filter „Gegen das
+  Regelwerk“, Menü ⋯ → Regelwerk anzeigen).
+- `editor/regeln.json` ist **nur Einstellung**, keine Paare: `nicht_durchlaufen`
+  (Dokument, Medium, Software) sind Ziele, aber keine Zwischenschritte;
+  `nur_einzeln` („führt zu Nachfolger“) wird nicht mit weiteren Schritten
+  verkettet.
 - `python editor/beispiel.py --bestand editor/bestand_beispiel` baut einen
   Beispielbestand: Fertigung eines Teststreifens über Chemlabor, Siebdruck
   (Ag/Carbon), Dispensieren, Trocknungen, Montage auf anderer Plant und QC
-  (130 Objekte, 252 Verknüpfungen, mit absichtlichen Lücken).
+  (130 Objekte, 221 Verknüpfungen, mit absichtlichen Lücken: Equipment ohne
+  Dokument, Parameter ohne Equipment, Mikroskop ohne Kategorie).
 
 ## Arbeitsfeld aus Spalten
 

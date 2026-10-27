@@ -7,7 +7,7 @@ Vier Teilprozesse an vier Standorten, so wie sie in der Praxis auseinanderliegen
 Chemlabor (Reagenzansatz) -> Linie 1 (Siebdruck Ag/Carbon, Dispensieren,
 Trocknungen) -> Montage & Konfektion (andere Plant, anderer Raum) -> QC.
 
-Die Beziehungen folgen dem Regelwerk `regeln.json` (Annahmen); absichtlich
+Die Beziehungen folgen dem Regelwerk des Datenmodells (22 Paare in `modell.json`, Referenz `datenmodell.pdf`); absichtlich
 fehlen einzelne Dinge, damit Lücken sichtbar werden: Equipment ohne
 Qualifizierungsdokument, Pflichtfelder, ein Parameter ohne Equipment.
 Alles läuft durch dieselbe Prüfung wie im Editor (Typen, Auswahlwerte, Arten).
@@ -30,21 +30,25 @@ def bauen(ed):
         O[kurz] = ed.knoten_anlegen(typ, name, f or None)[0]
 
     def v(a, art, b, **attr):
-        ed.kante_anlegen(O[a], O[b], art, felder=attr or None)
+        # Art und Richtung ergeben sich aus dem Regelwerk des Modells; die Art
+        # steht nur zur Lesbarkeit da und wird geprüft
+        ed.verknuepfe(O[a], O[b], art, "aus", felder=attr or None)
 
-    # ---- Plants und Räume ------------------------------------------------
+    # ---- Plants (Plant steht in Raum; Plant führt aus Prozess) ------------
     for k, n, i, t in [("pl1", "Sensorfertigung Linie 1", "PL-101", "Fertigungslinie"),
-                       ("plm", "Montage & Konfektion", "PL-102", "Fertigungslinie"),
+                       ("plm", "Montage und Konfektion", "PL-102", "Fertigungslinie"),
                        ("plc", "Chemlabor Materialvorbereitung", "PL-201", "Funktionsbereich (zB. Labor, QC)"),
                        ("plq", "QC-Labor", "PL-202", "Funktionsbereich (zB. Labor, QC)")]:
         o(k, "Plant", n, PlantID=i, PlantType=t, PlantGXP="GXP")
-    for k, n, i, kl, pl in [("rsd", "Siebdruckraum", "R-101", "ISO 8", "pl1"), ("rdp", "Dispensierraum", "R-102", "ISO 7", "pl1"),
-                            ("rtr", "Trockenraum", "R-103", "ISO 8", "pl1"), ("rmo", "Montageraum", "R-201", "ISO 7", "plm"),
-                            ("rko", "Konfektionierraum", "R-202", "ISO 8", "plm"), ("rca", "Ansatzraum Chemlabor", "R-301", "ISO 8", "plc"),
-                            ("rcl", "Reagenzlager Chemlabor", "R-302", "ISO 9", "plc"), ("rql", "QC-Messlabor", "R-401", "ISO 9", "plq"),
-                            ("rqk", "QC-Klimaraum", "R-402", "ISO 9", "plq")]:
+    for k, n, i, kl in [("rsd", "Siebdruckraum", "R-101", "ISO 8"), ("rdp", "Dispensierraum", "R-102", "ISO 7"),
+                        ("rtr", "Trockenraum", "R-103", "ISO 8"), ("rmo", "Montageraum", "R-201", "ISO 7"),
+                        ("rko", "Konfektionierraum", "R-202", "ISO 8"), ("rca", "Ansatzraum Chemlabor", "R-301", "ISO 8"),
+                        ("rcl", "Reagenzlager Chemlabor", "R-302", "ISO 9"), ("rql", "QC-Messlabor", "R-401", "ISO 9"),
+                        ("rqk", "QC-Klimaraum", "R-402", "ISO 9")]:
         o(k, "Raum", n, RoomID=i, RoomClass=kl)
-        v(k, "ist Teil von", pl)
+    for pl, raeume in [("pl1", ("rsd", "rdp", "rtr")), ("plm", ("rmo", "rko")), ("plc", ("rca", "rcl")), ("plq", ("rql", "rqk"))]:
+        for r in raeume:
+            v(pl, "steht in", r)
 
     # ---- Medien ----------------------------------------------------------
     for k, n, i, t, c in [("druckluft", "Druckluft", "M-01", "Process Gases & Compressed Air", "Indirect Impact"),
@@ -53,26 +57,24 @@ def bauen(ed):
                           ("hvac7", "Reinraumluft ISO 7", "M-04", "HVAC / Cleanroom Air", "Direct Impact"),
                           ("hvac8", "Reinraumluft ISO 8", "M-05", "HVAC / Cleanroom Air", "Indirect Impact")]:
         o(k, "Medium", n, MediumID=i, MediumType=t, MediumGXP="GXP", MediumProductContact=c)
-    for r, m_ in [("rdp", "hvac7"), ("rmo", "hvac7"), ("rsd", "hvac8"), ("rtr", "hvac8"), ("rca", "hvac8"), ("rko", "hvac8")]:
-        v(r, "verwendet", m_)
 
-    # ---- Equipment -------------------------------------------------------
-    eq = [("sd01", "Siebdruckanlage SD-01", "EQ-101", "Kat 3", "rsd"), ("oi01", "Optische Inline-Inspektion OI-01", "EQ-102", "Kat 3", "rsd"),
-          ("tr01", "Durchlauftrockner TR-01", "EQ-103", "Kat 3", "rtr"), ("tr02", "Vakuumtrockner TR-02", "EQ-104", "Kat 3", "rtr"),
-          ("dp01", "Dispensierroboter DP-01", "EQ-105", "Kat 3", "rdp"),
-          ("ma01", "Laminierautomat MA-01", "EQ-201", "Kat 3", "rmo"), ("sn01", "Stanz-/Schneidstation SN-01", "EQ-202", "Kat 3", "rmo"),
-          ("vp01", "Verpackungsmaschine VP-01", "EQ-203", "Kat 3", "rko"),
-          ("w01", "Analysenwaage W-01", "EQ-301", "Kat 2", "rca"), ("rw01", "Dissolver RW-01", "EQ-302", "Kat 3", "rca"),
-          ("vk01", "Viskosimeter VK-01", "EQ-303", "Kat 2", "rca"), ("ks01", "Kühlschrank Reagenz KS-01", "EQ-304", "Kat 2", "rcl"),
-          ("ps01", "Potentiostat PS-01", "EQ-401", "Kat 3", "rql"), ("ms01", "Mikroskop MS-01", "EQ-402", "Kat 2", "rql"),
-          ("kl01", "Klimaschrank Stabilität KL-01", "EQ-403", "Kat 3", "rqk")]
-    for k, n, i, kat, r in eq:
+    # ---- Equipment (ist Teil von Plant) ----------------------------------
+    eq = [("sd01", "Siebdruckanlage SD-01", "EQ-101", "Kat 3", "pl1", "rsd"), ("oi01", "Optische Inline-Inspektion OI-01", "EQ-102", "Kat 3", "pl1", "rsd"),
+          ("tr01", "Durchlauftrockner TR-01", "EQ-103", "Kat 3", "pl1", "rtr"), ("tr02", "Vakuumtrockner TR-02", "EQ-104", "Kat 3", "pl1", "rtr"),
+          ("dp01", "Dispensierroboter DP-01", "EQ-105", "Kat 3", "pl1", "rdp"),
+          ("ma01", "Laminierautomat MA-01", "EQ-201", "Kat 3", "plm", "rmo"), ("sn01", "Stanz-/Schneidstation SN-01", "EQ-202", "Kat 3", "plm", "rmo"),
+          ("vp01", "Verpackungsmaschine VP-01", "EQ-203", "Kat 3", "plm", "rko"),
+          ("w01", "Analysenwaage W-01", "EQ-301", "Kat 2", "plc", "rca"), ("rw01", "Dissolver RW-01", "EQ-302", "Kat 3", "plc", "rca"),
+          ("vk01", "Viskosimeter VK-01", "EQ-303", "Kat 2", "plc", "rca"), ("ks01", "Kühlschrank Reagenz KS-01", "EQ-304", "Kat 2", "plc", "rcl"),
+          ("ps01", "Potentiostat PS-01", "EQ-401", "Kat 3", "plq", "rql"), ("ms01", "Mikroskop MS-01", "EQ-402", "Kat 2", "plq", "rql"),
+          ("kl01", "Klimaschrank Stabilität KL-01", "EQ-403", "Kat 3", "plq", "rqk")]
+    for k, n, i, kat, pl, _raum in eq:
         o(k, "Equipment", n, EquipmentID=i, EquipmentGXP="GXP", EquipmentCategory=kat)
-        v(k, "steht in", r)
+        v(k, "ist Teil von", pl)      # ein Equipment liegt über seine Plant im Raum (Plant steht in Raum)
     for e_, m_ in [("sd01", "druckluft"), ("dp01", "druckluft"), ("tr02", "stickstoff"), ("rw01", "reinstw"), ("ma01", "druckluft"), ("sn01", "druckluft")]:
         v(e_, "verwendet", m_)
 
-    # ---- Software --------------------------------------------------------
+    # ---- Software (steuert Equipment; unterstützt Plant/Prozess/Schritt) --
     for k, n, i, t, sc, kat in [("sps_sd", "SPS Siebdruckanlage", "SW-01", "Embedded / SPS-Software", "Equipment-spezifisch (SPS, Firmware)", "Kat 4"),
                                 ("sps_tr", "SPS Trockner", "SW-02", "Embedded / SPS-Software", "Equipment-spezifisch (SPS, Firmware)", "Kat 4"),
                                 ("sw_dp", "Dispenser-Steuerung", "SW-03", "Embedded / SPS-Software", "Equipment-spezifisch (SPS, Firmware)", "Kat 4"),
@@ -85,33 +87,37 @@ def bauen(ed):
     for sw, e_ in [("sps_sd", "sd01"), ("sps_tr", "tr01"), ("sps_tr", "tr02"), ("sw_dp", "dp01"), ("sw_ma", "ma01"), ("sw_ps", "ps01")]:
         v(sw, "steuert", e_)
 
-    # ---- Prozesse --------------------------------------------------------
-    o("p_ges", "Prozess", "Teststreifenfertigung (Gesamtprozess)", ProcessID="PR-100")
+    # ---- Prozesse (Plant führt aus Prozess) ------------------------------
     for k, n, i, pl in [("p_chem", "Materialvorbereitung Reagenz", "PR-110", "plc"), ("p_elek", "Elektrodenfertigung (Siebdruck und Dispensieren)", "PR-120", "pl1"),
                         ("p_mont", "Montage und Konfektionierung", "PR-130", "plm"), ("p_qc", "QC-Prüfung und Chargenfreigabe", "PR-140", "plq")]:
         o(k, "Prozess", n, ProcessID=i)
-        v(k, "ist Teil von", "p_ges")
-        v(k, "gehört zu", pl)
-    for sw, p in [("mes", "p_ges"), ("ebr", "p_elek"), ("ebr", "p_chem"), ("ebr", "p_mont"), ("lims", "p_qc"), ("sw_ps", "p_qc")]:
-        v(sw, "unterstützt", p)
+        v(pl, "führt aus", k)
+    for sw, tg in [("mes", "pl1"), ("mes", "plm"), ("lims", "plq"), ("lims", "plc"), ("ebr", "p_elek"), ("ebr", "p_chem"), ("ebr", "p_mont"),
+                   ("sw_ps", "p_qc"), ("lims", "p_qc"), ("mes", "p_elek"), ("ebr", "s_ag")]:
+        if tg in O:
+            v(sw, "unterstützt", tg)
+    pending_sw = [("ebr", "s_ag"), ("ebr", "s_disp"), ("sw_ps", "s_mess")]
 
-    # ---- Prozessschritte: (kurz, Name, Prozess, Raum, Equipment) ---------
-    st = [("s_waege", "Wägen Rohstoffe", "p_chem", "rca", "w01"), ("s_ansatz", "Ansetzen Reagenzlösung", "p_chem", "rca", "rw01"),
-          ("s_visk", "Viskositätsprüfung (IPC)", "p_chem", "rca", "vk01"), ("s_kuehl", "Kühllagerung Reagenz", "p_chem", "rcl", "ks01"),
-          ("s_ag", "Siebdruck Silber (Ag)", "p_elek", "rsd", "sd01"), ("s_trag", "Trocknung Ag", "p_elek", "rtr", "tr01"),
-          ("s_carb", "Siebdruck Carbon", "p_elek", "rsd", "sd01"), ("s_trcarb", "Trocknung Carbon", "p_elek", "rtr", "tr01"),
-          ("s_ipc", "Optische Inline-Kontrolle (IPC)", "p_elek", "rsd", "oi01"), ("s_disp", "Dispensieren Reagenz", "p_elek", "rdp", "dp01"),
-          ("s_vak", "Vakuumtrocknung Reagenz", "p_elek", "rtr", "tr02"),
-          ("s_lam", "Laminieren", "p_mont", "rmo", "ma01"), ("s_schn", "Schneiden Streifen", "p_mont", "rmo", "sn01"),
-          ("s_kon", "Konfektionieren und Verpacken", "p_mont", "rko", "vp01"),
-          ("s_sicht", "Sichtprüfung", "p_qc", "rql", "ms01"), ("s_mess", "Elektrochemische Messung", "p_qc", "rql", "ps01"),
-          ("s_stab", "Stabilitätslagerung", "p_qc", "rqk", "kl01"), ("s_frei", "Chargenfreigabe", "p_qc", "rql", None)]
-    for i, (k, n, p, r, e_) in enumerate(st, 1):
+    # ---- Prozessschritte: (kurz, Name, Prozess, Equipment) ----------------
+    st = [("s_waege", "Wägen Rohstoffe", "p_chem", "w01"), ("s_ansatz", "Ansetzen Reagenzlösung", "p_chem", "rw01"),
+          ("s_visk", "Viskositätsprüfung (IPC)", "p_chem", "vk01"), ("s_kuehl", "Kühllagerung Reagenz", "p_chem", "ks01"),
+          ("s_ag", "Siebdruck Silber (Ag)", "p_elek", "sd01"), ("s_trag", "Trocknung Ag", "p_elek", "tr01"),
+          ("s_carb", "Siebdruck Carbon", "p_elek", "sd01"), ("s_trcarb", "Trocknung Carbon", "p_elek", "tr01"),
+          ("s_ipc", "Optische Inline-Kontrolle (IPC)", "p_elek", "oi01"), ("s_disp", "Dispensieren Reagenz", "p_elek", "dp01"),
+          ("s_vak", "Vakuumtrocknung Reagenz", "p_elek", "tr02"),
+          ("s_lam", "Laminieren", "p_mont", "ma01"), ("s_schn", "Schneiden Streifen", "p_mont", "sn01"),
+          ("s_kon", "Konfektionieren und Verpacken", "p_mont", "vp01"),
+          ("s_sicht", "Sichtprüfung", "p_qc", "ms01"), ("s_mess", "Elektrochemische Messung", "p_qc", "ps01"),
+          ("s_stab", "Stabilitätslagerung", "p_qc", "kl01"), ("s_frei", "Chargenfreigabe", "p_qc", None)]
+    for i, (k, n, p, e_) in enumerate(st, 1):
         o(k, "Prozessschritt", n, ProcessstepID=f"PS-{i:03d}")
         v(k, "ist Teil von", p)
-        v(k, "steht in", r)
         if e_:
             v(e_, "führt aus", k)
+    for sw, s_ in pending_sw:
+        v(sw, "unterstützt", s_)
+    for s_, m_ in [("s_ag", "hvac8"), ("s_trag", "hvac8"), ("s_trcarb", "hvac8"), ("s_disp", "hvac7"), ("s_vak", "stickstoff"), ("s_ansatz", "reinstw"), ("s_lam", "hvac7")]:
+        v(s_, "verwendet", m_)
     folge = [("s_waege", "s_ansatz", STD), ("s_ansatz", "s_visk", STD), ("s_visk", "s_kuehl", GATE), ("s_kuehl", "s_disp", WARTE),
              ("s_ag", "s_trag", STD), ("s_trag", "s_carb", STD), ("s_carb", "s_trcarb", STD), ("s_trcarb", "s_ipc", STD),
              ("s_ipc", "s_disp", GATE), ("s_ipc", "s_ag", LOOP), ("s_disp", "s_vak", STD), ("s_vak", "s_lam", STD),
@@ -120,7 +126,7 @@ def bauen(ed):
     for a, b, t in folge:
         v(a, "führt zu Nachfolger (0:n)", b, ProcessstepType=t)
 
-    # ---- Material --------------------------------------------------------
+    # ---- Material (Input/Output am Schritt) ------------------------------
     mat = [("m_ag", "Silberpaste Ag/AgCl", "Raw Material"), ("m_carb", "Carbonpaste", "Raw Material"), ("m_enz", "Glucoseoxidase (Enzym)", "Raw Material"),
            ("m_med", "Mediator Ferricyanid", "Raw Material"), ("m_puf", "Pufferlösung", "Raw Material"),
            ("m_pet", "PET-Trägerfolie", "Component / Purchased Part"), ("m_abd", "Abdeckfolie", "Component / Purchased Part"),
@@ -132,10 +138,6 @@ def bauen(ed):
            ("m_pack", "Teststreifen verpackt (Dose à 50)", "Finished Good"), ("m_dev", "Blutzucker-Teststreifen Typ X", "Finished Medical Device")]
     for i, (k, n, t) in enumerate(mat, 1):
         o(k, "Material", n, MaterialID=f"MAT-{i:03d}", MaterialType=t)
-    for k in ("m_ag", "m_carb", "m_enz", "m_med", "m_puf"):
-        v(k, "steht in", "rcl")
-    for a, b in [("m_strip", "m_pack"), ("m_dose", "m_pack"), ("m_gebr", "m_pack"), ("m_pack", "m_dev")]:
-        v(a, "ist Teil von", b)
     ein = [("s_waege", ["m_enz", "m_med", "m_puf"]), ("s_ansatz", ["m_enz", "m_med", "m_puf"]), ("s_ag", ["m_ag", "m_pet"]), ("s_carb", ["m_carb", "m_foag"]),
            ("s_disp", ["m_reag", "m_focarb"]), ("s_lam", ["m_foreag", "m_abd", "m_kleb"]), ("s_schn", ["m_bahn"]), ("s_kon", ["m_strip", "m_dose", "m_gebr"])]
     aus = [("s_ansatz", ["m_reag"]), ("s_ag", ["m_foag"]), ("s_carb", ["m_focarb"]), ("s_vak", ["m_foreag"]), ("s_lam", ["m_bahn"]),
@@ -147,74 +149,73 @@ def bauen(ed):
         for m_ in ms:
             v(s_, "erzeugt Output", m_)
 
-    # ---- Parameter: (kurz, Name, Schritt, Klasse, Soll, Bereich, Einheit, Regelung, Equipment steuert, Equipment/Software überwacht) ----
-    par = [("a_rak", "Rakeldruck Ag", "s_ag", "CPP", 2.0, "1.8–2.2", "bar", "Closed Loop", "sd01", "sps_sd"),
-           ("a_nass", "Nassschichtmasse Ag", "s_ag", "CPP", 120, "110–130", "mg", "Logged", None, "sps_sd"),
-           ("a_tag", "Temperatur Trocknung Ag", "s_trag", "CPP", 120, "115–125", "°C", "Closed Loop", "tr01", "sps_tr"),
-           ("a_zag", "Zeit Trocknung Ag", "s_trag", "CPP", 10, "9–11", "min", "Logged", None, "sps_tr"),
-           ("a_rf", "Raumfeuchte Trockenraum", "s_trag", "PP", 30, "20–40", "%rH", "Logged", None, "mes"),
-           ("a_rakc", "Rakeldruck Carbon", "s_carb", "CPP", 1.8, "1.6–2.0", "bar", "Closed Loop", "sd01", "sps_sd"),
-           ("a_tc", "Temperatur Trocknung Carbon", "s_trcarb", "CPP", 100, "95–105", "°C", "Closed Loop", "tr01", "sps_tr"),
-           ("a_zc", "Zeit Trocknung Carbon", "s_trcarb", "CPP", 15, "14–16", "min", "Logged", None, "sps_tr"),
-           ("a_dos", "Dosiermasse Reagenz", "s_disp", "CPP", 50, "47–53", "mg", "Closed Loop", "dp01", "sw_dp"),
-           ("a_dd", "Dispensierdruck", "s_disp", "PP", 0.5, "0.4–0.6", "bar", "Closed Loop", "dp01", "sw_dp"),
-           ("a_vak", "Vakuum Reagenztrocknung", "s_vak", "CPP", 0.2, "0.15–0.25", "bar", "Closed Loop", "tr02", "sps_tr"),
-           ("a_tv", "Temperatur Vakuumtrocknung", "s_vak", "CPP", 35, "33–37", "°C", "Closed Loop", "tr02", "sps_tr"),
-           ("a_zv", "Zeit Vakuumtrocknung", "s_vak", "CPP", 60, "55–65", "min", "Logged", None, "sps_tr"),
-           ("c_ein", "Einwaage Enzym", "s_waege", "CPP", 120, "118–122", "g", "Logged", None, "w01"),
-           ("c_rw", "Rührgeschwindigkeit Ansatz", "s_ansatz", "PP", 500, "450–550", "rpm", "Closed Loop", "rw01", None),
-           ("c_t", "Ansatztemperatur", "s_ansatz", "PP", 20, "18–22", "°C", "Logged", None, "w01"),
-           ("c_lag", "Lagertemperatur Reagenz", "s_kuehl", "CPP", 5, "2–8", "°C", "Logged", None, "ks01"),
-           ("c_std", "Standzeit Reagenz", "s_kuehl", "CPP", 24, "max. 24", "h", "Logged", None, None),
-           ("m_lp", "Laminierdruck", "s_lam", "CPP", 3.0, "2.7–3.3", "bar", "Closed Loop", "ma01", "sw_ma"),
-           ("m_siegel", "Siegeltemperatur", "s_lam", "CPP", 140, "135–145", "°C", "Closed Loop", "ma01", "sw_ma"),
-           ("m_schn", "Anpressdruck Schneiden", "s_schn", "PP", 4.0, "3.5–4.5", "bar", "Logged", "sn01", None),
-           ("q_t", "Messtemperatur QC", "s_mess", "PP", 25, "23–27", "°C", "Logged", None, "sw_ps"),
-           ("q_lag", "Lagertemperatur Stabilität", "s_stab", "CPP", 25, "23–27", "°C", "Logged", None, "kl01"),
-           ("q_rf", "Feuchte Stabilität", "s_stab", "CPP", 60, "55–65", "%rH", "Logged", None, "kl01")]
-    for i, (k, n, s_, kl, soll, ber, ein_, reg, steu, ueb) in enumerate(par, 1):
+    # ---- Parameter: (kurz, Name, Schritt, Klasse, Soll, Bereich, Einheit, Regelung, Equipment überwacht/regelt) ----
+    par = [("a_rak", "Rakeldruck Ag", "s_ag", "CPP", 2.0, "1.8–2.2", "bar", "Closed Loop", "sd01"),
+           ("a_nass", "Nassschichtmasse Ag", "s_ag", "CPP", 120, "110–130", "mg", "Logged", "sd01"),
+           ("a_tag", "Temperatur Trocknung Ag", "s_trag", "CPP", 120, "115–125", "°C", "Closed Loop", "tr01"),
+           ("a_zag", "Zeit Trocknung Ag", "s_trag", "CPP", 10, "9–11", "min", "Logged", "tr01"),
+           ("a_rf", "Raumfeuchte Trockenraum", "s_trag", "PP", 30, "20–40", "%rH", "Logged", None),
+           ("a_rakc", "Rakeldruck Carbon", "s_carb", "CPP", 1.8, "1.6–2.0", "bar", "Closed Loop", "sd01"),
+           ("a_tc", "Temperatur Trocknung Carbon", "s_trcarb", "CPP", 100, "95–105", "°C", "Closed Loop", "tr01"),
+           ("a_zc", "Zeit Trocknung Carbon", "s_trcarb", "CPP", 15, "14–16", "min", "Logged", "tr01"),
+           ("a_dos", "Dosiermasse Reagenz", "s_disp", "CPP", 50, "47–53", "mg", "Closed Loop", "dp01"),
+           ("a_dd", "Dispensierdruck", "s_disp", "PP", 0.5, "0.4–0.6", "bar", "Closed Loop", "dp01"),
+           ("a_vak", "Vakuum Reagenztrocknung", "s_vak", "CPP", 0.2, "0.15–0.25", "bar", "Closed Loop", "tr02"),
+           ("a_tv", "Temperatur Vakuumtrocknung", "s_vak", "CPP", 35, "33–37", "°C", "Closed Loop", "tr02"),
+           ("a_zv", "Zeit Vakuumtrocknung", "s_vak", "CPP", 60, "55–65", "min", "Logged", "tr02"),
+           ("c_ein", "Einwaage Enzym", "s_waege", "CPP", 120, "118–122", "g", "Logged", "w01"),
+           ("c_rw", "Rührgeschwindigkeit Ansatz", "s_ansatz", "PP", 500, "450–550", "rpm", "Closed Loop", "rw01"),
+           ("c_t", "Ansatztemperatur", "s_ansatz", "PP", 20, "18–22", "°C", "Logged", "rw01"),
+           ("c_lag", "Lagertemperatur Reagenz", "s_kuehl", "CPP", 5, "2–8", "°C", "Logged", "ks01"),
+           ("c_std", "Standzeit Reagenz", "s_kuehl", "CPP", 24, "max. 24", "h", "Logged", None),
+           ("m_lp", "Laminierdruck", "s_lam", "CPP", 3.0, "2.7–3.3", "bar", "Closed Loop", "ma01"),
+           ("m_siegel", "Siegeltemperatur", "s_lam", "CPP", 140, "135–145", "°C", "Closed Loop", "ma01"),
+           ("m_schn", "Anpressdruck Schneiden", "s_schn", "PP", 4.0, "3.5–4.5", "bar", "Logged", "sn01"),
+           ("q_t", "Messtemperatur QC", "s_mess", "PP", 25, "23–27", "°C", "Logged", "ps01"),
+           ("q_lag", "Lagertemperatur Stabilität", "s_stab", "CPP", 25, "23–27", "°C", "Logged", "kl01"),
+           ("q_rf", "Feuchte Stabilität", "s_stab", "CPP", 60, "55–65", "%rH", "Logged", "kl01")]
+    for i, (k, n, s_, kl, soll, ber, ein_, reg, ue) in enumerate(par, 1):
         o(k, "Parameter", n, ParameterID=f"PAR-{i:03d}", ParameterClass=kl, ParameterTargetValue=soll,
           ParameterAcceptanceRange=ber, ParameterUnit=ein_, ParameterControlType=reg)
-        v(k, "gehört zu", s_)
-        if steu:
-            v(steu, "steuert", k)
-        if ueb:
-            v(ueb, "überwacht/regelt", k)
+        v(s_, "definiert", k)
+        if ue:
+            v(ue, "überwacht/regelt", k)
 
-    # ---- Dokumente -------------------------------------------------------
-    dok = [("d_spag", "Spezifikation Silberpaste", "Specification", "SAP P1U", [("definiert", "m_ag")]),
-           ("d_spcarb", "Spezifikation Carbonpaste", "Specification", "SAP P1U", [("definiert", "m_carb")]),
-           ("d_spreag", "Spezifikation Reagenzlösung", "Specification", "SAP P1U", [("definiert", "m_reag"), ("definiert", "c_t")]),
-           ("d_spdev", "Spezifikation Teststreifen", "Specification", "SAP P1U", [("definiert", "m_dev")]),
-           ("d_aasd", "Arbeitsanweisung Siebdruck", "Work Instruction", "DiaDoc", [("definiert", "s_ag"), ("definiert", "s_carb")]),
-           ("d_aatr", "Arbeitsanweisung Trocknung", "Work Instruction", "DiaDoc", [("definiert", "s_trag"), ("definiert", "s_trcarb"), ("definiert", "s_vak")]),
-           ("d_aadp", "Arbeitsanweisung Dispensieren", "Work Instruction", "DiaDoc", [("definiert", "s_disp")]),
-           ("d_aaans", "Arbeitsanweisung Reagenzansatz", "Work Instruction", "DiaDoc", [("definiert", "s_ansatz"), ("definiert", "s_waege")]),
-           ("d_aalam", "Arbeitsanweisung Laminieren", "Work Instruction", "DiaDoc", [("definiert", "s_lam"), ("definiert", "s_schn")]),
-           ("d_aasi", "Arbeitsanweisung Sichtprüfung", "Work Instruction", "DiaDoc", [("definiert", "s_sicht")]),
-           ("d_brel", "Batch Record Elektrodenfertigung", "Batch Record", "SAP P1U", [("definiert", "p_elek")]),
-           ("d_brch", "Batch Record Reagenzansatz", "Batch Record", "SAP P1U", [("definiert", "p_chem")]),
-           ("d_brmo", "Batch Record Montage", "Batch Record", "SAP P1U", [("definiert", "p_mont")]),
-           ("d_brqc", "Batch Record QC", "Batch Record", "SAP P1U", [("definiert", "p_qc")]),
-           ("d_pqtr", "PQ Trocknungsprozess Ag/Carbon", "Validation Documentation", "SAP P1U",
-            [("definiert", "a_tag"), ("definiert", "a_zag"), ("definiert", "a_tc"), ("definiert", "a_zc")]),
-           ("d_pqdp", "PQ Dispensierprozess", "Validation Documentation", "SAP P1U", [("definiert", "a_dos"), ("definiert", "a_dd")]),
-           ("d_iqsd", "IQ/OQ Siebdruckanlage", "Validation Documentation", "SAP P1U", [("unterstützt", "sd01")]),
-           ("d_iqtr", "IQ/OQ Durchlauftrockner", "Validation Documentation", "SAP P1U", [("unterstützt", "tr01")]),
-           ("d_iqdp", "IQ/OQ Dispensierroboter", "Validation Documentation", "SAP P1U", [("unterstützt", "dp01")]),
-           ("d_iqma", "IQ/OQ Laminierautomat", "Validation Documentation", "SAP P1U", [("unterstützt", "ma01")]),
-           ("d_iqps", "IQ/OQ Potentiostat", "Validation Documentation", "SAP P1U", [("unterstützt", "ps01")]),
-           ("d_csv", "CSV-Bericht MES", "Validation Documentation", "SAP P1U", [("unterstützt", "mes")]),
-           ("d_gsp", "GSP Reinraumverhalten", "GSP", "DiaDoc", []),
+    # ---- Dokumente (gehört zu Equipment, Prozess, Schritt, Plant, Raum, Software) ----
+    dok = [("d_spag", "Spezifikation Silberpaste", "Specification", "SAP P1U", ["s_ag"]),
+           ("d_spcarb", "Spezifikation Carbonpaste", "Specification", "SAP P1U", ["s_carb"]),
+           ("d_spreag", "Spezifikation Reagenzlösung", "Specification", "SAP P1U", ["s_ansatz", "s_visk"]),
+           ("d_spdev", "Spezifikation Teststreifen", "Specification", "SAP P1U", ["p_qc", "s_frei"]),
+           ("d_aasd", "Arbeitsanweisung Siebdruck", "Work Instruction", "DiaDoc", ["s_ag", "s_carb"]),
+           ("d_aatr", "Arbeitsanweisung Trocknung", "Work Instruction", "DiaDoc", ["s_trag", "s_trcarb", "s_vak"]),
+           ("d_aadp", "Arbeitsanweisung Dispensieren", "Work Instruction", "DiaDoc", ["s_disp"]),
+           ("d_aaans", "Arbeitsanweisung Reagenzansatz", "Work Instruction", "DiaDoc", ["s_ansatz", "s_waege"]),
+           ("d_aalam", "Arbeitsanweisung Laminieren", "Work Instruction", "DiaDoc", ["s_lam", "s_schn"]),
+           ("d_aasi", "Arbeitsanweisung Sichtprüfung", "Work Instruction", "DiaDoc", ["s_sicht"]),
+           ("d_brel", "Batch Record Elektrodenfertigung", "Batch Record", "SAP P1U", ["p_elek"]),
+           ("d_brch", "Batch Record Reagenzansatz", "Batch Record", "SAP P1U", ["p_chem"]),
+           ("d_brmo", "Batch Record Montage", "Batch Record", "SAP P1U", ["p_mont"]),
+           ("d_brqc", "Batch Record QC", "Batch Record", "SAP P1U", ["p_qc"]),
+           ("d_pqtr", "PQ Trocknungsprozess Ag/Carbon", "Validation Documentation", "SAP P1U", ["s_trag", "s_trcarb"]),
+           ("d_pqdp", "PQ Dispensierprozess", "Validation Documentation", "SAP P1U", ["s_disp"]),
+           ("d_iqsd", "IQ/OQ Siebdruckanlage", "Validation Documentation", "SAP P1U", ["sd01"]),
+           ("d_iqtr", "IQ/OQ Durchlauftrockner", "Validation Documentation", "SAP P1U", ["tr01"]),
+           ("d_iqdp", "IQ/OQ Dispensierroboter", "Validation Documentation", "SAP P1U", ["dp01"]),
+           ("d_iqma", "IQ/OQ Laminierautomat", "Validation Documentation", "SAP P1U", ["ma01"]),
+           ("d_iqps", "IQ/OQ Potentiostat", "Validation Documentation", "SAP P1U", ["ps01"]),
+           ("d_csv", "CSV-Bericht MES", "Validation Documentation", "SAP P1U", ["mes"]),
+           ("d_gsp", "GSP Reinraumverhalten", "GSP", "DiaDoc", ["rsd", "rdp", "rtr", "rmo"]),
+           ("d_plan", "Qualifizierungsplan Linie 1", "Validation Documentation", "SAP P1U", ["pl1"]),
            ("d_ruest", "Formular Rüstprotokoll", "Form", "DiaDoc", [])]
     for i, (k, n, t, dms, bez) in enumerate(dok, 1):
         o(k, "Dokument", n, DocumentID=f"DOC-{i:03d}", DocumentDMS=dms, DocumentType=t)
-        for art, ziel in bez:
-            v(k, art, ziel)
+        for ziel in bez:
+            v(k, "gehört zu", ziel)
 
     # ---- Absichtliche Lücken (für die Qualitätsfilter) -------------------
     # keine IQ/OQ für: Vakuumtrockner, Schneidstation, Verpackung, Waage, Dissolver,
-    # Viskosimeter, Kühlschrank, Mikroskop, Klimaschrank, Inline-Inspektion
+    # Viskosimeter, Kühlschrank, Mikroskop, Klimaschrank, Inline-Inspektion;
+    # Parameter ohne Equipment: Raumfeuchte, Standzeit
     ed.knoten_aendern(O["ms01"], felder={"EquipmentCategory": ""})
     return O
 
@@ -224,7 +225,7 @@ def main():
     ap.add_argument("--bestand", default=os.path.join(HIER, "bestand_beispiel"))
     a = ap.parse_args()
     m = Modell(os.path.join(HIER, "modell.json"))
-    m.lade_regeln(os.path.join(HIER, "regeln.json"))
+    m.lade_wegregeln(os.path.join(HIER, "regeln.json"))
     ed = Editor(a.bestand, m)
     O = bauen(ed)
     z = ed.zustand()

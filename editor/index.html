@@ -151,7 +151,7 @@ textarea.notiz{width:100%;resize:vertical;display:block;border-color:var(--akz)}
 .chip{display:inline-flex;align-items:center;gap:7px;background:var(--raised);border:1px solid var(--lin);border-radius:7px;padding:2px 4px 2px 8px;cursor:pointer}
 .chip:hover{border-color:var(--akz)}.chip small{color:var(--dim)}
 .x{color:var(--dim);padding:0 5px;border-radius:4px}.x:hover{background:var(--lin2);color:var(--warn)}
-.attr{margin:4px 0 0 2px;font-size:12px;color:var(--mut)}.attr select{padding:1px 6px;font-size:12px}
+.attr{margin:4px 0 0 2px;font-size:12px;color:var(--mut)}.attr select{padding:1px 6px;font-size:12px}.attr select.lk{border-color:#6b3037}
 .addrel{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.addrel input{flex:1;min-width:120px}
 .karte{background:var(--bg);border:1px solid var(--lin);border-radius:10px;padding:6px}
 .karte svg text{fill:var(--tx);font-size:10px;text-anchor:middle;pointer-events:none}
@@ -218,8 +218,17 @@ const nbrs = ref => NB.get(ref) || [];
 const hatBez = ref => nbrs(ref).length > 0;
 const hatTyp = (ref, t) => nbrs(ref).some(n => (M.get(n.andere) || {}).typ === t);
 const modellTyp = typ => S.modell && S.modell.typen[typ];
-// Modell-Feldnamen tragen den Typ als Vorsilbe (EquipmentGXP, ParameterTargetValue): ohne sie und mit Leerzeichen lesen
+// Beschriftung eines Feldes: der `title` aus dem Modell (z. B. „GXP-Relevanz“), sonst der Name ohne Typ-Vorsilbe
+let flKarte = null;
 const fl = name => {
+  if (!flKarte) {
+    flKarte = new Map();
+    if (S.modell) {
+      for (const t of Object.values(S.modell.typen)) for (const f of t.felder) if (f.titel) flKarte.set(f.name, f.titel);
+      for (const fs of Object.values(S.modell.kantenfelder || {})) for (const f of fs) if (f.titel) flKarte.set(f.name, f.titel);
+    }
+  }
+  if (flKarte.has(name)) return flKarte.get(name);
   const pre = S.modell ? Object.values(S.modell.typen).map(t => t.namefeld.replace(/Name$/, '')).filter(Boolean).sort((a, b) => b.length - a.length) : [];
   let n = name; for (const pf of pre) if (n.startsWith(pf) && n.length > pf.length && /[A-Z]/.test(n[pf.length])) { n = n.slice(pf.length); break; }
   return n.replace(/([a-z])([A-Z])/g, '$1 $2');
@@ -236,7 +245,7 @@ async function api(aktion, daten) {
   const r = await fetch('/api/' + aktion, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(daten || {})});
   const j = await r.json();
   if (!r.ok) { toast(j.fehler || 'Fehler', true); return null; }
-  S = j.zustand; indexieren(); RC.clear(); regelMenge = null;
+  S = j.zustand; indexieren(); RC.clear(); regelMenge = null; flKarte = null;
   if (ir && !M.has(ir)) ir = null;
   if (j.hinweis) toast(j.hinweis);
   render();
@@ -300,6 +309,16 @@ const gefiltert = st => st.typen.length || (st.zus || []).some(c => Object.value
    Fehlendes wird beim Rechnen vermerkt und danach in einem Zug nachgeladen. */
 const RC = new Map(); let MISS = new Map();
 const specKey = o => JSON.stringify([o.weg || 'frei', o.richtung || 'beide', o.tiefe, o.arten && o.arten.length ? [...o.arten].sort() : null, o.halt ? 1 : 0, o.typen ? [...o.typen].sort() : null]);
+// Beziehungen, die das Modell zwischen zwei Typen erlaubt: [{art, dir}], dir „aus“ = von a nach b
+function zwischenTypen(ta, tb, art) {
+  const out = [];
+  for (const r of (S.modell && S.modell.regeln) || []) {
+    if (art && r.art !== art) continue;
+    if (r.von === ta && r.nach === tb) out.push({art: r.art, dir: 'aus'});
+    if (r.von === tb && r.nach === ta && ta !== tb) out.push({art: r.art, dir: 'ein'});
+  }
+  return out;
+}
 let regelMenge = null;
 function regelAbw(e) {     // true, wenn die Verknüpfung (Typ, Art, Typ) im Regelwerk nicht vorkommt
   if (!regelOK()) return false;
@@ -668,11 +687,12 @@ function diagrammHtml(p) {
 const nachfolger = e => e.gerichtet && /nachfolger/i.test(e.art);
 function flussKanten(p) { const set = new Set(p.T.map(k => k.ref)); return S.kanten.filter(e => nachfolger(e) && set.has(e.von) && set.has(e.nach)); }
 const schleifeKante = e => /schleife|loop/i.test((e.felder || {}).ProcessstepType || '');
-function bahnVon(ref, modus) {      // nach den Regeln: Schritt ist Teil von Prozess / steht in Raum, Raum ist Teil von Plant
-  const nb = (r, typ, art) => nbrs(r).filter(n => n.dir === 'aus' && n.art === art && (M.get(n.andere) || {}).typ === typ).map(n => n.andere);
-  if (modus === 'prozess') { const x = nb(ref, 'Prozess', 'ist Teil von')[0]; return x ? nameVon(x) : '–'; }
-  if (modus === 'raum') { const x = nb(ref, 'Raum', 'steht in')[0]; return x ? nameVon(x) : '–'; }
-  if (modus === 'plant') { const r = nb(ref, 'Raum', 'steht in')[0], pl = r && nb(r, 'Plant', 'ist Teil von')[0]; return pl ? nameVon(pl) : '–'; }
+function bahnVon(ref, modus) {
+  const nb = (r, typ, art, dir) => nbrs(r).filter(n => n.dir === dir && n.art === art && (M.get(n.andere) || {}).typ === typ).map(n => n.andere);
+  const prozess = r => nb(r, 'Prozess', 'ist Teil von', 'aus')[0];
+  if (modus === 'prozess') { const x = prozess(ref); return x ? nameVon(x) : '–'; }
+  if (modus === 'plant') { const pr = prozess(ref), pl = pr && nb(pr, 'Plant', 'führt aus', 'ein')[0]; return pl ? nameVon(pl) : '–'; }
+  if (modus === 'equipment') { const e = nb(ref, 'Equipment', 'führt aus', 'ein')[0]; return e ? nameVon(e) : '–'; }
   return '';
 }
 const ansichtBreiteFluss = p => p.gross ? innerWidth - (ir ? 404 : 24) : ansichtBreite(p);
@@ -690,7 +710,7 @@ function flussHtml(p) {
   for (let i = 0; i < nodes.length; i++) { let ch = false; for (const e of fw) if (schicht.get(e.nach) < schicht.get(e.von) + 1) { schicht.set(e.nach, schicht.get(e.von) + 1); ch = true; } if (!ch) break; }
   const nL = Math.max(...schicht.values()) + 1;
   // Bahnen: je Prozess, Raum oder Plant
-  const modus = p.bahn || (new Set(nodes.map(r => bahnVon(r, 'prozess'))).size > 1 ? 'prozess' : 'raum');
+  const modus = p.bahn || (new Set(nodes.map(r => bahnVon(r, 'prozess'))).size > 1 ? 'prozess' : 'equipment');
   const bahnVonRef = new Map(nodes.map(r => [r, bahnVon(r, modus)]));
   const bahnen = [...new Set(bahnVonRef.values())].sort((a, b) => Math.min(...nodes.filter(r => bahnVonRef.get(r) === a).map(r => schicht.get(r))) - Math.min(...nodes.filter(r => bahnVonRef.get(r) === b).map(r => schicht.get(r))) || a.localeCompare(b, 'de'));
   const BW = 168, BH = 58, GX = 64, GY = 18, PAD = 14, LW = modus === 'keine' ? 0 : 150, zeileH = BH + GY;
@@ -720,7 +740,7 @@ function flussHtml(p) {
   }).join('');
   const baender = modus === 'keine' ? '' : bahnen.map((b, i) => `<rect x="0" y="${y0.get(b)}" width="${Wd}" height="${hoehe.get(b)}" fill="${i % 2 ? 'rgba(255,255,255,.02)' : 'rgba(124,147,255,.045)'}"/><text x="12" y="${y0.get(b) + 22}" style="text-anchor:start;font-size:12px;font-weight:600">${esc(b.length > 22 ? b.slice(0, 21) + '…' : b)}</text><title>${esc(b)}</title>`).join('');
   const ohne = p.T.filter(k => !nodes.includes(k.ref));
-  return `<div class="baumtool"><span class="dim">Bahnen nach</span><select class="pbahn">${[['prozess', 'Prozess'], ['raum', 'Raum'], ['plant', 'Plant'], ['keine', 'ohne Bahnen']].map(([v, t]) => `<option value="${v}"${modus === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
+  return `<div class="baumtool"><span class="dim">Bahnen nach</span><select class="pbahn">${[['prozess', 'Prozess'], ['plant', 'Plant'], ['equipment', 'Equipment'], ['keine', 'ohne Bahnen']].map(([v, t]) => `<option value="${v}"${modus === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
       <span class="dim" style="margin-left:auto">Größe</span><div class="seg">${[['0.6', '60 %'], ['0.8', '80 %'], ['1', '100 %']].map(([v, t]) => `<button class="${Math.abs(zf - +v) < 0.03 ? 'on' : ''}" data-act="fzoom" data-z="${v}">${t}</button>`).join('')}</div></div>
     <div style="overflow:auto;padding-top:4px"><svg width="${Math.round(Wd * zf)}" height="${Math.round(H * zf)}" viewBox="0 0 ${Wd} ${H}" class="fluss"><defs><marker id="pf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa3bd"/></marker></defs>${baender}${kanten}${boxen}</svg></div>
     <div class="dim" style="font-size:12px;padding:2px 2px 8px"><b style="color:#e8b84a">━</b> Gate/IPC &nbsp; <b style="color:#4fd1a1">┅</b> Wartezeit &nbsp; <b style="color:#b57cff">┅</b> Schleife (Rückweg) &nbsp;·&nbsp; Punkte am Schritt: <span style="color:${farbe('Parameter')}">●</span> Parameter <span style="color:${farbe('Material')}">●</span> Material <span style="color:${farbe('Equipment')}">●</span> Equipment <span style="color:${farbe('Dokument')}">●</span> Dokument <span style="color:${farbe('Software')}">●</span> Software</div>
@@ -796,7 +816,7 @@ const FRAGEN = [   // tiefe = Typ-Schritte nach dem Regelwerk
   {id: 'f4', titel: 'Wo wird ein Material verwendet?', text: 'Von Material zu den Prozessen (Impact).', start: 'Material', pfad: [{typ: 'Prozess', tiefe: 2}]},
   {id: 'f5', titel: 'Welche Prozesse hängen an einem Equipment?', text: 'Auswirkung einer Änderung oder eines Ausfalls.', start: 'Equipment', pfad: [{typ: 'Prozess', tiefe: 2}]},
   {id: 'f6', titel: 'Dokumente zu einem Objekt', text: 'Alles, was dazu definiert oder qualifiziert.', start: null, pfad: [{typ: 'Dokument', tiefe: 2}]},
-  {id: 'f7', titel: 'Equipments in einem Raum', text: 'Was steht dort, mit Kategorie und GXP.', start: 'Raum', pfad: [{typ: 'Equipment', tiefe: 1}]},
+  {id: 'f7', titel: 'Equipments in einem Raum', text: 'Equipments der Plants, die in dem Raum stehen (Equipment ist Teil von Plant, Plant steht in Raum).', start: 'Raum', pfad: [{typ: 'Equipment', tiefe: 2}]},
   {id: 'f8', titel: 'Software eines Equipments', text: 'Welche Software steuert es.', start: 'Equipment', pfad: [{typ: 'Software', tiefe: 1}]},
 ];
 function fragenHtml() {
@@ -1007,8 +1027,14 @@ const zuS = new Set((() => { try { return JSON.parse(ls.get('insp_zu', '[]')); }
 const sekt = (id, titel, html, extra = '') => `<h3 class="sekt" data-act="sekt" data-s="${id}"><span class="car">${zuS.has(id) ? '▸' : '▾'}</span>${titel}${extra}</h3>${zuS.has(id) ? '' : html}`;
 // Wo: die Zugehörigkeitskette von unten nach oben (Prozessschritt, Prozess, Raum, Plant), jedes Glied anklickbar
 function woHtml(k) {
-  const arten = zugArten(); if (!arten.length) return '';
-  const m = reichKarte([k.ref], {weg: 'frei', richtung: 'aus', tiefe: 4, arten, halt: false}).get(k.ref);
+  let m;
+  if (regelOK()) {
+    const typen = ['Plant', 'Raum', 'Prozess', 'Prozessschritt'].filter(t => S.modell.typen[t] && t !== k.typ);
+    m = reichKarte([k.ref], {weg: 'regel', tiefe: 4, typen}).get(k.ref);
+  } else {
+    const arten = zugArten(); if (!arten.length) return '';
+    m = reichKarte([k.ref], {weg: 'frei', richtung: 'aus', tiefe: 4, arten, halt: false}).get(k.ref);
+  }
   if (!m || !m.size) return '';
   const g = new Map(); for (const r of m.keys()) { const o = M.get(r); if (o) { if (!g.has(o.typ)) g.set(o.typ, []); g.get(o.typ).push(o); } }
   const typen = [...g.keys()].sort((a, b) => typenListe().indexOf(a) - typenListe().indexOf(b));
@@ -1020,6 +1046,8 @@ function renderInspektor() {
   const mt = modellTyp(k.typ);
   const feld = (f, wert, pflicht, opt) => {
     const lk = pflicht && !wert ? ' lk' : '';
+    const frei = mt && (mt.felder.find(x => x.name === f) || {}).freitext;
+    if (frei && opt) return `<label for="f_${esc(f)}" title="${esc(f)}">${esc(fl(f))}${pflicht ? ' <span class="pf">*</span>' : ''}</label><input id="f_${esc(f)}" class="fv${lk}" data-f="${esc(f)}" value="${esc(wert || '')}" list="opt_${esc(f)}" placeholder="Auswahl oder Text"><datalist id="opt_${esc(f)}">${opt.map(o => `<option value="${esc(o)}">`).join('')}</datalist>`;
     return `<label for="f_${esc(f)}" title="${esc(f)}">${esc(fl(f))}${pflicht ? ' <span class="pf">*</span>' : ''}</label>` + (opt
       ? `<select id="f_${esc(f)}" class="fv${lk}" data-f="${esc(f)}"><option value="">–</option>${opt.map(o => `<option${o === wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
       : `<input id="f_${esc(f)}" class="fv${lk}" data-f="${esc(f)}" value="${esc(wert || '')}">`);
@@ -1031,7 +1059,7 @@ function renderInspektor() {
   const gr = relGruppen(k.ref);
   const rel = gr.map(g => `<div class="gruppe"><div class="gl">${esc(g.label)}</div><div class="chips">${g.eintraege.map(({e, andere}) => {
     const o = M.get(andere);
-    const attr = kf(e.art).map(f => `<select class="kf" data-id="${esc(e.id)}" data-f="${esc(f.name)}" title="${esc(f.name)}"><option value="">${esc(f.name)}: –</option>${(f.optionen || []).map(x => `<option${x === (e.felder || {})[f.name] ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`).join('');
+    const attr = kf(e.art).map(f => `<select class="kf${f.pflicht && !(e.felder || {})[f.name] ? ' lk' : ''}" data-id="${esc(e.id)}" data-f="${esc(f.name)}" title="${esc(f.name)}${f.pflicht ? ' (Pflicht)' : ''}"><option value="">${esc(fl(f.name))}${f.pflicht ? ' *' : ''}: –</option>${(f.optionen || []).map(x => `<option${x === (e.felder || {})[f.name] ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`).join('');
     return `<div><span class="chip" data-act="insp" data-ref="${esc(andere)}">${punkt(o.typ)}<span>${esc(o.name)}</span><small>${esc(o.typ)}</small>${regelAbw(e) ? '<span class="luecke" title="Diese Verknüpfung (Typ – Art – Typ) steht nicht im Regelwerk">⚠</span>' : ''}<button class="x" data-act="kante_weg" data-id="${esc(e.id)}" title="Verknüpfung entfernen">×</button></span>${attr ? `<div class="attr">${attr}</div>` : ''}</div>`;
   }).join('')}</div></div>`).join('');
   const erw = erwaehntIn(k);
@@ -1059,18 +1087,37 @@ function nachInspektor(k) {
   t.onblur = () => { const n = t.textContent.trim(); if (n && n !== k.name) api('aendern', {ref: k.ref, name: n}); else t.textContent = k.name; };
   if ($('notiz')) $('notiz').onclick = e => { if (!e.target.closest('[data-act]')) notizBearbeiten(k); };
   const ra = $('rart') || document.createElement('select'), rz = $('rziel') || document.createElement('input');
-  const attrZeigen = () => { $('rattr').innerHTML = kf(ra.value).map(f => `${esc(f.name)} <select class="rf" data-f="${esc(f.name)}"><option value="">–</option>${(f.optionen || []).map(o => `<option>${esc(o)}</option>`).join('')}</select>`).join(' '); };
+  const attrZeigen = () => { if (!$('rattr')) return; $('rattr').innerHTML = kf(ra.value).map(f => `${esc(fl(f.name))}${f.pflicht ? ' *' : ''} <select class="rf" data-f="${esc(f.name)}"><option value="">–</option>${(f.optionen || []).map(o => `<option>${esc(o)}</option>`).join('')}</select>`).join(' '); };
   ra.onchange = attrZeigen;
   const verknuepfen = async ziel => {
-    if (!ra.value) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
+    const zt = M.get(ziel);
+    let art = ra.value, dir = $('rdir') ? $('rdir').value : 'aus';
+    if (regelOK()) {                         // Art und Richtung ergeben sich aus den Typen
+      const c = zwischenTypen(k.typ, zt.typ);
+      if (!c.length) { toast(`Zwischen ${k.typ} und ${zt.typ} gibt es im Modell keine Beziehung.`, true); return; }
+      if (c.length === 1) { art = c[0].art; dir = c[0].dir; }
+      else if (!art || !c.some(x => x.art === art)) { toast(`Zwischen ${k.typ} und ${zt.typ} gibt es mehrere Beziehungen — bitte die Art wählen.`, true); ra.focus(); return; }
+      else dir = c.find(x => x.art === art).dir;
+    }
+    if (!art) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
     const felder = {}; document.querySelectorAll('select.rf').forEach(i => { if (i.value) felder[i.dataset.f] = i.value; });
-    const dir = $('rdir').value, zt = M.get(ziel);
-    ls.set('paar:' + k.typ + '>' + zt.typ, JSON.stringify({art: ra.value, dir}));
-    ls.set('paar:' + zt.typ + '>' + k.typ, JSON.stringify({art: ra.value, dir: dir === 'aus' ? 'ein' : dir === 'ein' ? 'aus' : dir}));
-    const j = await api('kante', {ref: k.ref, ziel, art: ra.value, richtung: dir, felder});
+    const fehlt = kf(art).filter(f => f.pflicht && !felder[f.name]);
+    if (fehlt.length) { ra.value = art; if ($('rdir')) $('rdir').value = dir; attrZeigen(); toast(`Noch wählen: ${fehlt.map(f => f.name).join(', ')}`, true); const rf = document.querySelector('select.rf'); if (rf) rf.focus(); return; }
+    if (!regelOK()) { ls.set('paar:' + k.typ + '>' + zt.typ, JSON.stringify({art, dir})); ls.set('paar:' + zt.typ + '>' + k.typ, JSON.stringify({art, dir: dir === 'aus' ? 'ein' : dir === 'ein' ? 'aus' : dir})); }
+    const j = await api('kante', {ref: k.ref, ziel, art, richtung: dir, felder});
     if (j && $('rziel')) $('rziel').focus();
   };
-  const gewaehlt = o => { rz.value = o.name; rz.dataset.ref = o.ref; const v = vorhersage(k.typ, o.typ); if (v) { ra.value = v.art; $('rdir').value = v.dir; attrZeigen(); } if (ra.value) verknuepfen(o.ref); else ra.focus(); };
+  const gewaehlt = o => {
+    rz.value = o.name; rz.dataset.ref = o.ref;
+    if (regelOK()) {
+      const c = zwischenTypen(k.typ, o.typ);
+      if (!c.length) { toast(`Zwischen ${k.typ} und ${o.typ} gibt es im Modell keine Beziehung.`, true); rz.value = ''; delete rz.dataset.ref; return; }
+      ra.innerHTML = c.map(x => `<option>${esc(x.art)}</option>`).join(''); ra.value = c[0].art; if ($('rdir')) $('rdir').value = c[0].dir; attrZeigen();
+      if (c.length === 1) verknuepfen(o.ref); else ra.focus();     // mehrere Möglichkeiten: Art wählen lassen
+      return;
+    }
+    const v = vorhersage(k.typ, o.typ); if (v) { ra.value = v.art; $('rdir').value = v.dir; attrZeigen(); } if (ra.value) verknuepfen(o.ref); else ra.focus();
+  };
   rz.oninput = () => { delete rz.dataset.ref; sugZeige(rz, treffer(rz.value, k.ref), gewaehlt); };
   rz.onkeydown = async e => {
     if (sugTaste(e)) return;
@@ -1078,7 +1125,8 @@ function nachInspektor(k) {
     const eind = rz.dataset.ref || (findeNachName(rz.value) || {}).ref;
     if (eind && eind !== k.ref) return verknuepfen(eind);
     const m = rz.value.match(/^([^:]+):\s*(.+)$/);
-    if (m && !ra.value) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
+    if (m && regelOK()) { const tt = typenListe().find(t => t.toLowerCase().startsWith(m[1].trim().toLowerCase())); if (tt && !zwischenTypen(k.typ, tt).length) { toast(`Zwischen ${k.typ} und ${tt} gibt es im Modell keine Beziehung.`, true); return; } }
+    if (m && !regelOK() && !ra.value) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
     if (m) { const j = await api('anlegen', {typ: m[1].trim(), name: m[2].trim()}); if (j) return verknuepfen(j.ref); }
     else toast('Kein Objekt mit diesem Namen. Zum Anlegen „Typ: Name“ schreiben.', true);
   };
@@ -1161,7 +1209,7 @@ function regelwerkDialog() {
   const regeln = S.modell.regeln, gruppen = new Map(); regeln.forEach(r => { if (!gruppen.has(r.von)) gruppen.set(r.von, []); gruppen.get(r.von).push(r); });
   const abw = [...gez.entries()].filter(([k]) => !new Set(regeln.map(r => r.von + '|' + r.art + '|' + r.nach)).has(k));
   $('schleier').style.display = 'flex';
-  $('box').innerHTML = `<div class="dlg" style="padding:8px 12px 12px"><b style="font-size:15px">Regelwerk</b><div class="mut" style="margin:2px 0 8px">Welche Beziehung gilt zwischen welchen Typen. Das sind Annahmen (Datei <code>editor/regeln.json</code>); sie warnen nur und steuern die Wege „nach Regelwerk“.</div>
+  $('box').innerHTML = `<div class="dlg" style="padding:8px 12px 12px"><b style="font-size:15px">Regelwerk</b><div class="mut" style="margin:2px 0 8px">Welche Beziehung gilt zwischen welchen Typen — so steht es im Datenmodell (<code>editor/modell.json</code>, die <code>Edge_*</code>-Definitionen). Erlaubt sind nur diese Paare; die Wege „nach Regelwerk“ folgen ihnen. Die Zahl rechts zeigt, wie oft das Paar im Bestand vorkommt.</div>
     ${[...gruppen.entries()].sort((a, b) => typenListe().indexOf(a[0]) - typenListe().indexOf(b[0])).map(([t, rs]) => `<div class="fsub" style="border:none">${punkt(t)} ${esc(t)}</div>` + rs.map(r => `<div class="weg" style="display:flex;gap:6px"><span style="flex:1">${esc(r.von)} <b>${esc(r.art)}</b> ${punkt(r.nach)} ${esc(r.nach)}${r.sinn ? ` <span class="dim">— ${esc(r.sinn)}</span>` : ''}</span><span class="dim">${gez.get(r.von + '|' + r.art + '|' + r.nach) || 0}×</span></div>`).join('')).join('')}
     ${abw.length ? `<div class="fsub" style="color:var(--warn)">Im Bestand, aber nicht im Regelwerk</div>${abw.map(([k, n]) => `<div class="weg">${esc(k.split('|').join(' – '))} <span class="dim">${n}×</span></div>`).join('')}` : '<div class="dim" style="padding-top:8px">Alle Verknüpfungen im Bestand entsprechen dem Regelwerk.</div>'}
     <div class="zeile" style="margin-top:12px;justify-content:flex-end"><button class="btn" data-act="zu">Schließen</button></div></div>`;
@@ -1173,11 +1221,11 @@ function importDialog() {
     <label class="l">Eine Zeile pro Objekt · Einrücken = hängt unter der Zeile darüber · „Typ: Name“ setzt den Typ der Zeile</label>
     <textarea id="imptext" placeholder="Prozess: Sterilisation&#10;  Prozessschritt: Beladen&#10;  Prozessschritt: Sterilisieren"></textarea>
     <div class="zeile" style="margin-top:10px"><select id="imptyp">${typenListe().map(t => `<option>${esc(t)}</option>`).join('')}</select><span class="dim">Standardtyp</span>
-      <select id="impart">${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
-      <select id="impumg"><option value="0">A → B: B darunter</option><option value="1">A → B: A darunter</option></select></div>
+      <select id="impart">${regelOK() ? '<option value="">Art automatisch (nach Regelwerk)</option>' : ''}${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
+      <select id="impumg"${regelOK() ? ' style="display:none"' : ''}><option value="0">A → B: B darunter</option><option value="1">A → B: A darunter</option></select></div>
     ${unter ? `<label style="display:block;margin-top:10px"><input type="checkbox" id="impunter" checked> erste Ebene unter „${esc(unter.name)}“ hängen</label>` : ''}
     <div class="zeile" style="margin-top:14px;justify-content:flex-end"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="impgo">Anlegen</button></div></div>`;
-  const u = () => { $('impumg').value = artRichtung($('impart').value) ? '1' : '0'; }; $('impart').onchange = u; u(); $('imptext').focus();
+  const u = () => { $('impumg').value = artRichtung($('impart').value) ? '1' : '0'; $('impumg').style.display = regelOK() && !$('impart').value ? 'none' : ''; }; $('impart').onchange = u; u(); $('imptext').focus();
 }
 
 /* ================= Massenbearbeitung ================= */
@@ -1197,8 +1245,8 @@ function mbMalen() {
       ${MB.feld === '__neu' ? `<input id="mbfname" placeholder="Feldname" value="${esc(MB.fname)}">` : ''}
       ${MB.feld ? (opt ? `<select id="mbwert"><option value="">(leeren)</option>${opt.map(o => `<option${o === MB.wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>` : `<input id="mbwert" placeholder="Wert" value="${esc(MB.wert)}">`) : ''}</div>
     <label class="l">Alle verknüpfen mit</label>
-    <div class="zeile"><select id="mbart"><option value="">Art …</option>${artenListe().map(a => `<option${a === MB.art ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
-      <select id="mbdir"><option value="aus"${MB.dir === 'aus' ? ' selected' : ''}>→ zu</option><option value="ein"${MB.dir === 'ein' ? ' selected' : ''}>← von</option><option value="ungerichtet"${MB.dir === 'ungerichtet' ? ' selected' : ''}>— mit</option></select>
+    <div class="zeile"><select id="mbart"><option value="">${regelOK() ? 'Art automatisch' : 'Art …'}</option>${artenListe().map(a => `<option${a === MB.art ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <select id="mbdir" style="${regelOK() && !MB.art ? 'display:none' : ''}"><option value="aus"${MB.dir === 'aus' ? ' selected' : ''}>→ zu</option><option value="ein"${MB.dir === 'ein' ? ' selected' : ''}>← von</option><option value="ungerichtet"${MB.dir === 'ungerichtet' ? ' selected' : ''}>— mit</option></select>
       <input id="mbziel" autocomplete="off" placeholder="Objekt …" value="${esc(MB.zielName)}" style="flex:1;min-width:140px"></div>
     <div class="zeile" style="margin-top:16px;justify-content:space-between"><button class="btn zweit" data-act="mb_loesch" style="color:var(--warn)">${MB.sicher ? `Wirklich ${n} löschen? Nochmal klicken` : `${n} löschen …`}</button>
       <span class="zeile"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="mb_go">Anwenden</button></span></div></div>`;
@@ -1207,7 +1255,7 @@ function mbGo() {
   const p = paneById(MB.pid), refs = p.T.map(k => k.ref), d = {refs};
   const fname = MB.feld === '__neu' ? MB.fname.trim() : MB.feld;
   if (fname) d.felder = {[fname]: MB.wert};
-  if (MB.art && MB.zielRef) d.verknuepfen = [{ziel: MB.zielRef, art: MB.art, richtung: MB.dir}];
+  if (MB.zielRef && (MB.art || regelOK())) d.verknuepfen = [{ziel: MB.zielRef, art: MB.art || null, richtung: MB.art ? MB.dir : null}];
   if (!d.felder && !d.verknuepfen) return toast('Erst ein Feld oder eine Verknüpfung wählen.', true);
   api('mehrere_aendern', d).then(j => { if (j) zuMachen(); });
 }
@@ -1331,7 +1379,7 @@ const AKT = {
   tiefe: t => { graphTiefe = +t.dataset.t; ls.set('tiefe', graphTiefe); renderInspektor(); },
   klapp: t => { const p = paneVon(t); tgl(p.zuB, t.dataset.ref); renderSpalten(); },
   loeschen: () => { const ref = ir, n = nameVon(ref); api('loeschen', {ref}).then(j => { if (j) { irHist = []; oeffneInsp(null); toast(`„${n}“ gelöscht`, false, () => api('zurueck', {ref}).then(() => oeffneInsp(ref))); } }); },
-  impgo: async () => { const j = await api('massen', {text: $('imptext').value, typ: $('imptyp').value, art: $('impart').value, umgekehrt: $('impumg').value === '1', unter: $('impunter') && $('impunter').checked ? ir : null}); if (j) zuMachen(); },
+  impgo: async () => { const j = await api('massen', {text: $('imptext').value, typ: $('imptyp').value, art: $('impart').value || null, umgekehrt: $('impumg').value === '1', unter: $('impunter') && $('impunter').checked ? ir : null}); if (j) zuMachen(); },
 };
 document.addEventListener('click', e => {
   if (!e.target.closest('#pop') && !e.target.closest('[data-act="pmenue"],[data-act="ansichten"],[data-act="menue"]')) popZu();
@@ -1345,7 +1393,7 @@ document.addEventListener('change', e => {
   const t = e.target;
   if (MB && t.id && t.id.startsWith('mb')) {
     if (t.id === 'mbfeld') { MB.feld = t.value; MB.wert = ''; MB.sicher = false; mbMalen(); }
-    else if (t.id === 'mbart') MB.art = t.value; else if (t.id === 'mbdir') MB.dir = t.value; else if (t.id === 'mbwert') MB.wert = t.value;
+    else if (t.id === 'mbart') { MB.art = t.value; mbMalen(); } else if (t.id === 'mbdir') MB.dir = t.value; else if (t.id === 'mbwert') MB.wert = t.value;
     return;
   }
   if (t.classList.contains('fv')) api('aendern', {ref: ir, felder: {[t.dataset.f]: t.value}});
@@ -1407,7 +1455,7 @@ document.addEventListener('drop', e => {
 });
 window.addEventListener('hashchange', () => { hashLesen(); renderInspektor(); });
 
-fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); RC.clear(); regelMenge = null; if (location.hash.length > 1) hashLesen(); render(); });
+fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); RC.clear(); regelMenge = null; flKarte = null; if (location.hash.length > 1) hashLesen(); render(); });
 </script>
 </body>
 </html>

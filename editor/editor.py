@@ -63,12 +63,12 @@ _STAMM = ("source", "target", "type", "created_at", "gerichtet")
 
 
 class Modell:
-    """Das Datenmodell (JSON-Schema mit *Node-Definitionen und GraphEdge).
+    """Das Datenmodell (JSON-Schema): *Node-Definitionen und Edge_*-Definitionen.
 
-    Es wird nur gelesen: Typen mit Feldern, Auswahlwerte, erlaubte
-    Beziehungsarten und Kanten-Attribute. Es erzwingt nichts beim Erfassen —
-    Pflichtfelder erscheinen als Lücke, nicht als Sperre (erst fassen, dann
-    festigen)."""
+    Gelesen werden Typen mit Feldern und Auswahlwerten, die erlaubten
+    Beziehungen als Paare (von-Typ, Art, nach-Typ) — das ist das Regelwerk —
+    und die Kanten-Attribute (etwa ProcessstepType). Ältere Schemata mit einer
+    einzigen GraphEdge-Definition (nur Arten, keine Paare) lesen sich weiter."""
 
     def __init__(self, pfad):
         with open(pfad, encoding="utf-8") as f:
@@ -77,51 +77,81 @@ class Modell:
         self.typen = {}
         for d in defs.values():
             typ = d.get("properties", {}).get("type", {}).get("const")
-            if not typ:
+            if not typ or "fromType" in d.get("properties", {}):
                 continue
             eig = d["properties"]["properties"]
             pflicht = set(eig.get("required", []))
             felder = []
             for name, spez in eig.get("properties", {}).items():
                 felder.append({"name": name, "pflicht": name in pflicht,
+                               "titel": spez.get("title", ""),
                                "optionen": spez.get("enum"),
+                               "freitext": bool(spez.get("x-freitext")),   # Auswahl, aber auch freier Text erlaubt
                                "hinweis": spez.get("description", "")})
             namefeld = next((f["name"] for f in felder if f["name"].endswith("Name")), "name")
             self.typen[typ] = {"namefeld": namefeld, "felder": felder}
-        kante = defs.get("GraphEdge", {}).get("properties", {})
-        # „Steht in“ und „steht in“ stehen beide im Modell: eine Art, die
+        # „Steht in“ (Plant) und „steht in“ (Equipment) sind eine Art: die
         # kleingeschriebene gewinnt.
-        gesehen = {}
+        gesehen, paare = {}, []
+
+        def art_merken(a):
+            a = a[:1].lower() + a[1:]            # „Steht in“ wie die übrigen Arten klein beginnen
+            gesehen.setdefault(a.casefold(), a)
+        for d in defs.values():
+            pr = d.get("properties", {})
+            von, art, nach = (pr.get(x, {}).get("const") for x in ("fromType", "relation", "toType"))
+            if von and art and nach:
+                art_merken(art)
+                paare.append((von, art, nach, pr.get("properties")))
+        kante = defs.get("GraphEdge", {}).get("properties", {})
         for a in kante.get("relation", {}).get("enum", []):
-            k = a.casefold()
-            if k not in gesehen or a == a.lower():
-                gesehen[k] = a
+            art_merken(a)
         self.arten = list(gesehen.values())
-        self.regeln, self.hubs, self.einzeln = [], [], []
-        self.kantenfelder = {}  # Art -> [Feld]
+        self.hubs, self.einzeln = [], []
+        self.regeln, self.kantenfelder = [], {}      # Regel: von, art, nach; Art -> [Attribut]
+        for von, art, nach, attr in paare:
+            art = self.kanon_art(art)
+            if {"von": von, "art": art, "nach": nach} not in self.regeln:
+                self.regeln.append({"von": von, "art": art, "nach": nach})
+            for name, spez in ((attr or {}).get("properties") or {}).items():
+                liste = self.kantenfelder.setdefault(art, [])
+                if not any(f["name"] == name for f in liste):
+                    liste.append({"name": name, "titel": spez.get("title", ""), "optionen": spez.get("enum"),
+                                  "pflicht": name in (attr.get("required") or [])})
         for name, spez in kante.get("properties", {}).get("properties", {}).items():
             m = re.search(r"'([^']+)'", spez.get("description", ""))
             art = self.kanon_art(m.group(1)) if m else None
             if art:
                 self.kantenfelder.setdefault(art, []).append(
-                    {"name": name, "optionen": spez.get("enum")})
+                    {"name": name, "optionen": spez.get("enum"), "pflicht": False})
 
-    def lade_regeln(self, pfad):
-        """Regelwerk „welche Beziehung zwischen welchen Typen“. Es warnt nur.
-        Gibt die Regeln zurück, die zum Modell nicht passen (unbekannter Typ
-        oder unbekannte Art), damit eine Änderung an der Datei auffällt."""
+    def lade_wegregeln(self, pfad):
+        """Einstellungen für die Wege (`regeln.json`): Typen, durch die ein Weg
+        nicht hindurchläuft (`nicht_durchlaufen`: Dokument, Medium, Software —
+        Ziel ja, Zwischenschritt nein), und Beziehungsarten, die nicht mit
+        weiteren Schritten verkettet werden (`nur_einzeln`: Nachfolger).
+        Rückgabe: Einträge, die zum Modell nicht passen."""
         with open(pfad, encoding="utf-8") as f:
             daten = json.load(f)
-        self.regeln, fehler = [], []
+        fehler = []
         self.hubs = [t for t in (self.kanon_typ(x) for x in daten.get("nicht_durchlaufen", [])) if t]
         self.einzeln = [a for a in (self.kanon_art(x) for x in daten.get("nur_einzeln", [])) if a]
-        for r in daten.get("regeln", []):
-            art, von, nach = self.kanon_art(r.get("art")), self.kanon_typ(r.get("von")), self.kanon_typ(r.get("nach"))
-            if not (art and von and nach):
-                fehler.append(r)
-                continue
-            self.regeln.append({"von": von, "art": art, "nach": nach, "sinn": r.get("sinn", "")})
+        fehler += [x for x in daten.get("nicht_durchlaufen", []) if not self.kanon_typ(x)]
+        fehler += [x for x in daten.get("nur_einzeln", []) if not self.kanon_art(x)]
         return fehler
+
+    def zwischen(self, typ_a, typ_b, art=None):
+        """Erlaubte Beziehungen zwischen zwei Typen: [(art, richtung)], richtung
+        „aus“ = von a nach b, „ein“ = von b nach a. Mit `art` nur diese Art."""
+        gefunden = []
+        for r in self.regeln:
+            if art is not None and r["art"] != art:
+                continue
+            if r["von"] == typ_a and r["nach"] == typ_b:
+                gefunden.append((r["art"], "aus"))
+            if r["von"] == typ_b and r["nach"] == typ_a and typ_a != typ_b:
+                gefunden.append((r["art"], "ein"))
+        return gefunden
 
     def kanon_art(self, text):
         for a in self.arten:
@@ -142,9 +172,13 @@ class Modell:
 
 
 class Editor:
-    def __init__(self, pfad, modell=None):
+    def __init__(self, pfad, modell=None, strikt=True):
         self.db = FlatGraphDB(pfad, audit=True)
         self.modell = modell
+        # Mit Regelwerk im Modell sind nur dessen Beziehungspaare erlaubt
+        # („Erlaubt NUR die exakt definierten Beziehungspaare“); `strikt=False`
+        # lässt alles zu.
+        self.strikt = strikt
         # Bestandsname einer Art -> Anzeigename (Klammern, „/“ und „:“ sind im
         # Bestand nicht erlaubt, die Anzeige soll trotzdem das Original zeigen)
         self._art_anzeige = {_name_fuer_bestand(a, "Art"): a
@@ -182,7 +216,7 @@ class Editor:
         bekannt = {f["name"]: f for f in self.modell.typen[typ]["felder"]}
         for k, v in (felder or {}).items():
             f = bekannt.get(k)
-            if f and f["optionen"] and v not in ("", None) and v not in f["optionen"]:
+            if f and f["optionen"] and not f["freitext"] and v not in ("", None) and v not in f["optionen"]:
                 raise Fehler(f"„{v}“ ist für {k} nicht vorgesehen. "
                              f"Erlaubt: {', '.join(f['optionen'])}.")
 
@@ -385,9 +419,7 @@ class Editor:
         with self.db.transaction():
             ref, neu = self.knoten_anlegen(typ, name, felder)
             for v in verknuepfen or []:
-                richtung = v.get("richtung", "aus")
-                von, nach = (v["ziel"], ref) if richtung == "ein" else (ref, v["ziel"])
-                self.kante_anlegen(von, nach, v["art"], gerichtet=richtung != "ungerichtet")
+                self.verknuepfe(ref, v["ziel"], v.get("art"), v.get("richtung", "aus"))
         return ref, neu
 
     def _fremde_felder(self, typ):
@@ -416,10 +448,8 @@ class Editor:
                     else:
                         uebersprungen += 1
                 for v in verknuepfen or []:
-                    richtung = v.get("richtung", "aus")
-                    von, nach = (v["ziel"], ref) if richtung == "ein" else (ref, v["ziel"])
-                    if von != nach:
-                        self.kante_anlegen(von, nach, v["art"], gerichtet=richtung != "ungerichtet")
+                    if v["ziel"] != ref:
+                        self.verknuepfe(ref, v["ziel"], v.get("art"), v.get("richtung"))
         return gesetzt, uebersprungen
 
     def mehrere_loeschen(self, refs):
@@ -487,9 +517,47 @@ class Editor:
                     raise Fehler(f"„{v}“ ist für {k} nicht vorgesehen. Erlaubt: {', '.join(o)}.")
         return {k: v for k, v in felder.items() if v not in ("", None)}
 
+    def _regeln_gelten(self):
+        return bool(self.strikt and self.modell and self.modell.regeln)
+
+    def _regelfehler(self, tv, art, tn):
+        zw = self.modell.zwischen(tv, tn)
+        if not zw:
+            return f"Zwischen {tv} und {tn} gibt es im Modell keine Beziehung."
+        erlaubt = "; ".join(f"{tv if r == 'aus' else tn} {a} {tn if r == 'aus' else tv}" for a, r in zw)
+        return (f"„{tv} {art} {tn}“ gibt es im Modell nicht. "
+                f"Zwischen diesen Typen erlaubt: {erlaubt}.")
+
+    def verknuepfe(self, ref, ziel, art=None, richtung=None, felder=None):
+        """Verknüpft `ref` mit `ziel`. Mit Regelwerk ergeben sich Art und
+        Richtung aus den beiden Typen, wenn es genau eine Möglichkeit gibt;
+        sind es mehrere, müssen Art und Richtung kommen. Rückgabe: neu angelegt?"""
+        if art and self.modell:
+            self._art_b(art)                    # eine unbekannte Art wird nicht stillschweigend ersetzt
+        if self._regeln_gelten():
+            tv, tn = ref.partition("/")[0], ziel.partition("/")[0]
+            art_k = self.modell.kanon_art(art) if art else None
+            moegl = self.modell.zwischen(tv, tn, art_k)
+            if len(moegl) == 1:
+                art, richtung = moegl[0]
+            elif not moegl:
+                raise Fehler(self._regelfehler(tv, art_k or art or "…", tn))
+            elif not (art and richtung):
+                raise Fehler(f"Zwischen {tv} und {tn} gibt es mehrere Beziehungen "
+                             f"({', '.join(sorted({a for a, _ in moegl}))}) — bitte die Art wählen.")
+        if not art:
+            raise Fehler("Die Beziehungsart fehlt.")
+        von, nach = (ziel, ref) if richtung == "ein" else (ref, ziel)
+        return self.kante_anlegen(von, nach, art, gerichtet=richtung != "ungerichtet", felder=felder)
+
     def kante_anlegen(self, von, nach, art, gerichtet=True, felder=None):
         """Gleiche Kante zweimal ist kein Fehler, sondern nichts zu tun."""
+        art_k = self.modell.kanon_art(art) if self.modell else None
         art = self._art_b(art)
+        if self._regeln_gelten():
+            tv, tn = von.partition("/")[0], nach.partition("/")[0]
+            if not any(r == "aus" for _, r in self.modell.zwischen(tv, tn, art_k)):
+                raise Fehler(self._regelfehler(tv, art_k, tn))
         meta = self._pruefe_kantenfelder(art, felder)
         if von == nach:
             raise Fehler("Ein Objekt kann nicht mit sich selbst verknüpft werden.")
@@ -527,6 +595,20 @@ class Editor:
         (alte Kante weg, neue hin — in einem Zug). `umgekehrt`: die Art liest
         sich vom Kind zum Elternteil („ist Teil von“, „gehört zu“), die Kante
         läuft dann Kind -> Eltern."""
+        if art and self.modell:
+            self._art_b(art)
+        if self._regeln_gelten():
+            tv, tk = eltern.partition("/")[0], kind.partition("/")[0]
+            art_k = self.modell.kanon_art(art) if art else None
+            moegl = self.modell.zwischen(tv, tk, art_k)
+            if len(moegl) == 1:
+                art, umgekehrt = moegl[0][0], moegl[0][1] == "ein"   # Richtung folgt dem Regelwerk
+            elif not moegl:
+                raise Fehler(self._regelfehler(tv, art_k or art or "…", tk))
+            elif not art:
+                raise Fehler(f"Zwischen {tv} und {tk} gibt es mehrere Beziehungen — bitte die Art wählen.")
+        if not art:
+            raise Fehler("Die Beziehungsart fehlt.")
         art_b = self._art_b(art)
         von, nach = (kind, eltern) if umgekehrt else (eltern, kind)
         if von == nach or self._erreichbar(nach, von, art_b):
@@ -539,11 +621,12 @@ class Editor:
     def loesen(self, kante):
         self.db.delete_edge(kante)
 
-    def massen(self, text, standardtyp, art, unter=None, umgekehrt=False):
+    def massen(self, text, standardtyp, art=None, unter=None, umgekehrt=False):
         """Mehrere Zeilen auf einmal. Einrücken = „hängt unter der Zeile darüber“
         (mit `art`), ohne Einrücken unter `unter`, falls angegeben.
         Rückgabe (Anzahl neu, Anzahl vorhanden, Hinweise)."""
-        self._art_b(art)  # früh ablehnen, bevor etwas angelegt wird
+        if art:
+            self._art_b(art)  # früh ablehnen, bevor etwas angelegt wird
         standardtyp = self._typ_b(standardtyp)
         neu = alt = 0
         hinweise = []
@@ -576,11 +659,11 @@ def _aktionen(ed):
         ref, neu = ed.anlegen_im_kontext(d["typ"], d["name"], d.get("felder"),
                                          d.get("verknuepfen"))
         if d.get("unter") and ref != d["unter"]:
-            ed.einhaengen(d["unter"], ref, d["art"], umgekehrt=d.get("umgekehrt", False))
+            ed.einhaengen(d["unter"], ref, d.get("art"), umgekehrt=d.get("umgekehrt", False))
         return {"ref": ref, "hinweis": None if neu else "Gab es schon – nicht doppelt angelegt."}
 
     def massen(d):
-        neu, alt, hinweise = ed.massen(d["text"], d["typ"], d["art"], d.get("unter"),
+        neu, alt, hinweise = ed.massen(d["text"], d["typ"], d.get("art"), d.get("unter"),
                                        d.get("umgekehrt", False))
         teile = [f"{neu} angelegt"] + ([f"{alt} vorhanden"] if alt else []) + hinweise
         return {"hinweis": ", ".join(teile)}
@@ -618,9 +701,7 @@ def _aktionen(ed):
 
     def kante(d):
         richtung = d.get("richtung", "aus")
-        von, nach = (d["ref"], d["ziel"]) if richtung != "ein" else (d["ziel"], d["ref"])
-        ed.kante_anlegen(von, nach, d["art"], gerichtet=richtung != "ungerichtet",
-                         felder=d.get("felder"))
+        ed.verknuepfe(d["ref"], d["ziel"], d.get("art"), richtung, felder=d.get("felder"))
 
     def kante_felder(d):
         ed.kante_aendern(d["id"], d["felder"])
@@ -701,9 +782,11 @@ if __name__ == "__main__":
                    help="Datenmodell (JSON-Schema); 'keins' = ohne Modell, alles frei")
     p.add_argument("--regeln", default=os.path.join(HIER, "regeln.json"),
                    help="Regelwerk Typ-Art-Typ (Annahmen, warnt nur); 'keine' = ohne")
+    p.add_argument("--locker", action="store_true",
+                   help="Beziehungspaare des Modells nicht erzwingen (nur Arten prüfen)")
     a = p.parse_args()
     modell = None if a.modell == "keins" else Modell(a.modell)
     if modell and a.regeln != "keine" and os.path.exists(a.regeln):
-        for r in modell.lade_regeln(a.regeln):
-            print("Regel passt nicht zum Modell, ignoriert:", r)
-    bedienen(Editor(a.bestand, modell), a.port)
+        for r in modell.lade_wegregeln(a.regeln):
+            print("Eintrag in regeln.json passt nicht zum Modell, ignoriert:", r)
+    bedienen(Editor(a.bestand, modell, strikt=not a.locker), a.port)

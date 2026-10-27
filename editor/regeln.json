@@ -1,35 +1,7 @@
 {
-  "hinweis": "ANNAHMEN zu: welche Beziehung gilt zwischen welchen Typen. Das Datenmodell (modell.json) nennt nur die Beziehungsarten, nicht die Typpaare. Diese Datei darf frei geändert werden; sie warnt nur und blockiert nichts.",
+  "hinweis": "Einstellungen für die Wege 'nach Regelwerk'. Das Regelwerk selbst (welche Beziehung zwischen welchen Typen) steht in modell.json (Edge_*-Definitionen).",
   "nicht_durchlaufen": ["Dokument", "Medium", "Software"],
-  "nicht_durchlaufen_hinweis": "Diese Typen verbinden beliebig viele Dinge (ein Dokument definiert Prozess UND Material). Sie sind Ziel, aber kein Zwischenschritt eines Weges.",
+  "nicht_durchlaufen_hinweis": "Diese Typen verbinden beliebig viele Dinge (ein Dokument gehört zu Prozess UND Equipment). Sie sind Ziel, aber kein Zwischenschritt eines Weges.",
   "nur_einzeln": ["führt zu Nachfolger (0:n)"],
-  "nur_einzeln_hinweis": "Reihenfolge-Beziehungen werden nicht mit weiteren Schritten verkettet: der Nachfolger eines Schrittes gehört deshalb nicht zum Prozess seines Vorgängers.",
-  "regeln": [
-    {"von": "Raum",           "art": "ist Teil von",   "nach": "Plant",          "sinn": "Ein Raum liegt in genau einer Plant"},
-    {"von": "Equipment",      "art": "steht in",       "nach": "Raum",           "sinn": "Aufstellort"},
-    {"von": "Prozess",        "art": "gehört zu",      "nach": "Plant",          "sinn": "In welcher Plant der (Teil-)Prozess läuft"},
-    {"von": "Prozess",        "art": "ist Teil von",   "nach": "Prozess",        "sinn": "Teilprozess eines Gesamtprozesses"},
-    {"von": "Prozessschritt", "art": "ist Teil von",   "nach": "Prozess",        "sinn": "Schritt eines Prozesses"},
-    {"von": "Prozessschritt", "art": "steht in",       "nach": "Raum",           "sinn": "Wo der Schritt stattfindet"},
-    {"von": "Prozessschritt", "art": "führt zu Nachfolger (0:n)", "nach": "Prozessschritt", "sinn": "Ablauf; Kanten-Attribut ProcessstepType (Gate, Wartezeit, Schleife)"},
-    {"von": "Equipment",      "art": "führt aus",      "nach": "Prozessschritt", "sinn": "Welches Equipment den Schritt ausführt"},
-    {"von": "Prozessschritt", "art": "benötigt Input", "nach": "Material",       "sinn": "Eingang"},
-    {"von": "Prozessschritt", "art": "erzeugt Output", "nach": "Material",       "sinn": "Ausgang"},
-    {"von": "Parameter",      "art": "gehört zu",      "nach": "Prozessschritt", "sinn": "Prozessparameter des Schritts"},
-    {"von": "Equipment",      "art": "steuert",        "nach": "Parameter",      "sinn": "Stellt den Parameter ein"},
-    {"von": "Equipment",      "art": "überwacht/regelt", "nach": "Parameter",    "sinn": "Misst oder regelt den Parameter"},
-    {"von": "Software",       "art": "steuert",        "nach": "Equipment",      "sinn": "SPS/Steuerung des Geräts"},
-    {"von": "Software",       "art": "überwacht/regelt", "nach": "Parameter",    "sinn": "Überwachung, Aufzeichnung"},
-    {"von": "Software",       "art": "unterstützt",    "nach": "Prozess",        "sinn": "MES, eBR, LIMS im Prozess"},
-    {"von": "Dokument",       "art": "definiert",      "nach": "Prozess",        "sinn": "Batch Record, Prozessbeschreibung"},
-    {"von": "Dokument",       "art": "definiert",      "nach": "Prozessschritt", "sinn": "Arbeitsanweisung"},
-    {"von": "Dokument",       "art": "definiert",      "nach": "Parameter",      "sinn": "Grenzen, PQ-Nachweis"},
-    {"von": "Dokument",       "art": "definiert",      "nach": "Material",       "sinn": "Spezifikation"},
-    {"von": "Dokument",       "art": "unterstützt",    "nach": "Equipment",      "sinn": "IQ/OQ, Qualifizierung"},
-    {"von": "Dokument",       "art": "unterstützt",    "nach": "Software",       "sinn": "CSV-Validierung"},
-    {"von": "Equipment",      "art": "verwendet",      "nach": "Medium",         "sinn": "Druckluft, Stickstoff, Wasser"},
-    {"von": "Raum",           "art": "verwendet",      "nach": "Medium",         "sinn": "Reinraumluft"},
-    {"von": "Material",       "art": "ist Teil von",   "nach": "Material",       "sinn": "Stückliste: Komponente in Baugruppe"},
-    {"von": "Material",       "art": "steht in",       "nach": "Raum",           "sinn": "Lagerort"}
-  ]
+  "nur_einzeln_hinweis": "Reihenfolge-Beziehungen werden nicht mit weiteren Schritten verkettet: der Nachfolger eines Schrittes gehört deshalb nicht zum Prozess seines Vorgängers."
 }
