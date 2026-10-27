@@ -690,7 +690,8 @@ function renderInspektor() {
   };
   let felder;
   if (mt) { const bek = new Set(mt.felder.map(f => f.name)); felder = mt.felder.filter(f => f.name !== mt.namefeld).map(f => feld(f.name, k.felder[f.name], f.pflicht, f.optionen)).join('') + Object.entries(k.felder).filter(([f]) => !bek.has(f)).map(([f, v]) => feld(f, v, false, null)).join(''); }
-  else felder = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('') + '<input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">';
+  else felder = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('');
+  felder += '<input id="fn" list="felderliste" placeholder="+ eigenes Feld"><input id="fw" placeholder="Wert + Enter">';
   const gr = relGruppen(k.ref);
   const rel = gr.map(g => `<div class="gruppe"><div class="gl">${esc(g.label)}</div><div class="chips">${g.eintraege.map(({e, andere}) => {
     const o = M.get(andere);
@@ -702,7 +703,7 @@ function renderInspektor() {
   <div class="ibody">
     <div id="titel" contenteditable="plaintext-only" spellcheck="false">${esc(k.name)}</div>
     <div class="tchip">${punkt(k.typ)}${esc(k.typ)}</div>
-    <h3>Eigenschaften</h3><div class="felder">${felder}</div>
+    <h3>Eigenschaften</h3><div class="felder">${felder}</div><datalist id="felderliste">${[...new Set(S.knoten.flatMap(o => Object.keys(o.felder)))].sort().map(f => `<option value="${esc(f)}">`).join('')}</datalist>
     <h3>Notiz</h3><div id="notiz" class="notiz" data-ph="Notiz … mit [[ andere Objekte erwähnen">${notizHtml(k.notiz)}</div>
     <h3>Verknüpfungen</h3>${rel || '<div class="dim">Noch keine.</div>'}
     <div class="addrel"><select id="rart"><option value="">Art …</option>${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
@@ -873,7 +874,7 @@ const AKT = {
   pdup: () => { popZu(); const p = paneById(popPid); if (!p) return; const c = JSON.parse(JSON.stringify(p, (k, v) => (k === 'ERG' || k === 'T' || k === 'basis' || k === 'cols_') ? undefined : v)); c.id = pid++; W.panes.splice(W.panes.indexOf(p) + 1, 0, c); neuBerechnen(); },
   spalten: () => {
     const p = paneById(popPid); if (!p) return;
-    const typen = [...new Set(p.T.map(k => k.typ))], felder = [...new Set(typen.flatMap(ty => (modellTyp(ty) ? modellTyp(ty).felder.map(f => f.name).filter(f => f !== modellTyp(ty).namefeld) : [])))];
+    const typen = [...new Set(p.T.map(k => k.typ))], felder = [...new Set([...typen.flatMap(ty => (modellTyp(ty) ? modellTyp(ty).felder.map(f => f.name).filter(f => f !== modellTyp(ty).namefeld) : [])), ...p.T.flatMap(k => Object.keys(k.felder))])];
     const arten = [...new Set(p.T.flatMap(k => nbrs(k.ref).map(n => n.dir + '|' + n.art)))];
     $('pop').innerHTML = `<div class="ueber">Eigenschaften</div>${felder.map(f => `<div class="fz${p.cols.includes('f:' + f) ? ' on' : ''}" data-act="spalte" data-k="f:${esc(f)}"><span class="cb"></span><span class="fl">${esc(f)}</span></div>`).join('') || '<div class="dim">–</div>'}
       <div class="ueber">Verknüpfungen</div>${arten.map(a => { const [d, n] = a.split('|'); return `<div class="fz${p.cols.includes('r:' + a) ? ' on' : ''}" data-act="spalte" data-k="r:${esc(a)}"><span class="cb"></span><span class="fl">${d === 'ein' ? '← ' : ''}${esc(n)}${d === 'aus' ? ' →' : ''}</span></div>`; }).join('') || '<div class="dim">–</div>'}`;

@@ -41,7 +41,9 @@ den Facetten rechnen die anderen Filter der Spalte mit.
 
 ## Inspektor (rechts)
 
-Titel zum Umbenennen anklicken; Eigenschaften nach Modell; **Notiz** mit
+Titel zum Umbenennen anklicken; Eigenschaften nach Modell, darunter „+ eigenes Feld“
+(beliebiger Name und Wert, ohne Dropdown und Pflichtprüfung; bereits benutzte
+Namen werden vorgeschlagen; auch als Tabellenspalte wählbar); **Notiz** mit
 `[[Name]]` (Vorschläge beim Tippen von `[[`; Umbenennen zieht die Verweise
 nach); Verknüpfungen nach Art und Richtung gruppiert, die Art wird aus dem
 vorgeschlagen, was zwischen den beiden Typen schon benutzt wurde; „Erwähnt in“;
