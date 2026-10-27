@@ -7,8 +7,7 @@ Anwender, kein Massstab.
 
 - **Führend ist `VERTRAG.md`**: was zugesagt wird und was nicht. Jede
   Verhaltensänderung zieht ihn nach.
-- **Offene Punkte sind Issues in `bireggbaum-beep/homedms`**, Liste und
-  Reihenfolge in #36.
+- **Offene Punkte sind Issues in `bireggbaum-beep/flatgraphdb`.**
 - **Alles auf Deutsch**: Kommentare, Tests, Commits, Antworten. Kommentare
   sagen warum, nicht was. Vorhandene englische Bezeichner bleiben.
 
