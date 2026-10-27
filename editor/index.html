@@ -313,6 +313,7 @@ function berechne() {
     const q = p.quelle; p.basis = null; p.wartet = false; p.st.nprop ||= {}; p.zuG ||= [];
     if (q) {
       if (q.kind === 'pane') { const par = paneById(q.von); if (!par) { p.quelle = null; } else { f(par); const qs = quellenVon(q); p.wartet = !qs.length && q.modus !== 'alle'; p.basis = pfad(qs, q); } }
+      else if (q.kind === 'anker') p.basis = ankerPfad(q);
       else p.basis = pfad(quellenVon(q), q);
     }
     p.ERG = auswerten(p.st, p.basis);
@@ -330,7 +331,7 @@ function sortiere(p) {
 function spaltenFuer(p, T) {
   const st = p.st, typen = [...new Set(T.map(k => k.typ))], cols = [];
   if (typen.length !== 1) cols.push({key: 'typ', label: 'Typ', get: k => k.typ});
-  if (p.basis && p.quelle && p.quelle.tiefe > 0) cols.push({key: 'herk', label: 'über', cls: 'herk', get: k => { const h = p.basis.herkunft[k.ref] || []; return h.slice(0, 3).map(nameVon).join(', ') + (h.length > 3 ? ' +' + (h.length - 3) : ''); }});
+  if (p.basis && p.quelle && p.quelle.tiefe > 0 && Object.keys(p.basis.herkunft).length) cols.push({key: 'herk', label: 'über', cls: 'herk', get: k => { const h = p.basis.herkunft[k.ref] || []; return h.slice(0, 3).map(nameVon).join(', ') + (h.length > 3 ? ' +' + (h.length - 3) : ''); }});
   let fk = p.cols.filter(x => x.startsWith('f:')).map(x => x.slice(2));
   if (!fk.length && typen.length === 1) { const mt = modellTyp(typen[0]); if (mt) fk = mt.felder.filter(f => f.name !== mt.namefeld).sort((a, b) => b.pflicht - a.pflicht).slice(0, 3).map(f => f.name); }
   fk.forEach(f => cols.push({key: 'f:' + f, label: f, get: k => k.felder[f] ?? ''}));
@@ -396,7 +397,7 @@ function vorhersage(typA, typB) {
 function renderKopf() {
   const a = ansichten();
   $('kopf').innerHTML = `<div class="marke"><i></i>Graph</div>
-    <button class="suchknopf" data-act="palette">⌕ <span>Objekt suchen oder anlegen …</span><kbd>Strg K</kbd></button>
+    <button class="suchknopf" data-act="palette">⌕ <span>Suchen, anlegen oder fragen …</span><kbd>Strg K</kbd></button>
     <button class="ghost" data-act="fragen">Fragen</button>
     <button class="ghost" data-act="ansichten">★ Ansichten${a.length ? ` <span class="badge">${a.length}</span>` : ''}</button>
     <button class="ghost" data-act="spalte_frei" title="Neue freie Spalte mit allen Objekten">＋ Spalte</button>
@@ -481,6 +482,7 @@ function paneTitel(p) {
   const q = p.quelle;
   if (!q) return {t: 'Alle Objekte', s: 'freie Spalte', typ: null};
   const art = q.arten && q.arten.length ? ' · ' + q.arten.join(' / ') : '';
+  if (q.kind === 'anker') return {t: q.ziele.join(' + '), s: `zu ${q.anker.map(nameVon).join(' · ')} · ≤ ${q.tiefe}`, typ: q.ziele.length === 1 ? q.ziele[0] : null};
   if (q.kind === 'refs') return q.tiefe === 0 ? {t: q.label, s: 'Start', typ: null} : {t: q.typ || 'Objekte', s: `≤ ${q.tiefe} Schritte von „${q.label}“${art}`, typ: q.typ};
   const par = paneById(q.von);
   return {t: q.typ || 'Objekte', s: `${q.modus === 'alle' ? 'alle Treffer' : 'Auswahl'} aus „${par ? paneTitel(par).t : '?'}“ · ≤ ${q.tiefe}${art}`, typ: q.typ};
@@ -504,7 +506,7 @@ function renderPane(p) {
   return `<div class="pane${p.id === fokusId ? ' fokus' : ''}" data-pid="${p.id}" style="width:${ansichtBreite(p)}px">
     <div class="phead">
       <div class="p1"><div class="ptitel">${ti.typ ? punkt(ti.typ) : ''}<b title="${esc(ti.t)}">${esc(ti.t)}</b><span class="pn">${T.length}</span></div>
-        ${p.quelle ? '<button class="ghost" data-act="quelle_bearb" title="Quelle ändern">⚙</button>' : ''}<button class="ghost" data-act="pmenue" title="Mehr">⋯</button><button class="ghost" data-act="pclose" title="Spalte schließen">✕</button></div>
+        ${p.quelle && p.quelle.kind !== 'anker' ? '<button class="ghost" data-act="quelle_bearb" title="Quelle ändern">⚙</button>' : ''}<button class="ghost" data-act="pmenue" title="Mehr">⋯</button><button class="ghost" data-act="pclose" title="Spalte schließen">✕</button></div>
       <div class="psub" title="${esc(ti.s)}">${esc(ti.s)}</div>
       <div class="p2"><div class="seg">${ansichtBtn('tabelle', 'Tabelle')}${ansichtBtn('liste', 'Liste')}${ansichtBtn('baum', 'Baum')}${ansichtBtn('graph', 'Graph')}${ansichtBtn('diagramm', 'Diagramm')}${flussKanten(p).length || p.ansicht === 'fluss' ? ansichtBtn('fluss', 'Fluss') : ''}</div><span class="sp"></span>
         <button class="ghost" data-act="gruppe_menue">Gruppe${p.gruppe ? ' <span class="badge">1</span>' : ''}</button><button class="ghost" data-act="fac">Filter${aktiv ? ` <span class="badge">${aktiv}</span>` : ''}</button><button class="ghost" data-act="neu" title="Im Kontext der Filter anlegen">＋</button><button class="btn zweit klein" data-act="weiter">Weiter →</button></div>
@@ -676,7 +678,10 @@ const FRAGEN = [
   {id: 'f8', titel: 'Software eines Equipments', text: 'Welche Software steuert oder unterstützt es.', start: 'Equipment', pfad: [{typ: 'Software', tiefe: 2}]},
 ];
 function fragenHtml() {
-  return `<div class="fragen"><div class="ueber">Typische Fragen — Objekt wählen, die Spalten werden aufgebaut</div>${FRAGEN.map(f => `<div class="frage"><h4>${esc(f.titel)}</h4><p>${esc(f.text)}</p><input data-frage="${f.id}" placeholder="${f.start ? esc(f.start) + ' wählen …' : 'Objekt wählen …'}" autocomplete="off"></div>`).join('')}</div>`;
+  const e1 = S.knoten.find(k => k.typ === 'Raum'), e2 = S.knoten.find(k => k.typ === 'Plant'), e3 = S.knoten.find(k => k.typ === 'Prozess');
+  const bsp = [e1 && e2 ? `Equipments in Raum ${e1.name} von Plant ${e2.name}` : null, e3 ? `Prozessschritte und Equipments zu Prozess ${e3.name}` : null, e3 ? `CPPs im Prozess ${e3.name}` : null].filter(Boolean);
+  const eigene = `<div class="frage"><h4>Eigene Frage</h4><p>In einem Satz fragen — Typen vorn, dann „Typ Name“ als Bedingung. Mehrere Bedingungen gelten zusammen.</p><input id="fragetext" placeholder="z. B. ${esc(bsp[0] || 'Equipments in Raum … von Plant …')}" autocomplete="off"><div id="fragevor" class="neuhinweis" style="padding:6px 0 0"></div>${bsp.length ? `<div class="cchips" style="margin-top:6px">${bsp.map(b => `<button class="cc" data-act="fbsp" data-t="${esc(b)}">${esc(b)}</button>`).join('')}</div>` : ''}</div>`;
+  return `<div class="fragen">${eigene}<div class="ueber">Typische Fragen — Objekt wählen, die Spalten werden aufgebaut</div>${FRAGEN.map(f => `<div class="frage"><h4>${esc(f.titel)}</h4><p>${esc(f.text)}</p><input data-frage="${f.id}" placeholder="${f.start ? esc(f.start) + ' wählen …' : 'Objekt wählen …'}" autocomplete="off"></div>`).join('')}</div>`;
 }
 function frageStarten(f, ref) {
   const k = M.get(ref), panes = [paneNeu({quelle: {kind: 'refs', refs: [ref], label: k.name, typ: null, tiefe: 0, arten: null, richtung: 'beide'}, ansicht: 'liste'})];
@@ -686,6 +691,77 @@ function frageStarten(f, ref) {
     panes.push(paneNeu({quelle: {kind: 'pane', von: vor.id, modus: s.modus || 'alle', typ: s.typ, tiefe: s.tiefe, arten: s.arten || null, richtung: 'beide'}, st, fac: false, ansicht: s.ansicht || 'tabelle'}));
   }
   W = {panes}; fokusId = panes[panes.length - 1].id; ir = ref; zeigeFragen = false; zuMachen(); berechne(); render();
+}
+
+/* ================= Fragen in einfachen Sätzen ================= */
+// „Equipments in Raum X von Plant Y“ · „Prozessschritte und Equipments zu Prozess Z“ · „CPPs im Prozess Z“
+const FUELL = new Set(['zeige', 'zeig', 'mir', 'alle', 'alles', 'die', 'der', 'das', 'den', 'dem', 'des', 'im', 'in', 'von', 'vom', 'zu', 'zum', 'zur', 'aus', 'bei', 'an', 'am', 'auf', 'mit', 'gehörigen', 'gehörige', 'gehörenden', 'befindlichen', 'befindliche', 'dazugehörigen', 'dazugehörige', 'welche', 'sind', 'ist', 'was', 'wo', 'gibt', 'es', 'hängen', 'steht', 'stehen', 'liegen', 'dort', 'dazu', 'davon', 'enthalten', 'verwendet', 'benötigt']);
+const KONJ = new Set(['und', 'sowie', ',']);
+const KLASSE = {cpp: 'CPP', cpps: 'CPP', pp: 'PP', pps: 'PP'};
+function typSynonyme() {
+  const m = new Map(), sp = {Raum: ['räume'], Medium: ['medien'], Material: ['materialien'], Prozess: ['prozesse'], Prozessschritt: ['prozessschritte', 'schritt', 'schritte'], Dokument: ['dokumente'], Plant: ['plants']};
+  for (const t of typenListe()) { const l = t.toLowerCase(); [l, l + 's', l + 'e', l + 'n', ...(sp[t] || [])].forEach(w => m.set(w, t)); }
+  return m;
+}
+const ohneAnf = w => w.replace(/^["„]|["“]$/g, '');
+function frageParsen(text) {
+  const toks = text.match(/"[^"]+"|„[^“]+“|[^\s,]+|,/g) || [], syn = typSynonyme(), low = w => ohneAnf(w).toLowerCase();
+  const typ = w => /^["„]/.test(w) ? null : syn.get(low(w)), kl = w => /^["„]/.test(w) ? null : (S.modell && S.modell.typen.Parameter && KLASSE[low(w)]);
+  let i = 0; const ziele = [], props = {};
+  while (i < toks.length && (FUELL.has(low(toks[i])) || toks[i] === ',')) i++;
+  while (i < toks.length) {
+    const w = toks[i];
+    if (typ(w)) { if (!ziele.includes(typ(w))) ziele.push(typ(w)); i++; }
+    else if (kl(w)) { if (!ziele.includes('Parameter')) ziele.push('Parameter'); props.ParameterClass = [KLASSE[low(w)]]; i++; }
+    else if (KONJ.has(low(w))) i++;
+    else break;
+  }
+  if (!ziele.length) return {ok: false};
+  const anker = [], beschr = [];
+  let rest = toks.slice(i), j = 0;
+  while (j < rest.length) {
+    const w = rest[j];
+    if (FUELL.has(low(w)) || KONJ.has(low(w))) { j++; continue; }
+    let t = null;
+    if (typ(w)) { t = typ(w); j++; }
+    const name = [];
+    while (j < rest.length && !(typ(rest[j]) && name.length) ) { if (typ(rest[j]) && !name.length && t) break; name.push(rest[j]); j++; }
+    while (name.length && (FUELL.has(low(name[name.length - 1])) || KONJ.has(low(name[name.length - 1])))) name.pop();
+    const nm = name.map(ohneAnf).join(' ').trim();
+    if (!nm) return {ok: false, ziele, fehler: `Nach „${t || 'der Bedingung'}“ fehlt ein Name.`};
+    const q = nm.toLowerCase(), pool = S.knoten.filter(k => !t || k.typ === t);
+    let c = pool.filter(k => k.name.toLowerCase() === q);
+    if (!c.length) c = pool.filter(k => k.name.toLowerCase().includes(q));
+    if (!c.length) return {ok: false, ziele, fehler: `Kein${t ? ' ' + t : ' Objekt'} „${nm}“ gefunden.`};
+    if (c.length > 1) return {ok: false, ziele, fehler: `„${nm}“ ist mehrdeutig: ${c.slice(0, 4).map(k => k.name).join(', ')}${c.length > 4 ? ' …' : ''} — genauer schreiben.`};
+    anker.push(c[0].ref); beschr.push(`${c[0].typ} „${c[0].name}“`);
+  }
+  return {ok: true, ziele, anker, beschr, props: Object.keys(props).length ? props : null};
+}
+function frageText(fr) {
+  return `<b>${fr.ziele.map(esc).join(' + ')}${fr.props ? ' (' + esc(fr.props.ParameterClass[0]) + ')' : ''}</b>${fr.anker.length ? ' zu ' + fr.beschr.map(esc).join(' <span class="dim">und</span> ') : ' <span class="dim">(alle)</span>'}`;
+}
+function ankerPfad(q) {   // Objekte der Ziel-Typen, die mit ALLEN Ankern zusammenhängen
+  let acc = null;
+  for (const a of q.anker) {
+    if (!M.has(a)) continue; const s = new Set();
+    for (const t of q.ziele) erreichbar([a], {typ: t, tiefe: q.tiefe, arten: q.arten || null, richtung: 'beide', halt: M.get(a).typ}).forEach((v, k) => s.add(k));
+    acc = acc === null ? s : new Set([...acc].filter(x => s.has(x)));
+  }
+  return {refs: [...(acc || [])].filter(r => !q.anker.includes(r)), herkunft: {}};
+}
+function frageAusfuehren(fr) {
+  const p = fr.anker.length ? paneNeu({quelle: {kind: 'anker', anker: fr.anker, ziele: fr.ziele, tiefe: 3, arten: null}}) : paneNeu();
+  if (!fr.anker.length) p.st.typen = fr.ziele.slice();
+  if (fr.props) p.st.props = JSON.parse(JSON.stringify(fr.props));
+  W.panes.push(p); fokusId = p.id; zuMachen(); zeigeFragen = false; neuBerechnen();
+  const el = document.querySelector(`.pane[data-pid="${p.id}"]`); if (el) el.scrollIntoView({inline: 'nearest', behavior: 'smooth'});
+}
+function frageVorschau(text) {
+  const el = $('fragevor'); if (!el) return;
+  if (!text.trim()) { el.innerHTML = ''; return; }
+  const fr = frageParsen(text);
+  el.innerHTML = fr.ok ? `Verstanden: ${frageText(fr)} <span class="dim">— Enter</span>` : (fr.fehler ? `<span style="color:var(--warn)">${esc(fr.fehler)}</span>` : '<span class="dim">Noch nicht verstanden: mit einem Typ beginnen, z. B. „Equipments in Raum …“</span>');
 }
 
 /* ================= Weiter-Dialog ================= */
@@ -891,7 +967,7 @@ const neuBerechnen = () => { berechne(); renderSpalten(); };
 let pal = {liste: [], i: 0};
 function palette(vor) {
   $('schleier').style.display = 'flex';
-  $('box').innerHTML = '<input class="gross" id="palq" autocomplete="off" placeholder="Objekt suchen – oder „Typ: Name“ zum Anlegen"><div id="palr"></div>';
+  $('box').innerHTML = '<input class="gross" id="palq" autocomplete="off" placeholder="Suchen · „Typ: Name“ anlegen · oder fragen: Equipments in Raum X von Plant Y"><div id="palr"></div>';
   $('palq').value = vor || ''; $('palq').focus(); pal.i = 0; palMalen();
   $('palq').oninput = () => { pal.i = 0; palMalen(); };
   $('palq').onkeydown = e => {
@@ -906,14 +982,16 @@ function palMalen() {
   const q = $('palq').value, m = q.match(/^([^:]+):\s*(.*)$/);
   const typ = m ? (typenListe().find(t => t.toLowerCase().startsWith(m[1].trim().toLowerCase())) || null) : null, name = typ ? m[2].trim() : q.trim();
   pal.liste = treffer(name, null, 8).map(k => ({k}));
+  const fr = q.includes(':') ? null : frageParsen(q);
+  if (fr && fr.ok && (fr.anker.length || q.trim().split(/\s+/).length > 1)) pal.liste.unshift({frage: fr});
   if (typ && name) pal.liste.unshift({neu: true, typ, name});
   if (!q.trim()) pal.liste = zuletztListe().slice(0, 8).map(r => ({k: M.get(r)}));
   pal.i = Math.min(pal.i, Math.max(0, pal.liste.length - 1));
   const chips = !typ && q.trim() ? `<div class="dim" style="padding:8px 9px 3px">Neu anlegen als:</div><div class="cchips" style="padding:0 9px 9px">${typenListe().map(t => `<button class="cc" data-act="palneu" data-typ="${esc(t)}">${punkt(t)} ${esc(t)}</button>`).join('')}</div>` : '';
-  $('palr').innerHTML = pal.liste.map((x, i) => x.neu ? `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">＋ ${punkt(x.typ)}<span>${esc(x.typ)} „${esc(x.name)}“ anlegen</span><small>Enter</small></div>` : `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">${punkt(x.k.typ)}<span>${esc(x.k.name)}</span><small>${esc(x.k.typ)}</small></div>`).join('')
+  $('palr').innerHTML = pal.liste.map((x, i) => x.frage ? `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">▶ <span>Frage: ${frageText(x.frage)}</span><small>Enter</small></div>` : x.neu ? `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">＋ ${punkt(x.typ)}<span>${esc(x.typ)} „${esc(x.name)}“ anlegen</span><small>Enter</small></div>` : `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">${punkt(x.k.typ)}<span>${esc(x.k.name)}</span><small>${esc(x.k.typ)}</small></div>`).join('')
     + (pal.liste.length || !q.trim() ? '' : '<div class="dim" style="padding:10px">Nichts gefunden.</div>') + chips;
 }
-async function palAus(x) { if (!x) return; if (x.neu) return neuAnlegen(x.typ, x.name); zuMachen(); oeffneInsp(x.k.ref); }
+async function palAus(x) { if (!x) return; if (x.frage) return frageAusfuehren(x.frage); if (x.neu) return neuAnlegen(x.typ, x.name); zuMachen(); oeffneInsp(x.k.ref); }
 async function neuAnlegen(typ, name, p) {
   const k = p ? kontext(p) : {typ: null, felder: {}, ver: []};
   const j = await api('anlegen', {typ, name, felder: k.typ === typ ? k.felder : {}, verknuepfen: k.ver});
@@ -1019,6 +1097,7 @@ const AKT = {
   irzurueck: () => { const r = irHist.pop(); oeffneInsp(r, true); },
   erkunden: () => { const k = M.get(ir); if (k) weiterDialog({refs: [k.ref], label: k.name}); },
   weiter: t => weiterDialog(paneVon(t)),
+  fbsp: t => { const i = $('fragetext'); i.value = t.dataset.t; frageVorschau(i.value); i.focus(); },
   umfeld: t => {
     const k = M.get(ir); if (!k) return;
     const p = paneNeu({quelle: {kind: 'refs', refs: [k.ref], label: k.name, typ: t.dataset.t, tiefe: t.dataset.t === k.typ ? 1 : 3, arten: null, richtung: 'beide', halt: k.typ}, ansicht: 'liste'});
@@ -1091,6 +1170,7 @@ document.addEventListener('change', e => {
 let ftimer;
 document.addEventListener('input', e => {
   const t = e.target;
+  if (t.id === 'fragetext') { frageVorschau(t.value); return; }
   if (MB && t.id === 'mbwert') MB.wert = t.value;
   else if (MB && t.id === 'mbfname') MB.fname = t.value;
   else if (MB && t.id === 'mbziel') { MB.zielName = t.value; MB.zielRef = null; sugZeige(t, treffer(t.value, null), o => { t.value = o.name; MB.zielName = o.name; MB.zielRef = o.ref; }); return; }
@@ -1104,6 +1184,7 @@ document.addEventListener('focusin', e => {
 });
 document.addEventListener('keydown', e => {
   const t = e.target;
+  if (t.id === 'fragetext' && e.key === 'Enter') { const fr = frageParsen(t.value); if (fr.ok) { e.preventDefault(); frageAusfuehren(fr); } return; }
   if (t.dataset && t.dataset.frage && sugTaste(e)) return;
   if (t.id && t.id.startsWith('neuname_') && e.key === 'Enter' && t.value.trim()) {
     e.preventDefault(); const p = paneById(+t.id.slice(8)), nm = t.value.trim();
