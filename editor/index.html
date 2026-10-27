@@ -22,6 +22,9 @@ textarea{width:100%;resize:vertical;min-height:34px}
 .row:hover{background:var(--bg)}
 .row.sel{background:var(--akzb)}
 .row.ueber{border-color:var(--akz);background:var(--akzb)}
+.luecke{color:var(--warn);font-weight:700}
+.pf{color:var(--warn)}
+.felder label{font-size:12px;color:var(--mut);align-self:center}
 .typ{font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--lin);border-radius:9px;padding:0 6px;white-space:nowrap}
 .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .zahl{color:var(--mut);font-size:12px}
@@ -60,7 +63,10 @@ label.chk{font-size:12px;color:var(--mut);display:flex;gap:4px;align-items:cente
       <input id="suche" placeholder="Suchen …">
       <select id="tf"></select>
     </div>
-    <label class="chk"><input type="checkbox" id="lose"> nur ohne jede Beziehung</label>
+    <div class="zeile">
+      <label class="chk"><input type="checkbox" id="lose"> ohne Beziehung</label>
+      <label class="chk"><input type="checkbox" id="luecke"> unvollständig</label>
+    </div>
   </div>
   <div class="scroll" id="liste"></div>
 </section>
@@ -70,7 +76,11 @@ label.chk{font-size:12px;color:var(--mut);display:flex;gap:4px;align-items:cente
   <div class="kopf">
     <div class="zeile">
       <span class="zahl">Beziehung:</span>
-      <input id="art" list="arten" placeholder="z. B. enthält">
+      <input id="art" list="arten" placeholder="z. B. ist Teil von">
+      <select id="umg" title="Wie liest sich die Beziehung im Baum?">
+        <option value="0">A → B: B hängt unter A</option>
+        <option value="1">A → B: A hängt unter B</option>
+      </select>
     </div>
     <div class="hint" style="padding:0">Ziehen: auf ein Objekt = darunterhängen · im Baum = verschieben · Strg/Alt gedrückt = zusätzlich einhängen</div>
   </div>
@@ -125,10 +135,25 @@ async function laden() {
 // ---------- Hilfen ----------
 const byRef = ref => S.knoten.find(k => k.ref === ref);
 const nameVon = ref => (byRef(ref) || {name: ref}).name;
-function arten() { return [...new Set(S.kanten.map(k => k.art))].sort(); }
-function aktArt() { return $('art').value.trim() || 'enthält'; }
-function kinderVon(ref, art) { return S.kanten.filter(k => k.gerichtet && k.art === art && k.von === ref); }
-function istKind(ref, art) { return S.kanten.some(k => k.gerichtet && k.art === art && k.nach === ref); }
+function arten() { return S.modell ? S.modell.arten : [...new Set(S.kanten.map(k => k.art))].sort(); }
+function aktArt() { return $('art').value.trim() || 'ist Teil von'; }
+// Arten, die sich vom Kind zum Elternteil lesen
+const KIND_ZU_ELTERN = ['ist teil von', 'gehört zu', 'steht in'];
+function umgekehrt() { return $('umg').value === '1'; }
+function artGewechselt() {
+  const gespeichert = ls.get('umg:' + aktArt().toLowerCase(), null);
+  $('umg').value = gespeichert ?? (KIND_ZU_ELTERN.includes(aktArt().toLowerCase()) ? '1' : '0');
+}
+// Kanten dieser Art als {kante, kind}: je nach Leserichtung des Baums
+function kinderVon(ref, art) {
+  const u = umgekehrt();
+  return S.kanten.filter(k => k.gerichtet && k.art === art && (u ? k.nach : k.von) === ref)
+    .map(k => ({id: k.id, nach: u ? k.von : k.nach}));
+}
+function istKind(ref, art) {
+  const u = umgekehrt();
+  return S.kanten.some(k => k.gerichtet && k.art === art && (u ? k.von : k.nach) === ref);
+}
 function hatBeziehung(ref) { return S.kanten.some(k => k.von === ref || k.nach === ref); }
 function auswahl(ref) { sel = ref; render(); }
 
@@ -149,22 +174,23 @@ function ablage(el, beiDrop) {
 function einhaengen(eltern, d, kopie) {
   if (d.ref === eltern) return;
   ls.set('art', aktArt());
-  api('einhaengen', {eltern, kind: d.ref, art: aktArt(), alte_kante: (d.kante && !kopie) ? d.kante : null});
+  ls.set('umg:' + aktArt().toLowerCase(), $('umg').value);
+  api('einhaengen', {eltern, kind: d.ref, art: aktArt(), umgekehrt: umgekehrt(), alte_kante: (d.kante && !kopie) ? d.kante : null});
 }
 
 // ---------- Darstellung ----------
 function zeile(k, extra) {
   const r = document.createElement('div');
   r.className = 'row' + (k.ref === sel ? ' sel' : '');
-  r.innerHTML = `<span class="typ">${esc(k.typ)}</span><span class="name">${esc(k.name)}</span>`;
+  r.innerHTML = `<span class="typ">${esc(k.typ)}</span><span class="name">${esc(k.name)}</span>${k.fehlt && k.fehlt.length ? `<span class="luecke" title="Fehlt: ${esc(k.fehlt.join(', '))}">!</span>` : ''}`;
   r.onclick = () => auswahl(k.ref);
   return r;
 }
 function renderListe() {
-  const q = $('suche').value.trim().toLowerCase(), tf = $('tf').value, lose = $('lose').checked;
+  const q = $('suche').value.trim().toLowerCase(), tf = $('tf').value, lose = $('lose').checked, luecke = $('luecke').checked;
   const L = $('liste'); L.innerHTML = '';
   const treffer = S.knoten.filter(k =>
-    (!tf || k.typ === tf) && (!q || k.name.toLowerCase().includes(q)) && (!lose || !hatBeziehung(k.ref)))
+    (!tf || k.typ === tf) && (!q || k.name.toLowerCase().includes(q)) && (!lose || !hatBeziehung(k.ref)) && (!luecke || k.fehlt.length))
     .sort((a, b) => a.typ.localeCompare(b.typ) || a.name.localeCompare(b.name, 'de'));
   if (!S.knoten.length) L.innerHTML = '<div class="leer">Noch nichts erfasst. Oben Typ und Name eintippen, Enter.</div>';
   for (const k of treffer) {
@@ -208,11 +234,28 @@ function renderDetail() {
   const D = $('detail'), k = sel && byRef(sel);
   if (!k) { D.innerHTML = '<div class="leer">Ein Objekt wählen.</div>'; return; }
   const aus = S.kanten.filter(e => e.von === k.ref), ein = S.kanten.filter(e => e.nach === k.ref);
-  const felderZeilen = Object.entries(k.felder).map(([f, v]) =>
-    `<input data-f="${esc(f)}" class="fk" value="${esc(f)}" readonly><input class="fv" data-f="${esc(f)}" value="${esc(v)}">`).join('');
+  const mt = S.modell && S.modell.typen[k.typ];
+  const feld = (f, wert, pflicht, optionen) => {
+    const marke = `<label title="${pflicht ? 'Pflichtfeld' : ''}">${esc(f)}${pflicht ? ' <span class="pf">*</span>' : ''}</label>`;
+    const leer = pflicht && !wert ? ' style="border-color:var(--warn)"' : '';
+    const ctl = optionen
+      ? `<select class="fv" data-f="${esc(f)}"${leer}><option value="">–</option>${optionen.map(o => `<option${o === wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input class="fv" data-f="${esc(f)}" value="${esc(wert || '')}"${leer}>`;
+    return marke + ctl;
+  };
+  let felderZeilen;
+  if (mt) {
+    const bekannt = new Set(mt.felder.map(f => f.name));
+    felderZeilen = mt.felder.filter(f => f.name !== mt.namefeld).map(f => feld(f.name, k.felder[f.name], f.pflicht, f.optionen)).join('')
+      + Object.entries(k.felder).filter(([f]) => !bekannt.has(f)).map(([f, v]) => feld(f, v, false, null)).join('');
+  } else {
+    felderZeilen = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('');
+  }
+  const kf = art => (S.modell && S.modell.kantenfelder[art]) || [];
   const relZeile = (e, richtung) => {
     const andere = richtung === 'aus' ? e.nach : e.von, pfeil = !e.gerichtet ? '—' : (richtung === 'aus' ? '→' : '←');
-    return `<div class="rel"><span class="art">${pfeil} ${esc(e.art)}</span><a data-ref="${esc(andere)}">${esc(nameVon(andere))}</a><span class="typ">${esc((byRef(andere) || {}).typ || '')}</span><button class="x" data-k="${esc(e.id)}" title="Beziehung entfernen">×</button></div>`;
+    const attr = kf(e.art).map(f => `<select class="kf" data-k="${esc(e.id)}" data-f="${esc(f.name)}" title="${esc(f.name)}"><option value="">${esc(f.name)}: –</option>${(f.optionen || []).map(o => `<option${o === (e.felder || {})[f.name] ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`).join('');
+    return `<div class="rel" style="flex-wrap:wrap"><span class="art">${pfeil} ${esc(e.art)}</span><a data-ref="${esc(andere)}">${esc(nameVon(andere))}</a><span class="typ">${esc((byRef(andere) || {}).typ || '')}</span><button class="x" data-k="${esc(e.id)}" title="Beziehung entfernen">×</button>${attr ? `<div style="width:100%;padding-left:76px">${attr}</div>` : ''}</div>`;
   };
   D.innerHTML = `
     <input id="name" value="${esc(k.name)}">
@@ -225,14 +268,24 @@ function renderDetail() {
       <select id="rr"><option value="aus">→ zu</option><option value="ein">← von</option><option value="ungerichtet">— mit</option></select>
       <input id="rz" list="ziele" placeholder="Objekt (Name; neu = wird angelegt) + Enter" style="flex:1;min-width:0">
     </div>
+    <div class="rel" id="rfz" style="display:none"></div>
     <div class="sekt">Felder</div>
     <div class="felder">${felderZeilen}
-      <input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">
+      ${mt ? '' : '<input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">'}
     </div>
     <div style="padding:14px 12px"><button id="del" style="color:var(--warn)">Objekt löschen</button></div>`;
   $('name').onchange = e => api('aendern', {ref: k.ref, name: e.target.value});
   D.querySelectorAll('.fv').forEach(i => i.onchange = () => api('aendern', {ref: k.ref, felder: {[i.dataset.f]: i.value}}));
-  $('fw').onkeydown = e => { if (e.key === 'Enter' && $('fn').value.trim()) api('aendern', {ref: k.ref, felder: {[$('fn').value.trim()]: $('fw').value}}); };
+  if ($('fw')) $('fw').onkeydown = e => { if (e.key === 'Enter' && $('fn').value.trim()) api('aendern', {ref: k.ref, felder: {[$('fn').value.trim()]: $('fw').value}}); };
+  D.querySelectorAll('select.kf').forEach(i => i.onchange = () => api('kante_felder', {id: i.dataset.k, felder: {[i.dataset.f]: i.value}}));
+  // Kanten-Attribut gleich beim Anlegen, wenn die gewählte Art eins hat
+  const rfz = $('rfz');
+  const rfZeigen = () => {
+    const fs = kf($('ra').value.trim());
+    rfz.style.display = fs.length ? '' : 'none';
+    rfz.innerHTML = fs.map(f => `<span class="art">${esc(f.name)}</span><select id="rf_${esc(f.name)}" data-f="${esc(f.name)}" class="rf"><option value="">–</option>${(f.optionen || []).map(o => `<option>${esc(o)}</option>`).join('')}</select>`).join('');
+  };
+  $('ra').oninput = rfZeigen; rfZeigen();
   D.querySelectorAll('a[data-ref]').forEach(a => a.onclick = () => auswahl(a.dataset.ref));
   D.querySelectorAll('button[data-k]').forEach(b => b.onclick = () => api('kante_weg', {id: b.dataset.k}));
   $('del').onclick = loeschen;
@@ -246,20 +299,22 @@ function renderDetail() {
     if (!ziel) {   // kein Treffer: nach reinem Namen suchen, sonst neu anlegen
       const roh = rz.value.trim().toLowerCase(), t = S.knoten.filter(n => n.name.toLowerCase() === roh && n.ref !== k.ref);
       if (t.length === 1) ziel = t[0].ref;
-      else if (!t.length) { const j = await api('anlegen', {typ: $('ntyp').value.trim() || 'Objekt', name: rz.value.trim()}); if (!j) return; ziel = j.ref; }
+      else if (!t.length) { const j = await api('anlegen', {typ: $('ntyp').value.trim() || (S.modell ? Object.keys(S.modell.typen)[0] : 'Objekt'), name: rz.value.trim()}); if (!j) return; ziel = j.ref; }
       else { toast('Name mehrdeutig – aus der Vorschlagsliste wählen.', true); return; }
     }
     ls.set('art', art);
-    await api('kante', {ref: k.ref, ziel, art, richtung: $('rr').value});
+    const felder = {}; document.querySelectorAll('select.rf').forEach(i => { if (i.value) felder[i.dataset.f] = i.value; });
+    await api('kante', {ref: k.ref, ziel, art, richtung: $('rr').value, felder});
     const n = $('rz'); if (n) n.focus();
   };
-  ablage(D, (d) => { if (d.ref !== k.ref) api('kante', {ref: k.ref, ziel: d.ref, art: $('ra').value.trim() || aktArt(), richtung: 'aus'}); });
+  ablage(D, (d) => { if (d.ref !== k.ref) api('kante', {ref: k.ref, ziel: d.ref, art: $('ra').value.trim() || aktArt(), richtung: 'aus', felder: {}}); });
 }
 function render() {
   const tf = $('tf'), alt = tf.value, typen = [...new Set(S.knoten.map(k => k.typ))].sort();
   tf.innerHTML = '<option value="">alle Typen</option>' + typen.map(t => `<option ${t === alt ? 'selected' : ''}>${esc(t)}</option>`).join('');
-  $('typen').innerHTML = typen.map(t => `<option value="${esc(t)}">`).join('');
-  $('arten').innerHTML = [...new Set([...arten(), 'enthält'])].map(a => `<option value="${esc(a)}">`).join('');
+  const erlaubt = S.modell ? Object.keys(S.modell.typen) : typen;
+  $('typen').innerHTML = erlaubt.map(t => `<option value="${esc(t)}">`).join('');
+  $('arten').innerHTML = arten().map(a => `<option value="${esc(a)}">`).join('');
   renderListe(); renderBaum();
   renderDetail();
 }
@@ -268,12 +323,12 @@ function render() {
 async function erfassen() {
   const text = $('nname').value.replace(/\s+$/, '');
   if (!text.trim()) return;
-  const typ = $('ntyp').value.trim() || 'Objekt', unter = $('unter').checked && sel ? sel : null;
+  const typ = $('ntyp').value.trim() || (S.modell ? Object.keys(S.modell.typen)[0] : 'Objekt'), unter = $('unter').checked && sel ? sel : null;
   ls.set('typ', typ); ls.set('art', aktArt());
   const mehrzeilig = text.includes('\n') || /^\s/.test(text);
   const j = mehrzeilig
-    ? await api('massen', {text, typ, art: aktArt(), unter})
-    : await api('anlegen', {typ, name: text, art: aktArt(), unter});
+    ? await api('massen', {text, typ, art: aktArt(), unter, umgekehrt: umgekehrt()})
+    : await api('anlegen', {typ, name: text, art: aktArt(), unter, umgekehrt: umgekehrt()});
   if (j) { $('nname').value = ''; $('nname').rows = 2; if (j.ref && !unter) sel = j.ref; render(); $('nname').focus(); }
 }
 function loeschen() {
@@ -284,15 +339,17 @@ function loeschen() {
 
 $('nname').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); erfassen(); } });
 $('nname').addEventListener('input', e => { e.target.rows = Math.max(2, Math.min(8, e.target.value.split('\n').length)); });
-['suche', 'tf', 'lose'].forEach(i => $(i).addEventListener('input', renderListe));
-$('art').addEventListener('input', () => { renderBaum(); });
+['suche', 'tf', 'lose', 'luecke'].forEach(i => $(i).addEventListener('input', renderListe));
+$('art').addEventListener('input', () => { artGewechselt(); renderBaum(); });
+$('umg').addEventListener('change', () => { ls.set('umg:' + aktArt().toLowerCase(), $('umg').value); renderBaum(); });
 $('art').addEventListener('change', () => ls.set('art', aktArt()));
 document.addEventListener('keydown', e => {
   if (e.key === 'Delete' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) loeschen();
 });
 
 $('ntyp').value = ls.get('typ', '');
-$('art').value = ls.get('art', 'enthält');
+$('art').value = ls.get('art', 'ist Teil von');
+artGewechselt();
 $('unter').checked = ls.get('unter', '') === '1';
 $('unter').onchange = () => ls.set('unter', $('unter').checked ? '1' : '');
 laden().then(() => $('nname').focus());

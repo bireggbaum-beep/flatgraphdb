@@ -10,6 +10,8 @@ Zugesagt und hier geprüft:
     setzt den Typ, „Pumpe 12: Nord“ bleibt ein Name
   - Löschen legt in den Papierkorb, Zurückholen bringt Knoten samt Kanten zurück
   - Der Zustand zeigt keine Kanten zu gelöschten Knoten
+  - Mit Datenmodell: Typen, Namensfelder, Auswahlwerte, Pflicht-Lücken,
+    Beziehungsarten (auch mit Klammern), Kanten-Attribute, umgekehrtes Einhängen
 
 Gegenprobe: jede Eigenschaft einzeln an einer mutierten Kopie von
 `editor/editor.py` (siehe CLAUDE.md); EDITOR_DATEI zeigt auf die Kopie.
@@ -134,6 +136,103 @@ e = Editor(os.path.join(WURZEL, "b"))
 check("Neustart: Objekte bleiben", any(k["name"] == "Autoklav 2" for k in e.zustand()["knoten"]))
 check("Neustart: Kanten bleiben", (p2, c) in kanten("enthält"))
 e.schliessen()
+
+# --- Mit Datenmodell (editor/modell.json) ---
+Modell = ed_mod.Modell
+m = Modell(os.environ.get("MODELL_DATEI", "editor/modell.json"))
+check("Modell: 10 Typen, Namensfeld je Typ aus dem Modell",
+      len(m.typen) == 10 and m.typen["Plant"]["namefeld"] == "PlantName"
+      and m.typen["Raum"]["namefeld"] == "RoomName", str(list(m.typen)))
+check("Modell: „Steht in“ und „steht in“ sind eine Art",
+      sum(1 for a in m.arten if a.casefold() == "steht in") == 1 and "steht in" in m.arten)
+check("Modell: Kanten-Attribut hängt an „führt zu Nachfolger (0:n)“",
+      list(m.kantenfelder) == ["führt zu Nachfolger (0:n)"], str(m.kantenfelder))
+
+W2 = tempfile.mkdtemp(prefix="editor_test_")
+e = Editor(os.path.join(W2, "b"), m)
+try:
+    e.knoten_anlegen("Ding", "X")
+    check("Modell: unbekannter Typ wird abgelehnt", False)
+except Fehler:
+    check("Modell: unbekannter Typ wird abgelehnt", True)
+pl, _ = e.knoten_anlegen("plant", "Linie 1")
+check("Modell: Typ gross/klein egal, Name liegt im Namensfeld des Modells",
+      pl == "Plant/linie_1" and e.db.get_node(pl)["PlantName"] == "Linie 1")
+k = next(k for k in e.zustand()["knoten"] if k["ref"] == pl)
+check("Modell: fehlende Pflichtfelder stehen als Lücke da",
+      sorted(k["fehlt"]) == ["PlantGXP", "PlantID", "PlantType"], str(k["fehlt"]))
+try:
+    e.knoten_aendern(pl, felder={"PlantGXP": "vielleicht"})
+    check("Modell: Wert ausserhalb der Auswahl wird abgelehnt", False)
+except Fehler:
+    check("Modell: Wert ausserhalb der Auswahl wird abgelehnt", True)
+e.knoten_aendern(pl, felder={"PlantGXP": "GXP", "PlantID": "P-1", "PlantType": "Einzelplatz"})
+k = next(k for k in e.zustand()["knoten"] if k["ref"] == pl)
+check("Modell: gültige Werte schliessen die Lücke", k["fehlt"] == [])
+
+r1, _ = e.knoten_anlegen("Raum", "Raum 1")
+eq, _ = e.knoten_anlegen("Equipment", "Autoklav")
+try:
+    e.kante_anlegen(eq, r1, "wohnt in")
+    check("Modell: unbekannte Beziehungsart wird abgelehnt", False)
+except Fehler as f:
+    check("Modell: unbekannte Beziehungsart wird abgelehnt, mit den erlaubten Arten",
+          "im Modell nicht" in str(f) and "steht in" in str(f), str(f))
+e.kante_anlegen(eq, r1, "Steht in")
+check("Modell: „Steht in“ wird als „steht in“ gespeichert und angezeigt",
+      [(k["art"]) for k in e.zustand()["kanten"]] == ["steht in"])
+
+s1, _ = e.knoten_anlegen("Prozessschritt", "Waschen")
+s2, _ = e.knoten_anlegen("Prozessschritt", "Trocknen")
+NACH = "führt zu Nachfolger (0:n)"
+e.kante_anlegen(s1, s2, NACH, felder={"ProcessstepType": "Wartezeit / Haltezeit"})
+kk = next(k for k in e.zustand()["kanten"] if k["art"] == NACH)
+check("Kanten-Attribut: Art mit Klammern wird original angezeigt, Attribut gespeichert",
+      kk["felder"] == {"ProcessstepType": "Wartezeit / Haltezeit"}, str(kk))
+try:
+    e.kante_anlegen(eq, r1, "gehört zu", felder={"ProcessstepType": "Standard-Fertigungsschritt"})
+    check("Kanten-Attribut: an der falschen Art wird abgelehnt", False)
+except Fehler:
+    check("Kanten-Attribut: an der falschen Art wird abgelehnt", True)
+try:
+    e.kante_aendern(kk["id"], {"ProcessstepType": "irgendwas"})
+    check("Kanten-Attribut: Wert ausserhalb der Auswahl wird abgelehnt", False)
+except Fehler:
+    check("Kanten-Attribut: Wert ausserhalb der Auswahl wird abgelehnt", True)
+e.kante_aendern(kk["id"], {"ProcessstepType": "Gate / In-Process Control (IPC)"})
+k2 = [k for k in e.zustand()["kanten"] if k["art"] == NACH]
+check("Kanten-Attribut ändern: gleiche Enden, neuer Wert, genau eine Kante",
+      len(k2) == 1 and (k2[0]["von"], k2[0]["nach"]) == (s1, s2)
+      and k2[0]["felder"] == {"ProcessstepType": "Gate / In-Process Control (IPC)"})
+
+e.einhaengen(r1, eq, "gehört zu", umgekehrt=True)
+check("Einhängen umgekehrt: die Kante läuft Kind -> Eltern",
+      any((k["von"], k["nach"], k["art"]) == (eq, r1, "gehört zu") for k in e.zustand()["kanten"]))
+try:
+    e.einhaengen(eq, r1, "gehört zu", umgekehrt=True)
+    check("Einhängen umgekehrt: Kreis wird erkannt", False)
+except Fehler:
+    check("Einhängen umgekehrt: Kreis wird erkannt", True)
+
+neu, _, hin = e.massen("Plant: Linie 2\n  Equipment: Pumpe\n  Raum: Halle", "Plant", "ist Teil von",
+                       umgekehrt=True)
+nm = {k["name"]: k["ref"] for k in e.zustand()["knoten"]}
+check("Massen mit Modell und umgekehrter Art: Kinder zeigen auf das Elternteil",
+      not hin and {(k["von"], k["nach"]) for k in e.zustand()["kanten"] if k["art"] == "ist Teil von"}
+      == {(nm["Pumpe"], nm["Linie 2"]), (nm["Halle"], nm["Linie 2"])}, str(hin))
+try:
+    e.massen("Plant: Nichts", "Plant", "wohnt in")
+    check("Massen: unbekannte Art lehnt ab, bevor etwas angelegt wird", False)
+except Fehler:
+    check("Massen: unbekannte Art lehnt ab, bevor etwas angelegt wird",
+          not any(k["name"] == "Nichts" for k in e.zustand()["knoten"]))
+
+e.schliessen()
+e = Editor(os.path.join(W2, "b"), m)
+check("Neustart mit Modell: Art und Attribut bleiben erhalten",
+      any(k["art"] == NACH and k["felder"] for k in e.zustand()["kanten"]))
+e.schliessen()
+shutil.rmtree(W2, ignore_errors=True)
 
 shutil.rmtree(WURZEL, ignore_errors=True)
 bestanden = sum(1 for _, ok, _ in results if ok)
