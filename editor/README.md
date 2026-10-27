@@ -36,6 +36,20 @@ den Facetten rechnen die anderen Filter der Spalte mit.
 - **Ansichten** speichern das ganze Arbeitsfeld; **CSV** exportiert die Spalte
   (Semikolon, für Excel); **Spalten wählen** blendet Eigenschaften und
   Verknüpfungen als Tabellenspalten ein.
+- **Gruppe** (je Spalte): nach Typ, Eigenschaft oder Verknüpfung; zuklappbare
+  Gruppenköpfe mit Anzahl (Tabelle und Liste). Bei einer Verknüpfung steht ein
+  Objekt in jeder seiner Gruppen, ohne Verknüpfung in „(keine)“.
+- **Diagramm**: Balken je Gruppe (Standard: Typ); Klick auf einen Balken filtert.
+- **Fluss**: Prozessschritte entlang „führt zu Nachfolger“ als Ablaufdiagramm
+  (Schichten von links nach rechts; Gate/IPC, Wartezeit und Schleife aus dem
+  Kanten-Attribut; Punkte zeigen Parameter, Material, Equipment, Dokument,
+  Software am Schritt). Erscheint, sobald solche Beziehungen in der Spalte liegen.
+- **Filter über verknüpfte Objekte**: in der Facette einer Beziehung stehen
+  darunter die Auswahlfelder der verknüpften Objekte, zum Beispiel
+  „steht in → Raum: RoomClass = ISO 7“ (Facette aufklappen).
+- **Massenbearbeitung** (Spaltenmenü ⋯): für alle Treffer ein Feld setzen,
+  alle mit einem Objekt verknüpfen oder alle löschen. Alles oder nichts;
+  ein Feld, das das Modell einem anderen Typ zuordnet, wird dort übersprungen.
 - Baum: Hierarchie innerhalb der Treffer einer Spalte, nach einer Beziehungsart;
   ziehen = verschieben, Strg/Alt = zusätzlich einhängen.
 
@@ -45,7 +59,9 @@ Titel zum Umbenennen anklicken; Eigenschaften nach Modell, darunter „+ eigenes
 (beliebiger Name und Wert, ohne Dropdown und Pflichtprüfung; bereits benutzte
 Namen werden vorgeschlagen; auch als Tabellenspalte wählbar); **Notiz** mit
 `[[Name]]` (Vorschläge beim Tippen von `[[`; Umbenennen zieht die Verweise
-nach); Verknüpfungen nach Art und Richtung gruppiert, die Art wird aus dem
+nach); **Umfeld**: je Typ, was bis 3 Beziehungsschritte erreichbar ist (gleichartige
+Geschwister blockieren den Weg, so hängt der Temperaturfühler nicht an der Nachbar-CPP);
+Klick öffnet eine Spalte; Verknüpfungen nach Art und Richtung gruppiert, die Art wird aus dem
 vorgeschlagen, was zwischen den beiden Typen schon benutzt wurde; „Erwähnt in“;
 Nachbarschaftsgraph. **Erkunden →** startet eine Spalte von diesem Objekt aus.
 

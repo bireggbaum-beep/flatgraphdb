@@ -277,6 +277,53 @@ check("Kontext: gab es das Objekt schon, kommt nur die Verknüpfung dazu",
 e.schliessen()
 shutil.rmtree(W4, ignore_errors=True)
 
+# --- Massenbearbeitung ---
+W5 = tempfile.mkdtemp(prefix="editor_test_")
+e = Editor(os.path.join(W5, "b"), m)
+q1, _ = e.knoten_anlegen("Equipment", "Pumpe")
+q2, _ = e.knoten_anlegen("Equipment", "Waage")
+q3, _ = e.knoten_anlegen("Plant", "Linie")
+rm2, _ = e.knoten_anlegen("Raum", "Halle")
+g, u = e.mehrere_aendern([q1, q2, q3], {"EquipmentGXP": "GXP"})
+fe = {k["ref"]: k["felder"] for k in e.zustand()["knoten"]}
+check("Masse: Feld wird an allen Objekten des Typs gesetzt",
+      fe[q1].get("EquipmentGXP") == "GXP" and fe[q2].get("EquipmentGXP") == "GXP" and g == 2)
+check("Masse: ein Feld eines anderen Typs wird übersprungen, nicht angelegt",
+      "EquipmentGXP" not in fe[q3] and u == 1)
+try:
+    e.mehrere_aendern([q1, q2], {"EquipmentCategory": "Kat 9"})
+    check("Masse: ungültiger Auswahlwert wird abgelehnt", False)
+except Fehler:
+    check("Masse: ungültiger Auswahlwert wird abgelehnt", True)
+try:
+    e.mehrere_aendern([q1, q2], {"EquipmentName": "Gleich"})
+    check("Masse: der Name lässt sich nicht für mehrere setzen", False)
+except Fehler:
+    check("Masse: der Name lässt sich nicht für mehrere setzen",
+          [k["name"] for k in e.zustand()["knoten"] if k["ref"] in (q1, q2)] == ["Pumpe", "Waage"])
+try:
+    e.mehrere_aendern([q1, q2], {"EquipmentCategory": "Kat 1"}, [{"ziel": rm2, "art": "wohnt in"}])
+    check("Masse: ein Fehler beim Verknüpfen nimmt auch die Felder zurück", False)
+except Fehler:
+    check("Masse: ein Fehler beim Verknüpfen nimmt auch die Felder zurück",
+          "EquipmentCategory" not in next(k for k in e.zustand()["knoten"] if k["ref"] == q1)["felder"])
+e.mehrere_aendern([q1, q2], None, [{"ziel": rm2, "art": "steht in"}])
+check("Masse: alle werden mit dem Ziel verknüpft",
+      {(k["von"], k["nach"]) for k in e.zustand()["kanten"]} == {(q1, rm2), (q2, rm2)})
+e.mehrere_aendern([q1, q2], None, [{"ziel": rm2, "art": "steht in"}])
+check("Masse: nochmal verknüpfen legt nichts doppelt an", len(e.zustand()["kanten"]) == 2)
+e.mehrere_aendern([q1, rm2], None, [{"ziel": rm2, "art": "gehört zu"}])
+check("Masse: das Ziel unter den Objekten wird nicht mit sich selbst verknüpft",
+      {(k["von"], k["nach"]) for k in e.zustand()["kanten"] if k["art"] == "gehört zu"} == {(q1, rm2)})
+e.mehrere_loeschen([q1, q2])
+check("Masse: löschen legt alle in den Papierkorb",
+      not any(k["ref"] in (q1, q2) for k in e.zustand()["knoten"]))
+e.mehrere_zurueck([q1, q2])
+check("Masse: zurückholen bringt alle samt Verknüpfungen zurück",
+      any(k["ref"] == q1 for k in e.zustand()["knoten"]) and len(e.zustand()["kanten"]) == 3)
+e.schliessen()
+shutil.rmtree(W5, ignore_errors=True)
+
 shutil.rmtree(WURZEL, ignore_errors=True)
 bestanden = sum(1 for _, ok, _ in results if ok)
 print(f"\n{bestanden}/{len(results)} Checks bestanden")

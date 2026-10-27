@@ -267,6 +267,48 @@ class Editor:
                 self.kante_anlegen(von, nach, v["art"], gerichtet=richtung != "ungerichtet")
         return ref, neu
 
+    def _fremde_felder(self, typ):
+        """Feldnamen, die das Modell anderen Typen zuordnet, diesem aber nicht."""
+        eigene = {f["name"] for f in self.modell.typen[typ]["felder"]} if self.modell and typ in self.modell.typen else set()
+        alle = {f["name"] for t in (self.modell.typen.values() if self.modell else []) for f in t["felder"]}
+        return alle - eigene
+
+    def mehrere_aendern(self, refs, felder=None, verknuepfen=None):
+        """Felder setzen und/oder verknüpfen für viele Objekte: alles oder nichts.
+        Ein Feld, das das Modell einem anderen Typ zuordnet (EquipmentGXP an einer
+        Plant), wird dort übersprungen statt angelegt. Den Namen gibt es nur einzeln.
+        Rückgabe (gesetzt, übersprungen)."""
+        felder = {k.strip(): v for k, v in (felder or {}).items() if k and k.strip() and not k.startswith("_")}
+        gesetzt = uebersprungen = 0
+        with self.db.transaction():
+            for ref in refs:
+                typ = ref.partition("/")[0]
+                if self._namefeld(typ) in felder:
+                    raise Fehler("Der Name lässt sich nicht für mehrere Objekte auf einmal setzen.")
+                ok = {k: v for k, v in felder.items() if k not in self._fremde_felder(typ)}
+                if felder:
+                    if ok:
+                        self.knoten_aendern(ref, felder=ok)
+                        gesetzt += 1
+                    else:
+                        uebersprungen += 1
+                for v in verknuepfen or []:
+                    richtung = v.get("richtung", "aus")
+                    von, nach = (v["ziel"], ref) if richtung == "ein" else (ref, v["ziel"])
+                    if von != nach:
+                        self.kante_anlegen(von, nach, v["art"], gerichtet=richtung != "ungerichtet")
+        return gesetzt, uebersprungen
+
+    def mehrere_loeschen(self, refs):
+        with self.db.transaction():
+            for ref in refs:
+                self.knoten_loeschen(ref)
+
+    def mehrere_zurueck(self, refs):
+        with self.db.transaction():
+            for ref in refs:
+                self.knoten_zurueck(ref)
+
     def knoten_aendern(self, ref, name=None, felder=None, notiz=None):
         typ, _, kid = ref.partition("/")
         nf = self._namefeld(typ)
@@ -429,6 +471,19 @@ def _aktionen(ed):
     def zurueck(d):
         ed.knoten_zurueck(d["ref"])
 
+    def mehrere_aendern(d):
+        g, u = ed.mehrere_aendern(d["refs"], d.get("felder"), d.get("verknuepfen"))
+        teile = ([f"{g} Objekte geändert"] if d.get("felder") else []) + ([f"{u} übersprungen (Feld gehört zu anderem Typ)"] if u else [])
+        if d.get("verknuepfen"):
+            teile.append(f"{len(d['refs'])} verknüpft")
+        return {"hinweis": ", ".join(teile)}
+
+    def mehrere_loeschen(d):
+        ed.mehrere_loeschen(d["refs"])
+
+    def mehrere_zurueck(d):
+        ed.mehrere_zurueck(d["refs"])
+
     def kante(d):
         richtung = d.get("richtung", "aus")
         von, nach = (d["ref"], d["ziel"]) if richtung != "ein" else (d["ziel"], d["ref"])
@@ -448,6 +503,8 @@ def _aktionen(ed):
     return {"anlegen": anlegen, "massen": massen, "aendern": aendern,
             "loeschen": loeschen, "zurueck": zurueck, "kante": kante,
             "kante_weg": kante_weg, "kante_felder": kante_felder,
+            "mehrere_aendern": mehrere_aendern, "mehrere_loeschen": mehrere_loeschen,
+            "mehrere_zurueck": mehrere_zurueck,
             "einhaengen": einhaengen}
 
 
