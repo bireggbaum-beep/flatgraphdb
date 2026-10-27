@@ -1,6 +1,10 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.2.0 (Speicherform 3)
+- Schema: "optional": True an jeder Spec ({"type": int, "optional": True}); das Feld darf fehlen oder None sein, sonst wird es wie bisher geprüft. Die dict-Form gilt jetzt auch für int, float, bool. pDMS: keine, alte Schemata bleiben Pflicht.
+- schema_verstoesse(sammlung=None): meldet (ref, feld, grund), wo der Bestand gegen sein Schema verstösst, wirft nicht; gleiche Prüfung wie beim Schreiben. pDMS: keine.
+
 4.1.0 (Speicherform 3)
 - purge(sammlung, kennung): einen Knoten aus dem Papierkorb endgültig entfernen, mit genau seiner Kaskade; lebende wirft NichtImPapierkorb. run_garbage_collection bleibt für die Wartung. pDMS: keine, kann aber ein „endgültig löschen“ je Eintrag bauen.
 

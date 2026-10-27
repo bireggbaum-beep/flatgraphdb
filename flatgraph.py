@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -460,6 +460,9 @@ class FlatGraphDB:
                              {"type": str|list, "options": [...]}
                                Enum — field is required; for str the value must be one of the
                                options; for list every element must be in options.
+                             {"type": int|float|bool|str|list, "optional": True}
+                               Zusatz fuer jede dieser Formen: das Feld darf fehlen (oder
+                               None sein); ist es da, wird es wie sonst geprueft.
                              {"type": "link", "target": "collection_name"}
                                Node reference — field is optional; when present the value must
                                be a valid, non-deleted node ref in the target collection.
@@ -1513,47 +1516,28 @@ class FlatGraphDB:
 
     def _validate_node(self, collection_name, data):
         """Validate data against the schema for this collection (if one is defined)."""
+        # Die Regeln stehen nur in _schema_verstoesse; hier wird der erste
+        # Verstoss geworfen, dort werden alle gemeldet. Zwei Fassungen
+        # derselben Pruefung wuerden auseinanderlaufen.
+        for _feld, art, text in self._schema_verstoesse(collection_name, data):
+            raise art(text)
+
+    def _schema_verstoesse(self, collection_name, data):
+        """Liefert (feld, Fehlerklasse, Text) je Verstoss gegen das Schema.
+
+        Wirft nur bei einem kaputten Schema selbst (unbekannte Spec).
+        """
         if collection_name not in self.schemas:
             return
         schema = self.schemas[collection_name]
         for field, spec in schema.items():
             # --- plain Python type (existing behaviour, fully backward-compatible) ---
             if isinstance(spec, type):
-                if field not in data:
-                    raise ValueError(
-                        f"Required field '{field}' missing in collection '{collection_name}'."
-                    )
-                if not isinstance(data[field], spec):
-                    raise TypeError(
-                        f"Field '{field}' must be of type {spec.__name__}."
-                    )
-                continue
-
-            if not isinstance(spec, dict):
+                spec = {"type": spec}
+            elif not isinstance(spec, dict):
                 raise ValueError(f"Invalid schema spec for field '{field}': {spec!r}")
 
             field_type = spec.get("type")
-
-            # --- enum: {"type": str|list, "options": [...]} ---
-            if field_type in (str, list):
-                if field not in data:
-                    raise ValueError(
-                        f"Required field '{field}' missing in collection '{collection_name}'."
-                    )
-                value = data[field]
-                if not isinstance(value, field_type):
-                    name = field_type.__name__
-                    raise TypeError(f"Field '{field}' must be of type {name}.")
-                options = spec.get("options")
-                if options is not None:
-                    items = value if isinstance(value, list) else [value]
-                    for item in items:
-                        if item not in options:
-                            raise ValueError(
-                                f"Field '{field}': '{item}' is not an allowed value. "
-                                f"Allowed: {options}"
-                            )
-                continue
 
             # --- link: {"type": "link", "target": "collection_name"} ---
             if field_type == "link":
@@ -1563,12 +1547,54 @@ class FlatGraphDB:
                 target_col = spec.get("target")
                 if not self._node_ref_exists(value, expected_collection=target_col):
                     hint = f" in collection '{target_col}'" if target_col else ""
-                    raise ValueError(
-                        f"Field '{field}': referenced node '{value}' does not exist{hint}."
-                    )
+                    yield (field, ValueError,
+                           f"Field '{field}': referenced node '{value}' does not exist{hint}.")
                 continue
 
-            raise ValueError(f"Unknown schema type '{field_type}' for field '{field}'.")
+            # --- plain / enum: {"type": str|int|float|bool|list, "options": [...],
+            #                    "optional": True} ---
+            if not isinstance(field_type, type):
+                raise ValueError(f"Unknown schema type '{field_type}' for field '{field}'.")
+            # None zaehlt wie ein fehlendes Feld, so wie bei link.
+            if spec.get("optional") and data.get(field) is None:
+                continue
+            if field not in data:
+                yield (field, ValueError,
+                       f"Required field '{field}' missing in collection '{collection_name}'.")
+                continue
+            value = data[field]
+            if not isinstance(value, field_type):
+                yield (field, TypeError,
+                       f"Field '{field}' must be of type {field_type.__name__}.")
+                continue
+            options = spec.get("options")
+            if options is not None:
+                items = value if isinstance(value, list) else [value]
+                for item in items:
+                    if item not in options:
+                        yield (field, ValueError,
+                               f"Field '{field}': '{item}' is not an allowed value. "
+                               f"Allowed: {options}")
+                        break
+
+    def schema_verstoesse(self, collection_name=None):
+        """Meldet, wo der Bestand gegen sein Schema verstoesst — wirft nicht.
+
+        Schemata gelten nur fuer neue Schreibvorgaenge; wer ``schemas`` zur
+        Laufzeit aendert, fragt hiermit nach dem Bestand.
+
+        :param collection_name: eine Sammlung, oder None fuer alle mit Schema
+        :return: Liste von (ref, feld, grundtext); gleiche Pruefung wie beim
+                 Schreiben. Weich geloeschte Knoten fehlen, wie bei list_nodes.
+        """
+        self._offen_pruefen()
+        namen = [collection_name] if collection_name is not None else list(self.schemas)
+        ergebnis = []
+        for name in namen:
+            for nid, knoten in self.list_nodes(name, readonly=True).items():
+                for feld, _art, text in self._schema_verstoesse(name, knoten):
+                    ergebnis.append((f"{name}/{nid}", feld, text))
+        return ergebnis
 
     def _node_ref_exists(self, ref, expected_collection=None):
         """Return True if ref points to an existing, non-deleted node."""

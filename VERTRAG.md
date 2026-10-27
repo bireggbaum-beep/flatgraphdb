@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.1.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.2.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -519,6 +519,23 @@ hatte zwei nachgemessene Folgen, beide behoben:
 Was flatgraph weiterhin NICHT tut: unbekannte Felder ablehnen. Ein Schema
 zählt auf, was da sein muss — nicht, was sonst noch da sein darf.
 `{"quatsch": 42}` geht durch, mit und ohne Unterstrich.
+
+### Optionale Felder und die Bestandsprüfung (ab 4.2.0)
+
+**`"optional": True`** steht an jeder Spec, auch an Plain-Typen
+(`{"type": int, "optional": True}`). Das Feld darf fehlen oder `None` sein;
+ist es da, gilt Typ und `options` wie sonst. Ohne den Zusatz bleibt jedes
+Feld Pflicht, `link` bleibt optional.
+
+**`schema_verstoesse(sammlung=None)`** gibt eine Liste von
+`(ref, feld, grundtext)` zurück, wo gespeicherte Knoten gegen das heutige
+Schema verstossen — für eine Sammlung oder, ohne Argument, für alle mit
+Schema. Sie wirft nicht und ändert nichts. Ein Schema gilt weiterhin nur
+für neue Schreibvorgänge; wer `db.schemas` zur Laufzeit ändert, fragt damit
+nach dem Bestand. Weich gelöschte Knoten fehlen in der Antwort (wie bei
+`list_nodes`). Die Prüfung ist dieselbe wie beim Schreiben; ein
+Schreibvorgang wirft den ersten Verstoss, die Bestandsprüfung meldet alle.
+Kanten (`edge_constraints`) prüft sie nicht.
 
 ---
 
