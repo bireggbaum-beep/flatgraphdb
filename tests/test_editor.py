@@ -253,6 +253,30 @@ check("Umbenennen mit eigener Notiz bleibt heil",
 e.schliessen()
 shutil.rmtree(W3, ignore_errors=True)
 
+# --- Anlegen im Kontext (Werte und Verknüpfungen aus dem Filter) ---
+W4 = tempfile.mkdtemp(prefix="editor_test_")
+e = Editor(os.path.join(W4, "b"), m)
+rm, _ = e.knoten_anlegen("Raum", "Reinraum C")
+ref, neu = e.anlegen_im_kontext("Equipment", "Waage", {"EquipmentGXP": "GXP"},
+                                [{"ziel": rm, "art": "steht in", "richtung": "aus"}])
+kn = next(k for k in e.zustand()["knoten"] if k["ref"] == ref)
+check("Kontext: Feld aus dem Filter ist gesetzt", kn["felder"].get("EquipmentGXP") == "GXP")
+check("Kontext: Verknüpfung aus dem Filter ist angelegt",
+      [(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"]] == [(ref, rm, "steht in")])
+try:
+    e.anlegen_im_kontext("Equipment", "Pumpe", {"EquipmentGXP": "GXP"},
+                         [{"ziel": rm, "art": "wohnt in"}])
+    check("Kontext: eine fehlerhafte Verknüpfung nimmt auch das Objekt zurück", False)
+except Fehler:
+    check("Kontext: eine fehlerhafte Verknüpfung nimmt auch das Objekt zurück",
+          not any(k["name"] == "Pumpe" for k in e.zustand()["knoten"]))
+e.anlegen_im_kontext("Equipment", "Waage", None, [{"ziel": rm, "art": "gehört zu"}])
+check("Kontext: gab es das Objekt schon, kommt nur die Verknüpfung dazu",
+      sum(1 for k in e.zustand()["knoten"] if k["name"] == "Waage") == 1
+      and sum(1 for k in e.zustand()["kanten"]) == 2)
+e.schliessen()
+shutil.rmtree(W4, ignore_errors=True)
+
 shutil.rmtree(WURZEL, ignore_errors=True)
 bestanden = sum(1 for _, ok, _ in results if ok)
 print(f"\n{bestanden}/{len(results)} Checks bestanden")

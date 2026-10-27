@@ -3,135 +3,215 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>Graph-Editor</title>
 <style>
-:root{--bg:#fbfbfc;--side:#f3f4f7;--pan:#fff;--tx:#1f2430;--mut:#7a8194;--lin:#e4e7ee;--akz:#4f6df5;--akzb:#eaeefe;--warn:#d4351c;--hover:#eef0f5;--sh:0 8px 30px rgba(20,30,60,.14)}
-@media (prefers-color-scheme:dark){:root{--bg:#15171c;--side:#1b1e25;--pan:#1f232b;--tx:#e7eaf1;--mut:#8b93a7;--lin:#2b303c;--akz:#7f95ff;--akzb:#252c4d;--warn:#ff7b6b;--hover:#262b35;--sh:0 8px 30px rgba(0,0,0,.5)}}
+:root{
+  --bg:#0d0f13;--pan:#13161c;--raised:#1a1e26;--hover:#1f242d;--lin:#252a34;--lin2:#303644;
+  --tx:#e4e7ee;--mut:#8b92a5;--dim:#5d6477;
+  --akz:#7c93ff;--akzb:#232b4d;--ok:#4fd1a1;--warn:#ff7a6b;
+  --sh:0 12px 40px rgba(0,0,0,.55);
+}
 *{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;grid-template-columns:248px 1fr}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--tx);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column;overflow:hidden}
 button,input,select,textarea{font:inherit;color:inherit}
-input,select,textarea{background:var(--pan);border:1px solid var(--lin);border-radius:8px;padding:6px 10px;outline:none}
-input:focus,select:focus,textarea:focus{border-color:var(--akz)}
-button{cursor:pointer;background:none;border:none;padding:0}
-a{color:var(--akz);cursor:pointer;text-decoration:none}
+button{cursor:pointer;background:none;border:none;padding:0;text-align:left}
+input,select,textarea{background:var(--raised);border:1px solid var(--lin);border-radius:6px;padding:5px 9px;outline:none;color-scheme:dark}
+input:focus,select:focus,textarea:focus{border-color:var(--akz);box-shadow:0 0 0 3px rgba(124,147,255,.15)}
+::placeholder{color:var(--dim)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:var(--lin2);border-radius:6px;border:2px solid var(--pan)}::-webkit-scrollbar-track{background:transparent}
+kbd{font:11px ui-monospace,monospace;border:1px solid var(--lin2);border-radius:4px;padding:0 5px;color:var(--mut)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.mut{color:var(--mut)}.dim{color:var(--dim)}
 
-/* Seitenleiste */
-#side{background:var(--side);border-right:1px solid var(--lin);padding:12px 10px;display:flex;flex-direction:column;gap:2px;height:100vh;overflow:auto;position:sticky;top:0}
-.suchknopf{display:flex;justify-content:space-between;align-items:center;background:var(--pan);border:1px solid var(--lin);border-radius:9px;padding:8px 10px;color:var(--mut);margin-bottom:8px;width:100%}
-.suchknopf kbd{font:11px system-ui;border:1px solid var(--lin);border-radius:5px;padding:0 5px}
-.sk{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);padding:12px 10px 4px}
-.nav{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:7px;width:100%;text-align:left}
-.nav:hover{background:var(--hover)}.nav.on{background:var(--akzb);font-weight:600}
-.nav .n{margin-left:auto;color:var(--mut);font-size:12px}
-.nav .plus{margin-left:6px;color:var(--mut);opacity:0;width:18px;text-align:center;border-radius:4px}
-.nav:hover .plus{opacity:1}.nav .plus:hover{background:var(--lin);color:var(--tx)}
-.dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
+#kopf{height:48px;flex:none;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--lin);background:var(--pan)}
+.marke{font-weight:700;letter-spacing:.02em;display:flex;gap:8px;align-items:center}
+.marke i{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,var(--akz),#b57cff)}
+.suchknopf{flex:1;max-width:440px;margin:0 auto;display:flex;align-items:center;gap:8px;background:var(--raised);border:1px solid var(--lin);border-radius:8px;padding:6px 10px;color:var(--dim)}
+.suchknopf:hover{border-color:var(--lin2)}.suchknopf kbd{margin-left:auto}
+.btn{background:var(--akz);color:#0b0e18;font-weight:600;border-radius:7px;padding:6px 13px;white-space:nowrap}
+.btn:hover{filter:brightness(1.1)}
+.btn.zweit{background:var(--raised);color:var(--tx);font-weight:500;border:1px solid var(--lin)}.btn.zweit:hover{border-color:var(--lin2)}
+.btn.klein{padding:2px 9px;font-size:12px}
+.ghost{color:var(--mut);padding:3px 8px;border-radius:6px;white-space:nowrap}.ghost:hover{background:var(--hover);color:var(--tx)}
+.ghost .badge{margin-left:4px}
 
-/* Hauptfläche */
-main{padding:28px 40px 80px;max-width:1280px;width:100%;min-width:0}
-h1{font-size:28px;margin:0;font-weight:700;border:none;padding:2px 6px;margin-left:-6px;width:100%;background:none;border-radius:8px;outline:none}
-h1:hover{background:var(--hover)}h1:focus{background:var(--pan);box-shadow:0 0 0 1px var(--akz)}
-.kopfzeile{display:flex;align-items:center;gap:10px;margin-bottom:4px}
-.tchip{display:inline-flex;align-items:center;gap:6px;font-size:12px;background:var(--akzb);border-radius:12px;padding:1px 10px;white-space:nowrap}
-.seite{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:36px;margin-top:18px}
-@media (max-width:1100px){.seite{grid-template-columns:1fr}body{grid-template-columns:1fr}#side{position:static;height:auto}}
-h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:26px 0 8px;font-weight:600}
-h3:first-child{margin-top:0}
-.felder{display:grid;grid-template-columns:150px 1fr;gap:6px 12px;align-items:center}
-.felder label{color:var(--mut);font-size:13px}.pf{color:var(--warn)}
-.felder input,.felder select{width:100%;border-color:transparent;background:var(--hover)}
-.felder input:focus,.felder select:focus{border-color:var(--akz);background:var(--pan)}
-.felder .leer{border-color:var(--warn)}
-.notiz{min-height:70px;padding:8px 10px;border-radius:8px;background:var(--hover);white-space:pre-wrap;cursor:text;line-height:1.55}
-.notiz:empty::before{content:attr(data-ph);color:var(--mut)}
-textarea.notiz{width:100%;resize:vertical;display:block;font:inherit;background:var(--pan)}
-.ref{color:var(--akz);border-radius:4px;padding:0 3px;background:var(--akzb);cursor:pointer}.ref.tot{color:var(--warn);background:none;text-decoration:underline dotted;cursor:default}
-.gruppe{margin:0 0 12px}.gl{font-size:12px;color:var(--mut);margin-bottom:4px}
-.chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{display:inline-flex;align-items:center;gap:7px;background:var(--pan);border:1px solid var(--lin);border-radius:9px;padding:3px 6px 3px 9px;cursor:pointer}
-.chip:hover{border-color:var(--akz)}
-.chip small{color:var(--mut)}
-.x{color:var(--mut);padding:0 4px;border-radius:4px}.x:hover{background:var(--lin);color:var(--warn)}
-.attr{margin:4px 0 0 4px;font-size:12px}.attr select{padding:1px 6px;font-size:12px}
-.addrel{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}.addrel input{flex:1;min-width:160px}
-.hint{color:var(--mut);font-size:12px}
-.leertext{color:var(--mut);padding:6px 0}
-.karte{background:var(--pan);border:1px solid var(--lin);border-radius:12px;padding:10px}
-svg text{fill:var(--tx);font-size:10.5px;text-anchor:middle;pointer-events:none}
-svg .kante{stroke:var(--lin);stroke-width:1.2}svg .kante.m{stroke:var(--mut);stroke-width:1.5}
-svg g[data-act]{cursor:pointer}svg g[data-act]:hover circle{stroke:var(--akz);stroke-width:2}
-.tief{display:inline-flex;gap:0;border:1px solid var(--lin);border-radius:7px;overflow:hidden;float:right;margin-top:-4px}
-.tief button{padding:1px 9px;font-size:12px}.tief .on{background:var(--akzb)}
-.gefahr{color:var(--warn);font-size:12px;margin-top:30px}
+/* Arbeitsfeld */
+#app{flex:1;min-height:0;display:flex}
+#spalten{flex:1;min-width:0;display:flex;overflow-x:auto;overflow-y:hidden;gap:0}
+#insp{flex:none;width:420px;background:var(--pan);border-left:1px solid var(--lin);overflow:auto}
+#insp:empty{display:none}
+.pane{flex:none;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--lin);background:var(--bg)}
+.pane.fokus .phead{box-shadow:inset 0 2px 0 var(--akz)}
+.phead{background:var(--pan);border-bottom:1px solid var(--lin);padding:8px 12px 8px}
+.p1{display:flex;align-items:center;gap:8px}
+.ptitel{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.ptitel b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pn{background:var(--raised);border-radius:10px;padding:0 8px;color:var(--mut);font-size:12px}
+.psub{color:var(--dim);font-size:12px;margin:1px 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p2{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.p2 .sp{flex:1}
+.seg{display:inline-flex;border:1px solid var(--lin);border-radius:7px;overflow:hidden}
+.seg button{padding:2px 9px;font-size:12px;color:var(--mut)}.seg .on{background:var(--akz);color:#0b0e18;font-weight:600}
+.badge{background:var(--akz);color:#0b0e18;border-radius:9px;padding:0 6px;font-size:11px;font-weight:600}
+.pchips{display:flex;gap:5px;flex-wrap:wrap;padding:7px 12px 0}
+.fchip{display:inline-flex;align-items:center;gap:5px;background:var(--akzb);border:1px solid #33407a;border-radius:13px;padding:0 3px 0 9px;font-size:12px}
+.fchip.neg{background:#3a2023;border-color:#6b3037}
+.fchip button{color:var(--mut);padding:0 6px;border-radius:10px}.fchip button:hover{color:var(--tx);background:rgba(255,255,255,.1)}
+.pbody{flex:1;min-height:0;display:flex}
+.pfac{flex:none;width:252px;overflow:auto;background:var(--pan);border-right:1px solid var(--lin)}
+.pres{flex:1;min-width:0;overflow:auto;padding:0 10px 24px}
+.neuzeile{display:flex;gap:6px;align-items:center;padding:8px 0 2px}.neuzeile input{flex:1;min-width:0}
+.neuhinweis{color:var(--mut);font-size:12px;padding:0 0 8px}
 
-/* Tabelle */
-table{border-collapse:collapse;width:100%}
-th{font-size:12px;text-align:left;color:var(--mut);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--lin);cursor:pointer;white-space:nowrap}
-td{padding:7px 10px;border-bottom:1px solid var(--lin)}
-tr.z{cursor:pointer}tr.z:hover{background:var(--hover)}
+/* Facetten */
+.fkopf{padding:10px 10px 8px;position:sticky;top:0;background:var(--pan);z-index:2;border-bottom:1px solid var(--lin);display:flex;flex-direction:column;gap:6px}
+.fkopf input{width:100%}
+.fg{border-bottom:1px solid var(--lin)}
+.fh{width:100%;display:flex;align-items:center;gap:6px;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);font-weight:600}
+.fh:hover{color:var(--tx)}.fh .car{width:10px;color:var(--dim)}.fh .badge{margin-left:auto}
+.fb2{padding:0 4px 8px}
+.fz{position:relative;display:flex;align-items:center;gap:7px;padding:2px 7px;border-radius:6px;cursor:pointer;overflow:hidden;min-height:25px}
+.fz:hover{background:var(--hover)}
+.fz .fl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;z-index:1}
+.fz .fn{color:var(--mut);font-size:12px;position:relative;z-index:1;font-variant-numeric:tabular-nums}
+.fz .fbar{position:absolute;left:0;top:2px;bottom:2px;background:rgba(124,147,255,.10);border-radius:5px;z-index:0}
+.fz .cb{width:13px;height:13px;border:1px solid var(--lin2);border-radius:4px;flex:none;position:relative;z-index:1;display:grid;place-items:center;font-size:10px;line-height:1}
+.fz.on .cb{background:var(--akz);border-color:var(--akz);color:#0b0e18}.fz.on .cb::after{content:"✓"}
+.fz.on .fl{color:#fff}.fz.null:not(.on){opacity:.4}
+.pill-zeile{display:flex;align-items:center;gap:5px;padding:3px 6px}
+.pill-zeile .fl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{border:1px solid var(--lin);border-radius:12px;padding:0 7px;font-size:12px;color:var(--mut);white-space:nowrap}
+.pill:hover{border-color:var(--lin2);color:var(--tx)}.pill.on{background:var(--akz);border-color:var(--akz);color:#0b0e18;font-weight:600}
+.pill.on.neg{background:var(--warn);border-color:var(--warn)}.pill.null{opacity:.35}
+.mehr{padding:2px 9px;color:var(--akz);font-size:12px}
+.fhint{padding:2px 10px 8px;color:var(--dim);font-size:12px}
+
+/* Ergebnisse */
+table{border-collapse:separate;border-spacing:0;width:100%}
+th{position:sticky;top:0;background:var(--bg);z-index:1;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);font-weight:600;padding:7px 8px;border-bottom:1px solid var(--lin);cursor:pointer;white-space:nowrap}
+th:hover{color:var(--tx)}
+td{padding:5px 8px;border-bottom:1px solid var(--lin);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr.z{cursor:pointer}tr.z:hover td{background:var(--pan)}tr.z.on td{background:var(--akzb)}
+td.nm{font-weight:500}td.nm .dot{margin-right:7px}
 .luecke{color:var(--warn);font-weight:700}
-.kachel{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
-.kachel .k{background:var(--pan);border:1px solid var(--lin);border-radius:12px;padding:12px 14px;text-align:left;cursor:pointer}
-.kachel .k:hover{border-color:var(--akz)}.kachel .k b{font-size:22px;display:block}
-.liste .r{display:flex;gap:8px;align-items:center;padding:5px 8px;border-radius:7px;cursor:pointer}.liste .r:hover{background:var(--hover)}
-.zeilebaum{display:flex;align-items:center;gap:7px;padding:3px 6px;border-radius:6px;cursor:pointer;border:1px solid transparent}
-.zeilebaum:hover{background:var(--hover)}.zeilebaum.ueber{border-color:var(--akz);background:var(--akzb)}
-.kinder{margin-left:18px;border-left:1px dashed var(--lin);padding-left:3px}
-.caret{width:14px;text-align:center;color:var(--mut)}
-.wurzel{margin-top:10px;padding:8px;border:1px dashed var(--lin);border-radius:8px;color:var(--mut);text-align:center;font-size:12px}
-.wurzel.ueber{border-color:var(--akz);color:var(--akz)}
+.li{display:flex;align-items:center;gap:9px;padding:7px 8px;border-bottom:1px solid var(--lin);cursor:pointer}
+.li:hover{background:var(--pan)}.li.on{background:var(--akzb)}
+.li .t{flex:1;min-width:0}.li .t b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .t small{color:var(--dim);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gk{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.07em;font-weight:600;padding:12px 8px 4px}
+.leer{color:var(--mut);padding:34px 14px;text-align:center}
+.ueber{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.07em;font-weight:600;padding:6px 0}
+.herk{color:var(--mut)}
+.zb{display:flex;align-items:center;gap:7px;padding:3px 6px;border-radius:6px;cursor:pointer;border:1px solid transparent}
+.zb:hover{background:var(--hover)}.zb.ueber2{border-color:var(--akz);background:var(--akzb)}.zb.on{background:var(--akzb)}
+.kinder{margin-left:16px;border-left:1px dashed var(--lin2);padding-left:3px}
+.caret{width:14px;text-align:center;color:var(--dim)}
+.wurzel{margin-top:10px;padding:8px;border:1px dashed var(--lin2);border-radius:8px;color:var(--dim);text-align:center;font-size:12px}
+.wurzel.ueber2{border-color:var(--akz);color:var(--akz)}
+.baumtool{display:flex;gap:6px;padding:8px 0;flex-wrap:wrap}
+.gsvg{width:100%;height:calc(100% - 30px);min-height:380px;background:var(--pan);border:1px solid var(--lin);border-radius:10px;cursor:grab;margin-top:8px}
+.gsvg text{fill:var(--tx);font-size:10px;text-anchor:middle;pointer-events:none}
+.gsvg .k{stroke:var(--lin2);stroke-width:1}.gsvg .k.m{stroke:var(--akz);stroke-width:1.6}
+.gsvg g[data-act]{cursor:pointer}.gsvg g[data-act]:hover circle{stroke:#fff;stroke-width:2}
 
-/* Palette, Dialog, Vorschläge, Hinweis */
-#schleier{position:fixed;inset:0;background:rgba(10,14,25,.35);display:none;align-items:flex-start;justify-content:center;padding-top:14vh;z-index:20}
-#box{background:var(--pan);border:1px solid var(--lin);border-radius:14px;box-shadow:var(--sh);width:min(620px,94vw);max-height:70vh;overflow:auto;padding:10px}
-#box>input{width:100%;font-size:16px;border:none;border-bottom:1px solid var(--lin);border-radius:0;padding:8px 6px}
-.pz{display:flex;gap:9px;align-items:center;padding:7px 8px;border-radius:8px;cursor:pointer}
+/* Fragen */
+.fragen{display:flex;flex-direction:column;gap:10px;padding:12px}
+.frage{background:var(--pan);border:1px solid var(--lin);border-radius:10px;padding:11px 13px}
+.frage h4{margin:0 0 3px;font-size:13px}.frage p{margin:0 0 8px;color:var(--mut);font-size:12px}.frage input{width:100%}
+
+/* Inspektor */
+.ikopf{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--lin);position:sticky;top:0;background:var(--pan);z-index:2}
+.ikopf .sp{flex:1}
+.ibody{padding:14px 16px 40px}
+#titel{font-size:20px;font-weight:700;border-radius:6px;padding:2px 6px;margin:0 -6px;outline:none}
+#titel:hover{background:var(--hover)}#titel:focus{background:var(--raised);box-shadow:0 0 0 1px var(--akz)}
+.tchip{display:inline-flex;align-items:center;gap:6px;color:var(--mut);margin-top:2px}
+h3{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);font-weight:600;margin:22px 0 8px}
+.felder{display:grid;grid-template-columns:130px 1fr;gap:5px 10px;align-items:center}
+.felder label{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis}.pf{color:var(--warn)}
+.felder input,.felder select{width:100%;border-color:transparent;background:var(--raised)}
+.felder input:focus,.felder select:focus{border-color:var(--akz)}.felder .lk{border-color:#6b3037}
+.notiz{min-height:64px;padding:8px 10px;border-radius:8px;background:var(--raised);white-space:pre-wrap;cursor:text;line-height:1.55;border:1px solid transparent}
+.notiz:empty::before{content:attr(data-ph);color:var(--dim)}
+textarea.notiz{width:100%;resize:vertical;display:block;border-color:var(--akz)}
+.ref{color:var(--akz);background:var(--akzb);border-radius:4px;padding:0 4px;cursor:pointer}.ref.tot{color:var(--warn);background:none;text-decoration:underline dotted;cursor:default}
+.gruppe{margin:0 0 10px}.gl{font-size:12px;color:var(--mut);margin-bottom:4px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--raised);border:1px solid var(--lin);border-radius:7px;padding:2px 4px 2px 8px;cursor:pointer}
+.chip:hover{border-color:var(--akz)}.chip small{color:var(--dim)}
+.x{color:var(--dim);padding:0 5px;border-radius:4px}.x:hover{background:var(--lin2);color:var(--warn)}
+.attr{margin:4px 0 0 2px;font-size:12px;color:var(--mut)}.attr select{padding:1px 6px;font-size:12px}
+.addrel{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.addrel input{flex:1;min-width:120px}
+.karte{background:var(--bg);border:1px solid var(--lin);border-radius:10px;padding:6px}
+.karte svg text{fill:var(--tx);font-size:10px;text-anchor:middle;pointer-events:none}
+.karte svg .k{stroke:var(--lin2);stroke-width:1.2}.karte svg .k.m{stroke:var(--akz);stroke-width:1.5}
+.karte svg g[data-act]{cursor:pointer}.karte svg g[data-act]:hover circle{stroke:#fff;stroke-width:2}
+.tief{display:inline-flex;border:1px solid var(--lin);border-radius:6px;overflow:hidden;float:right;margin-top:-3px}
+.tief button{padding:0 9px;font-size:12px}.tief .on{background:var(--akzb)}
+.liste .r{display:flex;gap:8px;align-items:center;padding:4px 6px;border-radius:6px;cursor:pointer}.liste .r:hover{background:var(--hover)}
+.gefahr{color:var(--warn);font-size:12px;margin-top:26px}
+
+/* Dialog, Vorschläge, Hinweis */
+#schleier{position:fixed;inset:0;background:rgba(3,5,10,.6);display:none;align-items:flex-start;justify-content:center;padding-top:10vh;z-index:20}
+#box{background:var(--pan);border:1px solid var(--lin2);border-radius:14px;box-shadow:var(--sh);width:min(640px,94vw);max-height:80vh;overflow:auto;padding:10px}
+#box>input.gross{width:100%;font-size:15px;border:none;border-bottom:1px solid var(--lin);border-radius:0;padding:9px 6px;background:none;box-shadow:none}
+.pz{display:flex;gap:9px;align-items:center;padding:7px 9px;border-radius:7px;cursor:pointer}
 .pz.on,.pz:hover{background:var(--akzb)}.pz small{color:var(--mut);margin-left:auto}
-#sug{position:fixed;background:var(--pan);border:1px solid var(--lin);border-radius:10px;box-shadow:var(--sh);z-index:30;display:none;min-width:240px;padding:4px}
-#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:8px 14px;border-radius:9px;display:none;z-index:40;max-width:80vw}
-#toast.fehler{background:var(--warn);color:#fff}#toast button{margin-left:12px;text-decoration:underline}
-.dlg label{display:block;font-size:12px;color:var(--mut);margin:10px 0 3px}.dlg textarea{width:100%;min-height:180px;font-family:ui-monospace,monospace;font-size:13px}
+#sug{position:fixed;background:var(--pan);border:1px solid var(--lin2);border-radius:10px;box-shadow:var(--sh);z-index:30;display:none;min-width:240px;padding:4px}
+#pop{position:fixed;background:var(--pan);border:1px solid var(--lin2);border-radius:10px;box-shadow:var(--sh);z-index:25;display:none;padding:8px;min-width:230px;max-height:60vh;overflow:auto}
+#toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#2a3040;border:1px solid var(--lin2);padding:8px 14px;border-radius:9px;display:none;z-index:40;max-width:80vw;box-shadow:var(--sh)}
+#toast.fehler{background:#4a1f25;border-color:#7a3038}#toast button{margin-left:12px;color:var(--akz);text-decoration:underline}
+.dlg label.l{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:14px 0 5px}
+.dlg textarea{width:100%;min-height:170px;font-family:ui-monospace,monospace;font-size:12px}
 .zeile{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.btn{background:var(--akz);color:#fff;border-radius:8px;padding:6px 14px}
-.btn.zweit{background:var(--hover);color:var(--tx)}
+.cchips{display:flex;flex-wrap:wrap;gap:6px}
+.cc{border:1px solid var(--lin);border-radius:12px;padding:1px 10px;color:var(--mut)}.cc:hover{border-color:var(--lin2);color:var(--tx)}.cc.on{background:var(--akzb);border-color:#33407a;color:var(--tx)}
+.vorschau{margin-top:14px;padding:10px 12px;background:var(--raised);border-radius:8px;color:var(--mut)}.vorschau b{color:var(--tx);font-size:16px}
 </style>
 </head>
 <body>
-<nav id="side"></nav>
-<main id="haupt"></main>
+<header id="kopf"></header>
+<div id="app"><div id="spalten"></div><aside id="insp"></aside></div>
 <div id="schleier"><div id="box"></div></div>
-<div id="sug"></div>
-<div id="toast"></div>
+<div id="sug"></div><div id="pop"></div><div id="toast"></div>
 
 <script>
-/* ============ Zustand ============ */
+/* ================= Zustand ================= */
 let S = {knoten: [], kanten: [], modell: null};
-let M = new Map(), AUS = new Map(), EIN = new Map();
+let M = new Map(), NB = new Map();
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ls = {
   get: (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v } catch (e) { return d } },
   set: (k, v) => { try { localStorage.setItem(k, v) } catch (e) {} }
 };
-const zuAdd = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
+const enc = encodeURIComponent;
+const tgl = (arr, v) => { const i = arr.indexOf(v); i >= 0 ? arr.splice(i, 1) : arr.push(v); };
 function indexieren() {
-  M = new Map(S.knoten.map(k => [k.ref, k])); AUS = new Map(); EIN = new Map();
-  for (const e of S.kanten) { zuAdd(AUS, e.von, e); zuAdd(EIN, e.nach, e); }
+  M = new Map(S.knoten.map(k => [k.ref, k])); NB = new Map();
+  const add = (r, x) => { if (!NB.has(r)) NB.set(r, []); NB.get(r).push(x); };
+  for (const e of S.kanten) {
+    if (e.gerichtet) { add(e.von, {dir: 'aus', art: e.art, andere: e.nach, e}); add(e.nach, {dir: 'ein', art: e.art, andere: e.von, e}); }
+    else { add(e.von, {dir: 'un', art: e.art, andere: e.nach, e}); add(e.nach, {dir: 'un', art: e.art, andere: e.von, e}); }
+  }
 }
 const typenListe = () => S.modell ? Object.keys(S.modell.typen) : [...new Set(S.knoten.map(k => k.typ))].sort();
 const artenListe = () => S.modell ? S.modell.arten : [...new Set(S.kanten.map(k => k.art))].sort();
-const farbe = typ => `hsl(${(Math.max(0, typenListe().indexOf(typ)) * 47 + 215) % 360} 62% 52%)`;
+const farbe = typ => `hsl(${(Math.max(0, typenListe().indexOf(typ)) * 41 + 220) % 360} 68% 64%)`;
 const punkt = typ => `<i class="dot" style="background:${farbe(typ)}"></i>`;
 const nameVon = ref => (M.get(ref) || {name: ref}).name;
 const kf = art => (S.modell && S.modell.kantenfelder[art]) || [];
-const KIND_ZU_ELTERN = ['ist teil von', 'gehört zu', 'steht in'];
+const artRichtung = a => ['ist teil von', 'gehört zu', 'steht in'].includes(a.toLowerCase());
+const nbrs = ref => NB.get(ref) || [];
+const hatBez = ref => nbrs(ref).length > 0;
+const hatTyp = (ref, t) => nbrs(ref).some(n => (M.get(n.andere) || {}).typ === t);
+const modellTyp = typ => S.modell && S.modell.typen[typ];
 
-/* ============ Server ============ */
+/* ================= Server ================= */
 let tt;
 function toast(text, fehler, rueck) {
-  const t = $('toast');
-  t.className = fehler ? 'fehler' : ''; t.textContent = text;
+  const t = $('toast'); t.className = fehler ? 'fehler' : ''; t.textContent = text;
   if (rueck) { const b = document.createElement('button'); b.textContent = 'Rückgängig'; b.onclick = () => { t.style.display = 'none'; rueck(); }; t.appendChild(b); }
   t.style.display = 'block'; clearTimeout(tt); tt = setTimeout(() => t.style.display = 'none', rueck ? 7000 : 4500);
 }
@@ -140,42 +220,135 @@ async function api(aktion, daten) {
   const j = await r.json();
   if (!r.ok) { toast(j.fehler || 'Fehler', true); return null; }
   S = j.zustand; indexieren();
+  if (ir && !M.has(ir)) ir = null;
   if (j.hinweis) toast(j.hinweis);
   render();
   return j;
 }
 
-/* ============ Navigation ============ */
-const enc = encodeURIComponent;
-function route() {
-  const h = decodeURIComponent(location.hash.slice(1));
-  if (h.startsWith('o/')) return {v: 'o', ref: h.slice(2)};
-  if (h.startsWith('t/')) return {v: 't', typ: h.slice(2)};
-  if (h === 'baum') return {v: 'baum'};
-  return {v: 'start'};
-}
-const gehe = h => { if (location.hash === '#' + h) render(); else location.hash = h; };
-const oeffne = ref => gehe('o/' + enc(ref));
-window.addEventListener('hashchange', render);
-function zuletzt(ref) {
-  let l = []; try { l = JSON.parse(ls.get('zuletzt', '[]')); } catch (e) {}
-  ls.set('zuletzt', JSON.stringify([ref, ...l.filter(r => r !== ref)].slice(0, 12)));
-}
-const zuletztListe = () => { try { return JSON.parse(ls.get('zuletzt', '[]')).filter(r => M.has(r)); } catch (e) { return []; } };
+/* ================= Arbeitsfeld: Spalten ================= */
+const leer = () => ({typen: [], props: {}, mit: {}, rel: {}, text: '', luecke: 0, lose: 0});
+let pid = 1;
+const paneNeu = o => ({id: pid++, quelle: null, st: leer(), ansicht: 'tabelle', sel: null, sortSp: null, sortR: 1, zeilenMax: 200, cols: [],
+  fac: false, neu: false, baumArt: null, baumUmg: null, zuB: [], umF: [], mehrF: [], ...(o || {})});
+let W = {panes: [paneNeu()]};
+try { const g = JSON.parse(ls.get('arbeitsfeld', 'null')); if (g && g.panes && g.panes.length) { W = g; pid = Math.max(...W.panes.map(p => p.id)) + 1; } } catch (e) {}
+let fokusId = W.panes[0].id, ir = null, zeigeFragen = false;
+const paneById = id => W.panes.find(p => p.id === id);
+const paneVon = t => { const el = t.closest('.pane'); return el ? paneById(+el.dataset.pid) : paneById(fokusId); };
+const speichern = () => ls.set('arbeitsfeld', JSON.stringify(W, (k, v) => (k === 'ERG' || k === 'T' || k === 'basis' || k === 'cols_') ? undefined : v));
 
-/* ============ Vorschläge (Autocomplete) ============ */
+function pruefungen(st) {
+  const P = [];
+  if (st.typen.length) P.push({key: 'typ', f: k => st.typen.includes(k.typ)});
+  for (const [f, v] of Object.entries(st.props)) if (v.length) P.push({key: 'p:' + f, f: k => v.includes(k.felder[f] ?? '')});
+  for (const [t, v] of Object.entries(st.mit)) if (v) P.push({key: 'm:' + t, f: k => hatTyp(k.ref, t) === (v > 0)});
+  for (const [rk, v] of Object.entries(st.rel)) if (v.length) {
+    const [dir, art] = rk.split('|');
+    P.push({key: 'r:' + rk, f: k => { const ns = nbrs(k.ref).filter(n => n.dir === dir && n.art === art).map(n => n.andere); return v.some(x => x === '∅' ? !ns.length : ns.includes(x)); }});
+  }
+  if (st.text) { const q = st.text.toLowerCase(); P.push({key: 'text', f: k => k.name.toLowerCase().includes(q) || Object.values(k.felder).some(x => String(x).toLowerCase().includes(q)) || k.notiz.toLowerCase().includes(q)}); }
+  if (st.luecke) P.push({key: 'luecke', f: k => (k.fehlt.length > 0) === (st.luecke > 0)});
+  if (st.lose) P.push({key: 'lose', f: k => (!hatBez(k.ref)) === (st.lose > 0)});
+  return P;
+}
+function auswerten(st, basis) {
+  const U = basis ? basis.refs.map(r => M.get(r)).filter(Boolean) : S.knoten, P = pruefungen(st);
+  const info = U.map(k => ({k, f: P.filter(p => !p.f(k)).map(p => p.key)}));
+  return {U, treffer: info.filter(x => !x.f.length).map(x => x.k), el: key => info.filter(x => !x.f.length || (x.f.length === 1 && x.f[0] === key)).map(x => x.k)};
+}
+const zaehl = (liste, fn) => { const m = new Map(); for (const k of liste) { const v = fn(k); if (v !== undefined) m.set(v, (m.get(v) || 0) + 1); } return m; };
+const gefiltert = st => st.typen.length || Object.keys(st.props).length || Object.keys(st.mit).length || Object.keys(st.rel).length || st.text || st.luecke || st.lose;
+
+/* Weitergehen: von einer Menge zu Objekten (eines Typs) über mehrere Beziehungen */
+function erreichbar(quellen, o) {
+  const ziele = new Map();
+  for (const q of quellen) {
+    const gesehen = new Set([q]); let front = [q];
+    for (let d = 1; d <= o.tiefe && front.length; d++) {
+      const next = [];
+      for (const r of front) for (const n of nbrs(r)) {
+        if ((o.richtung === 'aus' && n.dir === 'ein') || (o.richtung === 'ein' && n.dir === 'aus')) continue;
+        if (o.arten && o.arten.length && !o.arten.includes(n.art)) continue;
+        if (gesehen.has(n.andere)) continue;
+        const k = M.get(n.andere); if (!k) continue;
+        gesehen.add(n.andere);
+        if (!o.typ || k.typ === o.typ) { if (!ziele.has(n.andere)) ziele.set(n.andere, new Set()); ziele.get(n.andere).add(q); if (o.typ) continue; }
+        next.push(n.andere);
+      }
+      front = next;
+    }
+  }
+  return ziele;
+}
+function pfad(quellen, q) {
+  if (q.tiefe === 0) return {refs: quellen.slice(), herkunft: {}};
+  const z = erreichbar(quellen, q), herkunft = {}; z.forEach((v, k) => herkunft[k] = [...v]);
+  return {refs: [...z.keys()], herkunft};
+}
+function quellenVon(q) {   // die Objekte, von denen aus eine Spalte weitergeht
+  if (q.kind === 'refs') return q.refs.filter(r => M.has(r));
+  const par = paneById(q.von); if (!par || !par.ERG) return [];
+  if (q.modus === 'alle') return par.ERG.treffer.map(k => k.ref);
+  return par.sel && par.ERG.treffer.some(k => k.ref === par.sel) ? [par.sel] : [];
+}
+function berechne() {
+  const fertig = new Set();
+  const f = p => {
+    if (fertig.has(p.id)) return; fertig.add(p.id);
+    const q = p.quelle; p.basis = null; p.wartet = false;
+    if (q) {
+      if (q.kind === 'pane') { const par = paneById(q.von); if (!par) { p.quelle = null; } else { f(par); const qs = quellenVon(q); p.wartet = !qs.length && q.modus !== 'alle'; p.basis = pfad(qs, q); } }
+      else p.basis = pfad(quellenVon(q), q);
+    }
+    p.ERG = auswerten(p.st, p.basis);
+    if (p.sel && !p.ERG.treffer.some(k => k.ref === p.sel)) p.sel = null;
+    sortiere(p);
+  };
+  W.panes.forEach(f);
+}
+function sortiere(p) {
+  const T = p.ERG.treffer.slice(), cols = spaltenFuer(p, T);
+  if (p.sortSp) { const c = p.sortSp === 'name' ? {get: k => k.name} : cols.find(c => c.key === p.sortSp); if (c) T.sort((a, b) => { const x = c.get(a), y = c.get(b); return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'de')) * p.sortR; }); }
+  else T.sort((a, b) => a.typ.localeCompare(b.typ) || a.name.localeCompare(b.name, 'de'));
+  p.T = T; p.cols_ = cols;
+}
+function spaltenFuer(p, T) {
+  const st = p.st, typen = [...new Set(T.map(k => k.typ))], cols = [];
+  if (typen.length !== 1) cols.push({key: 'typ', label: 'Typ', get: k => k.typ});
+  if (p.basis && p.quelle && p.quelle.tiefe > 0) cols.push({key: 'herk', label: 'über', cls: 'herk', get: k => { const h = p.basis.herkunft[k.ref] || []; return h.slice(0, 3).map(nameVon).join(', ') + (h.length > 3 ? ' +' + (h.length - 3) : ''); }});
+  let fk = p.cols.filter(x => x.startsWith('f:')).map(x => x.slice(2));
+  if (!fk.length && typen.length === 1) { const mt = modellTyp(typen[0]); if (mt) fk = mt.felder.filter(f => f.name !== mt.namefeld).sort((a, b) => b.pflicht - a.pflicht).slice(0, 3).map(f => f.name); }
+  fk.forEach(f => cols.push({key: 'f:' + f, label: f, get: k => k.felder[f] ?? ''}));
+  p.cols.filter(x => x.startsWith('r:')).forEach(x => { const [dir, art] = x.slice(2).split('|'); cols.push({key: x, label: (dir === 'ein' ? '← ' : '') + art + (dir === 'aus' ? ' →' : ''), get: k => { const ns = nbrs(k.ref).filter(n => n.dir === dir && n.art === art).map(n => nameVon(n.andere)); return ns.slice(0, 3).join(', ') + (ns.length > 3 ? ' +' + (ns.length - 3) : ''); }}); });
+  cols.push({key: '_n', label: 'Verkn.', get: k => nbrs(k.ref).length});
+  return cols;
+}
+
+/* ================= Auswahl und Inspektor-Verweis ================= */
+function zuletzt(ref) { let l = []; try { l = JSON.parse(ls.get('zuletzt', '[]')); } catch (e) {} ls.set('zuletzt', JSON.stringify([ref, ...l.filter(r => r !== ref)].slice(0, 12))); }
+const zuletztListe = () => { try { return JSON.parse(ls.get('zuletzt', '[]')).filter(r => M.has(r)); } catch (e) { return []; } };
+let irHist = [];
+function oeffneInsp(ref, ohneHist) {   // nur den Inspektor bewegen, nicht die Spalten
+  if (ref && ir && ref !== ir && !ohneHist) irHist.push(ir);
+  ir = ref; if (ref) zuletzt(ref); renderInspektor(); hashSetzen();
+}
+function waehleInPane(p, ref) {
+  p.sel = ref; fokusId = p.id; if (ref) { if (ir && ref !== ir) irHist.push(ir); ir = ref; zuletzt(ref); }
+  berechne(); renderSpalten(); renderInspektor(); hashSetzen(); speichern();
+}
+function hashSetzen() { const h = ir ? enc(ir) : ''; if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h); }
+function hashLesen() { const h = decodeURIComponent(location.hash.slice(1)); ir = h && M.has(h) ? h : null; }
+
+/* ================= Vorschläge ================= */
 const sug = {items: [], i: 0, pick: null};
 function sugZeige(anker, items, pick) {
-  const el = $('sug');
-  sug.items = items; sug.i = 0; sug.pick = pick;
+  const el = $('sug'); sug.items = items; sug.i = 0; sug.pick = pick;
   if (!items.length) { el.style.display = 'none'; return; }
   const r = anker.getBoundingClientRect();
-  el.style.left = r.left + 'px'; el.style.top = (r.bottom + 4) + 'px'; el.style.display = 'block';
-  sugMalen();
+  el.style.left = Math.min(r.left, innerWidth - 270) + 'px'; el.style.top = (r.bottom + 4) + 'px'; el.style.display = 'block'; sugMalen();
 }
-function sugMalen() {
-  $('sug').innerHTML = sug.items.map((k, i) => `<div class="pz${i === sug.i ? ' on' : ''}" data-sug="${i}">${punkt(k.typ)}<span>${esc(k.name)}</span><small>${esc(k.typ)}</small></div>`).join('');
-}
+const sugMalen = () => { $('sug').innerHTML = sug.items.map((k, i) => `<div class="pz${i === sug.i ? ' on' : ''}" data-sug="${i}">${punkt(k.typ)}<span>${esc(k.name)}</span><small>${esc(k.typ)}</small></div>`).join(''); };
 const sugZu = () => { $('sug').style.display = 'none'; sug.items = []; };
 function sugTaste(e) {
   if (!sug.items.length) return false;
@@ -186,19 +359,13 @@ function sugTaste(e) {
   else return false;
   e.preventDefault(); return true;
 }
-$('sug').addEventListener('mousedown', e => {
-  const z = e.target.closest('[data-sug]'); if (!z) return;
-  e.preventDefault(); const k = sug.items[+z.dataset.sug], f = sug.pick; sugZu(); f(k);
-});
-function treffer(q, ausser, n = 8) {
-  q = q.trim().toLowerCase();
-  if (!q) return [];
-  return S.knoten.filter(k => k.ref !== ausser && k.name.toLowerCase().includes(q))
+$('sug').addEventListener('mousedown', e => { const z = e.target.closest('[data-sug]'); if (!z) return; e.preventDefault(); const k = sug.items[+z.dataset.sug], f = sug.pick; sugZu(); f(k); });
+function treffer(q, ausser, n = 8, typ = null) {
+  q = q.trim().toLowerCase(); if (!q) return [];
+  return S.knoten.filter(k => k.ref !== ausser && (!typ || k.typ === typ) && k.name.toLowerCase().includes(q))
     .sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.localeCompare(b.name, 'de')).slice(0, n);
 }
-
-/* ============ Hilfen für Verknüpfungen ============ */
-// Was wurde zwischen diesen beiden Typen bisher benutzt? Häufigstes gewinnt; sonst die letzte Wahl.
+const findeNachName = name => S.knoten.find(k => k.name.toLowerCase() === name.trim().toLowerCase());
 function vorhersage(typA, typB) {
   const z = new Map();
   for (const e of S.kanten) {
@@ -210,184 +377,345 @@ function vorhersage(typA, typB) {
   if (best) { const [dir, art] = best[0].split('|'); return {art, dir}; }
   try { return JSON.parse(ls.get('paar:' + typA + '>' + typB, 'null')); } catch (e) { return null; }
 }
-const artRichtung = art => KIND_ZU_ELTERN.includes(art.toLowerCase());
 
-/* ============ Notiz mit [[Verweisen]] ============ */
-const findeNachName = name => S.knoten.find(k => k.name.toLowerCase() === name.trim().toLowerCase());
+/* ================= Kopf ================= */
+function renderKopf() {
+  const a = ansichten();
+  $('kopf').innerHTML = `<div class="marke"><i></i>Graph</div>
+    <button class="suchknopf" data-act="palette">⌕ <span>Objekt suchen oder anlegen …</span><kbd>Strg K</kbd></button>
+    <button class="ghost" data-act="fragen">Fragen</button>
+    <button class="ghost" data-act="ansichten">★ Ansichten${a.length ? ` <span class="badge">${a.length}</span>` : ''}</button>
+    <button class="ghost" data-act="spalte_frei" title="Neue freie Spalte mit allen Objekten">＋ Spalte</button>
+    <button class="ghost" data-act="menue">⋯</button>`;
+}
+
+/* ================= Facetten (je Spalte) ================= */
+const fzRow = (act, k, v, label, n, on, max, punktHtml) =>
+  `<div class="fz${on ? ' on' : ''}${n === 0 && !on ? ' null' : ''}" data-act="${act}" data-k="${esc(k)}" data-v="${esc(v)}"><span class="cb"></span>${punktHtml || ''}<span class="fl" title="${esc(label)}">${esc(label)}</span><span class="fbar" style="width:${max ? Math.round(100 * n / max) : 0}%"></span><span class="fn">${n}</span></div>`;
+function facette(p, key, titel, inhalt, aktivN, offenStd) {
+  const offen = offenStd !== p.umF.includes(key);
+  return `<div class="fg"><button class="fh" data-act="fklapp" data-k="${esc(key)}"><span class="car">${offen ? '▾' : '▸'}</span>${titel}${aktivN ? `<span class="badge">${aktivN}</span>` : ''}</button>${offen ? `<div class="fb2">${inhalt}</div>` : ''}</div>`;
+}
+function zeilenListe(p, key, rows) {
+  rows.sort((a, b) => (b.on - a.on) || (b.n - a.n));
+  const mehr = p.mehrF.includes(key), grenze = mehr ? 80 : 8, sichtbar = rows.slice(0, grenze);
+  return (sichtbar.map(r => r.html).join('') || '<div class="fhint">Keine Werte.</div>')
+    + (rows.length > grenze ? `<button class="mehr" data-act="fmehr" data-k="${esc(key)}">＋ ${rows.length - grenze} weitere</button>` : '')
+    + (mehr && rows.length > 8 ? `<button class="mehr" data-act="fmehr" data-k="${esc(key)}">weniger</button>` : '');
+}
+function pillZeile(k, label, nJa, nNein, aktiv, jaText, neinText) {
+  const pl = (v, t, n, neg) => `<button class="pill${aktiv === v ? ' on' : ''}${neg ? ' neg' : ''}${n === 0 && aktiv !== v ? ' null' : ''}" data-act="pill" data-k="${esc(k)}" data-v="${v}">${t} ${n}</button>`;
+  return `<div class="pill-zeile"><span class="fl" title="${esc(label)}">${esc(label)}</span>${pl(1, jaText, nJa, false)}${pl(-1, neinText, nNein, true)}</div>`;
+}
+function facettenHtml(p) {
+  const st = p.st, A = p.ERG, out = [], maxN = m => Math.max(1, ...m.values());
+  const typenInU = [...new Set(A.U.map(k => k.typ))], cT = zaehl(A.el('typ'), k => k.typ), mT = maxN(cT);
+  out.push(facette(p, 'typ', 'Typ', zeilenListe(p, 'typ', typenInU.map(t => ({n: cT.get(t) || 0, on: st.typen.includes(t), html: fzRow('fw', 'typ', t, t, cT.get(t) || 0, st.typen.includes(t), mT, punkt(t))}))), st.typen.length, true));
+  const felder = [];
+  for (const t of st.typen) { const mt = modellTyp(t); if (mt) for (const f of mt.felder) if (f.optionen) felder.push({typ: t, ...f}); }
+  for (const f of felder) {
+    const key = 'p:' + f.name, c = zaehl(A.el(key).filter(k => k.typ === f.typ), k => k.felder[f.name] ?? ''), a = st.props[f.name] || [], mx = maxN(c);
+    const werte = [...f.optionen, ...(c.get('') ? [''] : [])];
+    out.push(facette(p, key, esc(f.name), zeilenListe(p, key, werte.map(v => ({n: c.get(v) || 0, on: a.includes(v), html: fzRow('fw', key, v, v === '' ? '(leer)' : v, c.get(v) || 0, a.includes(v), mx)}))), a.length, true));
+  }
+  if (!st.typen.length) out.push('<div class="fhint" style="padding-top:8px">Typ wählen, um nach Eigenschaften zu filtern.</div>');
+  const cl = zaehl(A.el('luecke'), k => k.fehlt.length > 0), cb = zaehl(A.el('lose'), k => hatBez(k.ref));
+  out.push(facette(p, 'qual', 'Datenqualität',
+    (S.modell ? pillZeile('luecke', 'Pflichtfelder', cl.get(false) || 0, cl.get(true) || 0, st.luecke, 'komplett', 'Lücke') : '')
+    + pillZeile('lose', 'Verknüpfungen', cb.get(true) || 0, cb.get(false) || 0, st.lose, 'mit', 'ohne'), (st.luecke ? 1 : 0) + (st.lose ? 1 : 0), false));
+  const mitRows = typenListe().map(t => { const c = zaehl(A.el('m:' + t), k => hatTyp(k.ref, t)); return {t, ja: c.get(true) || 0, nein: c.get(false) || 0}; }).filter(r => r.ja || st.mit[r.t]);
+  out.push(facette(p, 'mit', 'Verknüpft mit Typ', mitRows.map(r => pillZeile('m:' + r.t, r.t, r.ja, r.nein, st.mit[r.t] || 0, 'mit', 'ohne')).join('') || '<div class="fhint">Noch keine Verknüpfungen.</div>', Object.values(st.mit).filter(Boolean).length, false));
+  const combos = new Map();
+  for (const k of A.treffer) { const g = new Set(); for (const n of nbrs(k.ref)) { const rk = n.dir + '|' + n.art; if (!g.has(rk)) { g.add(rk); combos.set(rk, (combos.get(rk) || 0) + 1); } } }
+  for (const rk of Object.keys(st.rel)) if (!combos.has(rk)) combos.set(rk, 0);
+  [...combos.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14).forEach(([rk]) => {
+    const [dir, art] = rk.split('|'), key = 'r:' + rk, a = st.rel[rk] || [], c = new Map(); let keine = 0;
+    for (const k of A.el(key)) { const ns = [...new Set(nbrs(k.ref).filter(n => n.dir === dir && n.art === art).map(n => n.andere))]; if (!ns.length) keine++; ns.forEach(r => c.set(r, (c.get(r) || 0) + 1)); }
+    const mx = maxN(c), rows = [...c.entries()].filter(([r]) => M.has(r)).map(([r, n]) => ({n, on: a.includes(r), html: fzRow('fw', key, r, nameVon(r), n, a.includes(r), mx, punkt(M.get(r).typ))}));
+    for (const r of a) if (r !== '∅' && !c.has(r) && M.has(r)) rows.push({n: 0, on: true, html: fzRow('fw', key, r, nameVon(r), 0, true, mx, punkt(M.get(r).typ))});
+    const kz = `<div class="fz${a.includes('∅') ? ' on' : ''}${!keine && !a.includes('∅') ? ' null' : ''}" data-act="fw" data-k="${esc(key)}" data-v="∅"><span class="cb"></span><span class="fl"><i>keine</i></span><span class="fn">${keine}</span></div>`;
+    out.push(facette(p, key, dir === 'aus' ? `${esc(art)} →` : dir === 'ein' ? `← ${esc(art)}` : `— ${esc(art)}`, kz + zeilenListe(p, key, rows), a.length, a.length > 0));
+  });
+  return `<div class="fkopf"><input class="ftxt" id="ftxt_${p.id}" placeholder="Im Ergebnis suchen …" value="${esc(st.text)}" autocomplete="off"></div>${out.join('')}`;
+}
+function filterChips(p) {
+  const st = p.st, c = [];
+  const chip = (txt, act, k, v, neg) => c.push(`<span class="fchip${neg ? ' neg' : ''}">${txt}<button data-act="${act}" data-k="${esc(k)}" data-v="${esc(v)}" title="Entfernen">×</button></span>`);
+  st.typen.forEach(t => chip(`${punkt(t)} ${esc(t)}`, 'fw', 'typ', t));
+  for (const [f, v] of Object.entries(st.props)) v.forEach(x => chip(`${esc(f)} = ${esc(x === '' ? '(leer)' : x)}`, 'fw', 'p:' + f, x));
+  for (const [t, v] of Object.entries(st.mit)) if (v) chip(`${v > 0 ? 'mit' : 'ohne'} ${esc(t)}`, 'pill', 'm:' + t, v, v < 0);
+  for (const [rk, v] of Object.entries(st.rel)) { const [dir, art] = rk.split('|'); v.forEach(x => chip(`${dir === 'ein' ? '← ' : ''}${esc(art)}${dir === 'aus' ? ' →' : ''} ${x === '∅' ? '<i>keine</i>' : esc(nameVon(x))}`, 'fw', 'r:' + rk, x, x === '∅')); }
+  if (st.luecke) chip(st.luecke > 0 ? 'Pflichtfelder komplett' : 'Pflichtfeld-Lücke', 'pill', 'luecke', st.luecke, st.luecke < 0);
+  if (st.lose) chip(st.lose > 0 ? 'mit Verknüpfung' : 'ohne Verknüpfung', 'pill', 'lose', st.lose, st.lose < 0);
+  if (st.text) chip(`„${esc(st.text)}“`, 'text', '', '');
+  return c.join('');
+}
+
+/* ================= Spalten zeichnen ================= */
+function paneTitel(p) {
+  const q = p.quelle;
+  if (!q) return {t: 'Alle Objekte', s: 'freie Spalte', typ: null};
+  const art = q.arten && q.arten.length ? ' · ' + q.arten.join(' / ') : '';
+  if (q.kind === 'refs') return q.tiefe === 0 ? {t: q.label, s: 'Start', typ: null} : {t: q.typ || 'Objekte', s: `≤ ${q.tiefe} Schritte von „${q.label}“${art}`, typ: q.typ};
+  const par = paneById(q.von);
+  return {t: q.typ || 'Objekte', s: `${q.modus === 'alle' ? 'alle Treffer' : 'Auswahl'} aus „${par ? paneTitel(par).t : '?'}“ · ≤ ${q.tiefe}${art}`, typ: q.typ};
+}
+function ansichtBreite(p) { return (p.ansicht === 'tabelle' ? 600 : p.ansicht === 'graph' ? 560 : 400) + (p.fac ? 252 : 0); }
+function renderPane(p) {
+  const A = p.ERG, T = p.T, ti = paneTitel(p), st_ = p.st;
+  const aktiv = st_.typen.length + Object.values(st_.props).reduce((n, v) => n + v.length, 0) + Object.values(st_.mit).filter(Boolean).length + Object.values(st_.rel).reduce((n, v) => n + v.length, 0) + (st_.text ? 1 : 0) + (st_.luecke ? 1 : 0) + (st_.lose ? 1 : 0);
+  const ansichtBtn = (v, t) => `<button class="${p.ansicht === v ? 'on' : ''}" data-act="ans" data-v="${v}">${t}</button>`;
+  let inhalt;
+  if (p.wartet) inhalt = `<div class="leer">Links in „${esc(paneTitel(paneById(p.quelle.von)).t)}“ ein Objekt wählen.<br><br><button class="btn zweit klein" data-act="modus_alle">Stattdessen alle Treffer verwenden</button></div>`;
+  else if (!S.knoten.length) inhalt = `<div class="leer">Noch nichts erfasst.<br><br><button class="btn" data-act="neu">＋ Erstes Objekt anlegen</button> &nbsp; <button class="btn zweit" data-act="import">Liste einfügen</button></div>`;
+  else if (!T.length) inhalt = '<div class="leer">Keine Treffer.' + (gefiltert(p.st) ? '<br>Filter lockern.' : '') + '</div>';
+  else if (p.ansicht === 'liste') inhalt = listeHtml(p);
+  else if (p.ansicht === 'baum') inhalt = baumHtml(p);
+  else if (p.ansicht === 'graph') inhalt = graphHtml(p);
+  else inhalt = tabelleHtml(p);
+  const neu = p.neu ? neuZeile(p) : '';
+  return `<div class="pane${p.id === fokusId ? ' fokus' : ''}" data-pid="${p.id}" style="width:${ansichtBreite(p)}px">
+    <div class="phead">
+      <div class="p1"><div class="ptitel">${ti.typ ? punkt(ti.typ) : ''}<b title="${esc(ti.t)}">${esc(ti.t)}</b><span class="pn">${T.length}</span></div>
+        ${p.quelle ? '<button class="ghost" data-act="quelle_bearb" title="Quelle ändern">⚙</button>' : ''}<button class="ghost" data-act="pmenue" title="Mehr">⋯</button><button class="ghost" data-act="pclose" title="Spalte schließen">✕</button></div>
+      <div class="psub" title="${esc(ti.s)}">${esc(ti.s)}</div>
+      <div class="p2"><div class="seg">${ansichtBtn('tabelle', 'Tabelle')}${ansichtBtn('liste', 'Liste')}${ansichtBtn('baum', 'Baum')}${ansichtBtn('graph', 'Graph')}</div><span class="sp"></span>
+        <button class="ghost" data-act="fac">Filter${aktiv ? ` <span class="badge">${aktiv}</span>` : ''}</button><button class="ghost" data-act="neu" title="Im Kontext der Filter anlegen">＋</button><button class="btn zweit klein" data-act="weiter">Weiter →</button></div>
+    </div>
+    ${gefiltert(p.st) ? `<div class="pchips">${filterChips(p)}<button class="ghost" data-act="pzurueck" style="padding:0 6px">alle löschen</button></div>` : ''}
+    <div class="pbody">${p.fac ? `<div class="pfac" data-scroll="fac">${facettenHtml(p)}</div>` : ''}<div class="pres" data-scroll="res">${neu}${inhalt}</div></div></div>`;
+}
+function neuZeile(p) {
+  const k = kontext(p), typen = typenListe();
+  const hint = [k.typ, ...Object.entries(k.felder).map(([f, v]) => `${f} = ${v}`), ...k.ver.map(v => `${v.richtung === 'ein' ? '← ' : ''}${v.art}${v.richtung === 'aus' ? ' →' : ''} ${nameVon(v.ziel)}`)].filter(Boolean);
+  return `<div class="neuzeile"><select id="neutyp_${p.id}">${typen.map(t => `<option${t === (k.typ || (p.quelle && p.quelle.typ) || ls.get('neutyp', '')) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select><input id="neuname_${p.id}" placeholder="Name + Enter — bleibt für das nächste offen" autocomplete="off"></div>
+    <div class="neuhinweis">${hint.length ? 'Im Kontext: ' + hint.map(esc).join(' · ') : 'Kein Filterkontext – nur Typ und Name.'}</div>`;
+}
+function kontext(p) {   // Filter, die genau einen Wert festlegen, gelten auch fürs Anlegen
+  const st = p.st, typ = st.typen.length === 1 ? st.typen[0] : null, felder = {}, ver = [], mt = typ && modellTyp(typ);
+  if (mt) for (const [f, v] of Object.entries(st.props)) if (v.length === 1 && v[0] !== '' && mt.felder.some(x => x.name === f)) felder[f] = v[0];
+  for (const [rk, v] of Object.entries(st.rel)) if (v.length === 1 && v[0] !== '∅' && M.has(v[0])) { const [dir, art] = rk.split('|'); ver.push({ziel: v[0], art, richtung: dir === 'ein' ? 'ein' : dir === 'un' ? 'ungerichtet' : 'aus'}); }
+  return {typ, felder, ver};
+}
+function tabelleHtml(p) {
+  const T = p.T, cols = p.cols_;
+  const pf = c => p.sortSp === c ? (p.sortR > 0 ? ' ▴' : ' ▾') : '';
+  return `<table><thead><tr><th data-act="sort" data-sp="name">Name${pf('name')}</th>${cols.map(c => `<th data-act="sort" data-sp="${esc(c.key)}">${esc(c.label)}${pf(c.key)}</th>`).join('')}<th></th></tr></thead><tbody>${
+    T.slice(0, p.zeilenMax).map(k => `<tr class="z${k.ref === p.sel ? ' on' : ''}" data-act="sel" data-sel="${esc(k.ref)}"><td class="nm">${punkt(k.typ)}${esc(k.name)}</td>${cols.map(c => `<td class="${c.cls || ''}">${esc(c.get(k))}</td>`).join('')}<td>${k.fehlt && k.fehlt.length ? `<span class="luecke" title="Fehlt: ${esc(k.fehlt.join(', '))}">!</span>` : ''}</td></tr>`).join('')}</tbody></table>
+    ${T.length > p.zeilenMax ? `<div style="padding:12px"><button class="btn zweit" data-act="mehrzeilen">${T.length - p.zeilenMax} weitere anzeigen</button></div>` : ''}`;
+}
+function listeHtml(p) {
+  const T = p.T.slice(0, p.zeilenMax), typen = [...new Set(T.map(k => k.typ))];
+  const zeile = k => {
+    const f = Object.entries(k.felder).slice(0, 2).map(([a, b]) => b).join(' · '), h = p.basis && p.quelle && p.quelle.tiefe > 0 ? (p.basis.herkunft[k.ref] || []).slice(0, 2).map(nameVon).join(', ') : '';
+    return `<div class="li${k.ref === p.sel ? ' on' : ''}" data-act="sel" data-sel="${esc(k.ref)}">${punkt(k.typ)}<div class="t"><b>${esc(k.name)}</b><small>${esc([k.typ, f, h ? 'über ' + h : ''].filter(Boolean).join(' · '))}</small></div>${k.fehlt && k.fehlt.length ? `<span class="luecke" title="Fehlt: ${esc(k.fehlt.join(', '))}">!</span>` : ''}</div>`;
+  };
+  return (typen.length > 1 ? typen.map(t => `<div class="gk">${esc(t)}</div>` + T.filter(k => k.typ === t).map(zeile).join('')).join('') : T.map(zeile).join(''))
+    + (p.T.length > p.zeilenMax ? `<div style="padding:12px"><button class="btn zweit" data-act="mehrzeilen">${p.T.length - p.zeilenMax} weitere anzeigen</button></div>` : '');
+}
+/* Baum: Hierarchie innerhalb der Treffer, nach einer Beziehungsart */
+function baumHtml(p) {
+  const set = new Set(p.T.map(k => k.ref)), zaehler = new Map();
+  for (const e of S.kanten) if (e.gerichtet && set.has(e.von) && set.has(e.nach)) zaehler.set(e.art, (zaehler.get(e.art) || 0) + 1);
+  const arten = [...zaehler.entries()].sort((a, b) => b[1] - a[1]).map(x => x[0]);
+  if (!arten.length) return '<div class="leer">Zwischen diesen Objekten gibt es keine gerichtete Beziehung.<br>Für eine Hierarchie die Treffer so wählen, dass mehrere Ebenen drin sind (Filter leeren, oder „Weiter →“ mit Tiefe 2+ ohne Typ).</div>';
+  if (!p.baumArt || !arten.includes(p.baumArt)) p.baumArt = arten[0];
+  const u = p.baumUmg !== null ? p.baumUmg : artRichtung(p.baumArt);
+  const kids = ref => S.kanten.filter(e => e.gerichtet && e.art === p.baumArt && set.has(e.von) && set.has(e.nach) && (u ? e.nach : e.von) === ref).map(e => ({id: e.id, nach: u ? e.von : e.nach}));
+  const istKind = ref => S.kanten.some(e => e.gerichtet && e.art === p.baumArt && set.has(e.von) && set.has(e.nach) && (u ? e.von : e.nach) === ref);
+  const wurzeln = p.T.filter(k => !istKind(k.ref));
+  const zeichne = (k, kante, pf) => {
+    const ks = kids(k.ref), zu = p.zuB.includes(k.ref);
+    let h = `<div class="zb${k.ref === p.sel ? ' on' : ''}" draggable="true" data-drag="${esc(JSON.stringify({ref: k.ref, kante}))}" data-ziel="${esc(k.ref)}" data-act="sel" data-sel="${esc(k.ref)}"><span class="caret" data-act="klapp" data-ref="${esc(k.ref)}">${ks.length ? (zu ? '▸' : '▾') : ''}</span>${punkt(k.typ)}<span>${esc(k.name)}</span><small class="dim">${esc(k.typ)}</small>${ks.length ? `<small class="dim" style="margin-left:auto">${ks.length}</small>` : ''}</div>`;
+    if (ks.length && !zu && !pf.includes(k.ref)) h += `<div class="kinder">${ks.sort((a, b) => nameVon(a.nach).localeCompare(nameVon(b.nach), 'de')).map(e => zeichne(M.get(e.nach), e.id, [...pf, k.ref])).join('')}</div>`;
+    return h;
+  };
+  return `<div class="baumtool"><select class="pbart">${arten.map(a => `<option${a === p.baumArt ? ' selected' : ''}>${esc(a)} (${zaehler.get(a)})</option>`).join('')}</select>
+    <select class="pbumg"><option value="0"${!u ? ' selected' : ''}>A → B: B darunter</option><option value="1"${u ? ' selected' : ''}>A → B: A darunter</option></select></div>
+    ${wurzeln.slice(0, 400).map(w => zeichne(w, null, [])).join('')}
+    <div class="wurzel" data-ziel="__wurzel">hierher ziehen = aus dem Baum lösen · Ziehen auf ein Objekt = darunterhängen (Strg/Alt: zusätzlich)</div>`;
+}
+/* Graph der Treffer */
+const gCache = new Map(), gView = {};
+function layoutKraft(ids, kanten) {
+  const n = ids.length, Wd = 1000, H = 700, pos = new Map();
+  ids.forEach((r, i) => { const w = 2 * Math.PI * i / n; pos.set(r, [Wd / 2 + 280 * Math.cos(w) + (i % 7), H / 2 + 200 * Math.sin(w) + (i % 5)]); });
+  const kk = Math.sqrt(Wd * H / Math.max(1, n)) * 0.8; let t = Wd / 8;
+  for (let it = 0; it < 160; it++) {
+    const d = new Map(ids.map(r => [r, [0, 0]]));
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const a = pos.get(ids[i]), b = pos.get(ids[j]); let dx = a[0] - b[0], dy = a[1] - b[1]; const l = Math.hypot(dx, dy) || 0.01, f = kk * kk / l; dx = dx / l * f; dy = dy / l * f;
+      d.get(ids[i])[0] += dx; d.get(ids[i])[1] += dy; d.get(ids[j])[0] -= dx; d.get(ids[j])[1] -= dy;
+    }
+    for (const [u, v] of kanten) { const a = pos.get(u), b = pos.get(v); let dx = a[0] - b[0], dy = a[1] - b[1]; const l = Math.hypot(dx, dy) || 0.01, f = l * l / kk; dx = dx / l * f; dy = dy / l * f; d.get(u)[0] -= dx; d.get(u)[1] -= dy; d.get(v)[0] += dx; d.get(v)[1] += dy; }
+    for (const r of ids) { const q = pos.get(r), v = d.get(r); q[0] += (Wd / 2 - q[0]) * 0.01; q[1] += (H / 2 - q[1]) * 0.01; const l = Math.hypot(v[0], v[1]) || 0.01, m = Math.min(l, t); q[0] = Math.max(30, Math.min(Wd - 30, q[0] + v[0] / l * m)); q[1] = Math.max(30, Math.min(H - 30, q[1] + v[1] / l * m)); }
+    t *= 0.97;
+  }
+  return pos;
+}
+function graphHtml(p) {
+  const T = p.T; if (T.length > 250) return `<div class="leer">${T.length} Objekte sind für den Graph zu viele. Erst filtern (unter 250).</div>`;
+  const ids = T.map(k => k.ref), set = new Set(ids), kanten = S.kanten.filter(e => set.has(e.von) && set.has(e.nach)), key = ids.join('|') + '#' + kanten.length;
+  if (!gCache.has(key)) { if (gCache.size > 12) gCache.clear(); gCache.set(key, layoutKraft(ids, kanten.map(e => [e.von, e.nach]))); }
+  const pos = gCache.get(key), beschr = ids.length <= 70;
+  const li = kanten.map(e => { const [x1, y1] = pos.get(e.von), [x2, y2] = pos.get(e.nach); return `<line class="k${e.von === p.sel || e.nach === p.sel ? ' m' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"><title>${esc(nameVon(e.von))} ${esc(e.art)} ${esc(nameVon(e.nach))}</title></line>`; }).join('');
+  const kn = ids.map(r => { const [x, y] = pos.get(r), k = M.get(r), s = r === p.sel; return `<g data-act="sel" data-sel="${esc(r)}"><circle cx="${x}" cy="${y}" r="${s ? 10 : 7}" fill="${farbe(k.typ)}"${s ? ' stroke="#fff" stroke-width="2"' : ''}/>${beschr || s ? `<text x="${x}" y="${y + 20}">${esc(k.name.length > 20 ? k.name.slice(0, 19) + '…' : k.name)}</text>` : ''}<title>${esc(k.name)} · ${esc(k.typ)}</title></g>`; }).join('');
+  const iso = ids.filter(r => !kanten.some(e => e.von === r || e.nach === r)).length;
+  return `<svg class="gsvg" data-gpid="${p.id}" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"><g class="gz">${li}${kn}</g></svg><div class="dim" style="padding:6px 2px;font-size:12px">Mausrad = zoomen, ziehen = verschieben.${iso ? ` ${iso} ohne Verbindung untereinander.` : ''}</div>`;
+}
+function graphAn() {
+  document.querySelectorAll('.gsvg').forEach(svg => {
+    const id = svg.dataset.gpid, g = svg.querySelector('.gz'); gView[id] = gView[id] || {x: 0, y: 0, s: 1};
+    const v = gView[id], apply = () => g.setAttribute('transform', `translate(${v.x} ${v.y}) scale(${v.s})`); apply();
+    svg.addEventListener('wheel', e => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15, r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * 1000, py = (e.clientY - r.top) / r.height * 700; v.x = px - (px - v.x) * f; v.y = py - (py - v.y) * f; v.s *= f; apply(); }, {passive: false});
+    let drag = null;
+    svg.addEventListener('mousedown', e => { if (!e.target.closest('g[data-act]')) drag = [e.clientX, e.clientY, v.x, v.y]; });
+    window.addEventListener('mousemove', e => { if (!drag) return; const r = svg.getBoundingClientRect(); v.x = drag[2] + (e.clientX - drag[0]) / r.width * 1000; v.y = drag[3] + (e.clientY - drag[1]) / r.height * 700; apply(); });
+    window.addEventListener('mouseup', () => drag = null);
+  });
+}
+/* Fragen: typische Auswertungen als vorgebaute Spaltenkette */
+const FRAGEN = [
+  {id: 'f1', titel: 'Parameter eines Prozesses', text: 'Alle CPPs und PPs, die im Prozess vorkommen.', start: 'Prozess', pfad: [{typ: 'Parameter', tiefe: 3}]},
+  {id: 'f2', titel: 'CPPs eines Prozesses – und wer sie kontrolliert', text: 'Critical Process Parameters, daneben die Equipments dazu. CPP anklicken: nur dessen Equipment.', start: 'Prozess', pfad: [{typ: 'Parameter', tiefe: 3, props: {ParameterClass: ['CPP']}}, {typ: 'Equipment', tiefe: 2, modus: 'auswahl'}]},
+  {id: 'f3', titel: 'Materialien in einem Prozess', text: 'Input und Output über alle Prozessschritte.', start: 'Prozess', pfad: [{typ: 'Material', tiefe: 3}]},
+  {id: 'f4', titel: 'Wo wird ein Material verwendet?', text: 'Von Material zu den Prozessen (Impact).', start: 'Material', pfad: [{typ: 'Prozess', tiefe: 4}]},
+  {id: 'f5', titel: 'Welche Prozesse hängen an einem Equipment?', text: 'Auswirkung einer Änderung oder eines Ausfalls.', start: 'Equipment', pfad: [{typ: 'Prozess', tiefe: 4}]},
+  {id: 'f6', titel: 'Dokumente zu einem Objekt', text: 'Alles, was dazu definiert, validiert oder beschrieben ist.', start: null, pfad: [{typ: 'Dokument', tiefe: 2}]},
+  {id: 'f7', titel: 'Equipments in einem Raum', text: 'Was steht dort, mit Kategorie und GXP.', start: 'Raum', pfad: [{typ: 'Equipment', tiefe: 2}]},
+  {id: 'f8', titel: 'Software eines Equipments', text: 'Welche Software steuert oder unterstützt es.', start: 'Equipment', pfad: [{typ: 'Software', tiefe: 2}]},
+];
+function fragenHtml() {
+  return `<div class="fragen"><div class="ueber">Typische Fragen — Objekt wählen, die Spalten werden aufgebaut</div>${FRAGEN.map(f => `<div class="frage"><h4>${esc(f.titel)}</h4><p>${esc(f.text)}</p><input data-frage="${f.id}" placeholder="${f.start ? esc(f.start) + ' wählen …' : 'Objekt wählen …'}" autocomplete="off"></div>`).join('')}</div>`;
+}
+function frageStarten(f, ref) {
+  const k = M.get(ref), panes = [paneNeu({quelle: {kind: 'refs', refs: [ref], label: k.name, typ: null, tiefe: 0, arten: null, richtung: 'beide'}, ansicht: 'liste'})];
+  panes[0].sel = ref;
+  for (const s of f.pfad) {
+    const vor = panes[panes.length - 1], st = leer(); if (s.props) st.props = JSON.parse(JSON.stringify(s.props));
+    panes.push(paneNeu({quelle: {kind: 'pane', von: vor.id, modus: s.modus || 'alle', typ: s.typ, tiefe: s.tiefe, arten: null, richtung: 'beide'}, st, fac: false}));
+  }
+  W = {panes}; fokusId = panes[panes.length - 1].id; ir = ref; zeigeFragen = false; zuMachen(); berechne(); render();
+}
+
+/* ================= Weiter-Dialog ================= */
+let GZ = null;
+const gzQuellen = () => GZ.quelle.kind === 'refs' ? GZ.quelle.refs : quellenVon({kind: 'pane', von: GZ.quelle.von, modus: GZ.quelle.modus});
+const gzVorschau = () => erreichbar(gzQuellen(), GZ.quelle);
+function weiterDialog(von, edit) {
+  const q = edit ? JSON.parse(JSON.stringify(edit.quelle)) : (von.refs ? {kind: 'refs', refs: von.refs, label: von.label} : {kind: 'pane', von: von.id, modus: von.sel ? 'auswahl' : 'alle'});
+  Object.assign(q, {typ: q.typ || '', tiefe: q.tiefe || 2, arten: q.arten || null, richtung: q.richtung || 'beide'});
+  if (q.tiefe === 0) q.tiefe = 2;
+  GZ = {quelle: q, editId: edit ? edit.id : null, nach: von && von.id ? von.id : null};
+  $('schleier').style.display = 'flex'; gzMalen();
+}
+function gzMalen() {
+  const q = GZ.quelle, quellen = gzQuellen(), vor = gzVorschau(), alleArten = [...new Set(S.kanten.map(e => e.art))].sort();
+  const vorschlaege = typenListe().map(t => { for (let d = 1; d <= 3; d++) if (erreichbar(quellen, {typ: t, tiefe: d, arten: null, richtung: 'beide'}).size) return {t, d, n: erreichbar(quellen, {typ: t, tiefe: 3, arten: null, richtung: 'beide'}).size}; return null; }).filter(Boolean).sort((a, b) => a.d - b.d || b.n - a.n);
+  const par = q.kind === 'pane' ? paneById(q.von) : null;
+  $('box').innerHTML = `<div class="dlg" style="padding:8px 12px 12px"><b style="font-size:15px">${GZ.editId ? 'Quelle ändern' : 'Neue Spalte'}</b>
+    <div class="mut" style="margin-top:2px">von ${q.kind === 'refs' ? '„' + esc(q.label) + '“' : `„${esc(par ? paneTitel(par).t : '?')}“ (${quellen.length} ${quellen.length === 1 ? 'Objekt' : 'Objekte'})`}</div>
+    ${q.kind === 'pane' ? `<label class="l">Quelle</label><div class="seg"><button class="${q.modus === 'auswahl' ? 'on' : ''}" data-act="gzmodus" data-v="auswahl">Auswahl in der Spalte</button><button class="${q.modus === 'alle' ? 'on' : ''}" data-act="gzmodus" data-v="alle">Alle Treffer</button></div>` : ''}
+    ${vorschlaege.length ? `<label class="l">Gleich anlegen</label><div class="cchips">${vorschlaege.slice(0, 8).map(v => `<button class="cc" data-act="gzsprung" data-t="${esc(v.t)}">${punkt(v.t)} ${esc(v.t)} · ${v.n}</button>`).join('')}</div>` : ''}
+    <label class="l">Ziel-Typ</label><select id="gztyp"><option value="">alle Typen</option>${typenListe().map(t => `<option${t === q.typ ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>
+    <label class="l">Wie weit (Beziehungsschritte)</label><div class="seg">${[1, 2, 3, 4, 5].map(n => `<button class="${q.tiefe === n ? 'on' : ''}" data-act="gztiefe" data-n="${n}">${n}</button>`).join('')}</div>
+    <label class="l">Richtung</label><div class="seg">${[['beide', 'beide'], ['aus', 'ausgehend →'], ['ein', '← eingehend']].map(([v, t]) => `<button class="${q.richtung === v ? 'on' : ''}" data-act="gzrichtung" data-v="${v}">${t}</button>`).join('')}</div>
+    <label class="l">Nur über diese Beziehungsarten ${q.arten ? '' : '<span class="dim">(alle)</span>'}</label><div class="cchips">${alleArten.map(a => `<button class="cc${q.arten && q.arten.includes(a) ? ' on' : ''}" data-act="gzart" data-a="${esc(a)}">${esc(a)}</button>`).join('') || '<span class="dim">Noch keine Beziehungen.</span>'}</div>
+    <div class="vorschau"><b>${vor.size}</b> ${vor.size === 1 ? 'Objekt' : 'Objekte'} in der neuen Spalte</div>
+    <div class="zeile" style="margin-top:12px;justify-content:flex-end"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="gzgo">${GZ.editId ? 'Übernehmen' : 'Spalte hinzufügen'}</button></div></div>`;
+}
+function gzGo() {
+  const q = JSON.parse(JSON.stringify(GZ.quelle)); q.typ = q.typ || null;
+  if (GZ.editId) { const p = paneById(GZ.editId); p.quelle = q; if (q.typ) p.st.typen = [q.typ]; }
+  else {
+    const p = paneNeu({quelle: q}); if (q.typ) p.st.typen = [];
+    const i = GZ.nach ? W.panes.findIndex(x => x.id === GZ.nach) : W.panes.length - 1;
+    W.panes.splice(i + 1, 0, p); fokusId = p.id;
+  }
+  zuMachen(); berechne(); render();
+  const el = document.querySelector(`.pane[data-pid="${fokusId}"]`); if (el) el.scrollIntoView({inline: 'nearest', behavior: 'smooth'});
+}
+
+/* ================= Ansichten, CSV, Popover ================= */
+const ansichten = () => { try { return JSON.parse(ls.get('ansichten', '[]')); } catch (e) { return []; } };
+let popPid = null;
+function popover(anker, html) {
+  const p = $('pop'), r = anker.getBoundingClientRect();
+  p.innerHTML = html; p.style.display = 'block'; p.style.left = Math.min(r.left, innerWidth - 270) + 'px'; p.style.top = Math.min(r.bottom + 4, innerHeight - 100) + 'px';
+}
+const popZu = () => { $('pop').style.display = 'none'; };
+function csv(p) {
+  const cols = p.cols_.filter(c => c.key !== 'typ'), zeilen = [['Typ', 'Name', ...cols.map(c => c.label)]];
+  for (const k of p.T) zeilen.push([k.typ, k.name, ...cols.map(c => c.get(k))]);
+  const text = '﻿' + zeilen.map(z => z.map(x => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type: 'text/csv;charset=utf-8'}));
+  a.download = 'auswertung.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`${p.T.length} Zeilen exportiert (Semikolon, für Excel).`);
+}
+
+/* ================= Inspektor ================= */
 function notizHtml(text) {
   return text.split(/(\[\[[^\]]+\]\])/).map(teil => {
-    const m = teil.match(/^\[\[([^\]]+)\]\]$/);
-    if (!m) return esc(teil);
+    const m = teil.match(/^\[\[([^\]]+)\]\]$/); if (!m) return esc(teil);
     const k = findeNachName(m[1]);
-    return k ? `<span class="ref" data-act="open" data-ref="${esc(k.ref)}">${esc(k.name)}</span>` : `<span class="ref tot" title="Kein Objekt mit diesem Namen">${esc(m[1])}</span>`;
+    return k ? `<span class="ref" data-act="insp" data-ref="${esc(k.ref)}">${esc(k.name)}</span>` : `<span class="ref tot" title="Kein Objekt mit diesem Namen">${esc(m[1])}</span>`;
   }).join('');
 }
-function erwaehntIn(k) {
-  const n = k.name.toLowerCase();
-  return S.knoten.filter(o => o.ref !== k.ref && [...o.notiz.matchAll(/\[\[([^\]]+)\]\]/g)].some(m => m[1].trim().toLowerCase() === n));
-}
-
-/* ============ Graph (Nachbarschaft) ============ */
-function graphSvg(ref, tiefe) {
-  const W = 360, H = 340, cx = W / 2, cy = H / 2;
-  const nb = r => [...(AUS.get(r) || []).map(e => e.nach), ...(EIN.get(r) || []).map(e => e.von)].filter(x => M.has(x));
-  const ring1 = [...new Set(nb(ref))].slice(0, 14);
-  const gesehen = new Set([ref, ...ring1]), ring2 = [];
-  if (tiefe > 1) for (const r of ring1) for (const o of nb(r)) if (!gesehen.has(o) && ring2.length < 30) { gesehen.add(o); ring2.push(o); }
-  const pos = new Map([[ref, [cx, cy]]]);
-  const kreis = (liste, rad, versatz) => liste.forEach((r, i) => { const w = 2 * Math.PI * i / liste.length - Math.PI / 2 + versatz; pos.set(r, [cx + rad * Math.cos(w), cy + rad * Math.sin(w)]); });
-  kreis(ring1, tiefe > 1 ? 82 : 110, 0); kreis(ring2, 150, 0.3);
-  const linien = S.kanten.filter(e => pos.has(e.von) && pos.has(e.nach)).map(e => {
-    const [x1, y1] = pos.get(e.von), [x2, y2] = pos.get(e.nach), m = e.von === ref || e.nach === ref;
-    return `<line class="kante${m ? ' m' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"><title>${esc(nameVon(e.von))} ${esc(e.art)} ${esc(nameVon(e.nach))}</title></line>`;
-  }).join('');
-  const knoten = [...pos.entries()].map(([r, [x, y]]) => {
-    const k = M.get(r), mitte = r === ref, t = k.name.length > 18 ? k.name.slice(0, 17) + '…' : k.name;
-    return `<g data-act="open" data-ref="${esc(r)}"><circle cx="${x}" cy="${y}" r="${mitte ? 11 : 7}" fill="${farbe(k.typ)}"/><text x="${x}" y="${y + (mitte ? 25 : 19)}"${mitte ? ' style="font-weight:700"' : ''}>${esc(t)}</text><title>${esc(k.name)} · ${esc(k.typ)}</title></g>`;
-  }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%">${linien}${knoten}</svg>`;
-}
-
-/* ============ Darstellung ============ */
-function renderSeite() {
-  const r = route(), typen = typenListe();
-  $('side').innerHTML = `
-    <button class="suchknopf" data-act="palette"><span>Suchen oder anlegen …</span><kbd>Strg K</kbd></button>
-    <button class="nav${r.v === 'start' ? ' on' : ''}" data-act="start">⌂ Übersicht</button>
-    <button class="nav${r.v === 'baum' ? ' on' : ''}" data-act="baum">⛶ Baum</button>
-    <div class="sk">Typen</div>
-    ${typen.map(t => `<button class="nav${r.v === 't' && r.typ === t ? ' on' : ''}" data-act="typ" data-typ="${esc(t)}">${punkt(t)}<span>${esc(t)}</span><span class="n">${S.knoten.filter(k => k.typ === t).length}</span><span class="plus" data-act="neu_typ" data-typ="${esc(t)}" title="Neu anlegen">＋</span></button>`).join('')}
-    ${zuletztListe().length ? `<div class="sk">Zuletzt</div>` + zuletztListe().slice(0, 6).map(ref => { const k = M.get(ref); return `<button class="nav" data-act="open" data-ref="${esc(ref)}">${punkt(k.typ)}<span>${esc(k.name)}</span></button>`; }).join('') : ''}
-    <div style="flex:1"></div>
-    <button class="nav" data-act="import">☰ Liste einfügen …</button>`;
-}
-
-function renderStart() {
-  const luecken = S.knoten.filter(k => k.fehlt && k.fehlt.length), lose = S.knoten.filter(k => !AUS.has(k.ref) && !EIN.has(k.ref));
-  const zeile = k => `<div class="r" data-act="open" data-ref="${esc(k.ref)}">${punkt(k.typ)}<span>${esc(k.name)}</span><small class="hint">${esc(k.typ)}${k.fehlt && k.fehlt.length ? ' · fehlt: ' + esc(k.fehlt.join(', ')) : ''}</small></div>`;
-  return `<h1 style="font-size:24px;cursor:default" contenteditable="false">Übersicht</h1>
-    <h3 style="margin-top:18px">Objekte</h3>
-    <div class="kachel">${typenListe().map(t => `<button class="k" data-act="typ" data-typ="${esc(t)}"><span class="hint">${punkt(t)} ${esc(t)}</span><b>${S.knoten.filter(k => k.typ === t).length}</b></button>`).join('')}</div>
-    ${S.knoten.length ? '' : '<p class="leertext">Noch nichts erfasst. Strg K drücken, tippen, Enter – oder links bei einem Typ auf ＋.</p>'}
-    ${luecken.length ? `<h3>Unvollständig (${luecken.length})</h3><div class="liste">${luecken.slice(0, 12).map(zeile).join('')}</div>` : ''}
-    ${lose.length ? `<h3>Ohne jede Verknüpfung (${lose.length})</h3><div class="liste">${lose.slice(0, 12).map(zeile).join('')}</div>` : ''}`;
-}
-
-let sortSp = 'name', sortR = 1, nurLuecke = false, filterText = '';
-function renderTyp(typ) {
-  const mt = S.modell && S.modell.typen[typ];
-  const spalten = mt ? mt.felder.filter(f => f.name !== mt.namefeld).slice(0, 5).map(f => f.name) : [];
-  const liste = S.knoten.filter(k => k.typ === typ && (!nurLuecke || k.fehlt.length) && (!filterText || k.name.toLowerCase().includes(filterText.toLowerCase())));
-  const wert = (k, sp) => sp === 'name' ? k.name : sp === '_b' ? (AUS.get(k.ref) || []).length + (EIN.get(k.ref) || []).length : (k.felder[sp] ?? '');
-  liste.sort((a, b) => { const x = wert(a, sortSp), y = wert(b, sortSp); return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'de')) * sortR; });
-  const kopf = (sp, t) => `<th data-act="sort" data-sp="${esc(sp)}">${esc(t)}${sortSp === sp ? (sortR > 0 ? ' ▴' : ' ▾') : ''}</th>`;
-  return `<div class="kopfzeile">${punkt(typ)}<h1 style="cursor:default" contenteditable="false">${esc(typ)}</h1></div>
-    <div class="zeile" style="margin:10px 0 16px">
-      <input id="neuname" placeholder="Neu: Name + Enter" style="min-width:240px">
-      <input id="ftext" placeholder="Filtern …" value="${esc(filterText)}">
-      ${S.modell ? `<label class="hint"><input type="checkbox" id="nurl" ${nurLuecke ? 'checked' : ''}> nur unvollständig</label>` : ''}
-    </div>
-    <table><thead><tr>${kopf('name', 'Name')}${spalten.map(s => kopf(s, s)).join('')}${kopf('_b', 'Verknüpfungen')}<th></th></tr></thead>
-    <tbody>${liste.map(k => `<tr class="z" data-act="open" data-ref="${esc(k.ref)}"><td>${esc(k.name)}</td>${spalten.map(s => `<td>${esc(k.felder[s] ?? '')}</td>`).join('')}<td>${wert(k, '_b')}</td><td>${k.fehlt && k.fehlt.length ? `<span class="luecke" title="Fehlt: ${esc(k.fehlt.join(', '))}">!</span>` : ''}</td></tr>`).join('')}</tbody></table>
-    ${liste.length ? '' : '<p class="leertext">Keine Objekte.</p>'}`;
-}
-
+const erwaehntIn = k => { const n = k.name.toLowerCase(); return S.knoten.filter(o => o.ref !== k.ref && [...o.notiz.matchAll(/\[\[([^\]]+)\]\]/g)].some(m => m[1].trim().toLowerCase() === n)); };
 function relGruppen(ref) {
-  const g = new Map(), gesehen = new Set();
-  const add = (key, label, e, andere) => { if (!g.has(key)) g.set(key, {label, eintraege: []}); g.get(key).eintraege.push({e, andere}); };
-  for (const e of AUS.get(ref) || []) { gesehen.add(e.id); add(e.gerichtet ? 'aus|' + e.art : 'un|' + e.art, e.gerichtet ? e.art + ' →' : '— ' + e.art, e, e.nach); }
-  for (const e of EIN.get(ref) || []) if (!gesehen.has(e.id)) add(e.gerichtet ? 'ein|' + e.art : 'un|' + e.art, e.gerichtet ? '← ' + e.art : '— ' + e.art, e, e.von);
+  const g = new Map(), add = (key, label, e, andere) => { if (!g.has(key)) g.set(key, {label, eintraege: []}); g.get(key).eintraege.push({e, andere}); };
+  for (const n of nbrs(ref)) add(n.dir + '|' + n.art, n.dir === 'aus' ? n.art + ' →' : n.dir === 'ein' ? '← ' + n.art : '— ' + n.art, n.e, n.andere);
   return [...g.values()];
 }
 let graphTiefe = +ls.get('tiefe', '1');
-function renderObjekt(k) {
-  const mt = S.modell && S.modell.typen[k.typ];
+function nachbarSvg(ref, tiefe) {
+  const Wd = 380, H = 300, cx = Wd / 2, cy = H / 2, nb = r => nbrs(r).map(n => n.andere).filter(x => M.has(x));
+  const r1 = [...new Set(nb(ref))].slice(0, 14), gesehen = new Set([ref, ...r1]), r2 = [];
+  if (tiefe > 1) for (const r of r1) for (const o of nb(r)) if (!gesehen.has(o) && r2.length < 30) { gesehen.add(o); r2.push(o); }
+  const pos = new Map([[ref, [cx, cy]]]), kreis = (l, rad, v) => l.forEach((r, i) => { const w = 2 * Math.PI * i / l.length - Math.PI / 2 + v; pos.set(r, [cx + rad * Math.cos(w), cy + rad * Math.sin(w)]); });
+  kreis(r1, tiefe > 1 ? 78 : 102, 0); kreis(r2, 135, 0.3);
+  const li = S.kanten.filter(e => pos.has(e.von) && pos.has(e.nach)).map(e => { const [x1, y1] = pos.get(e.von), [x2, y2] = pos.get(e.nach); return `<line class="k${e.von === ref || e.nach === ref ? ' m' : ''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"><title>${esc(nameVon(e.von))} ${esc(e.art)} ${esc(nameVon(e.nach))}</title></line>`; }).join('');
+  const kn = [...pos.entries()].map(([r, [x, y]]) => { const k = M.get(r), m = r === ref; return `<g data-act="insp" data-ref="${esc(r)}"><circle cx="${x}" cy="${y}" r="${m ? 10 : 6.5}" fill="${farbe(k.typ)}"/><text x="${x}" y="${y + (m ? 23 : 17)}"${m ? ' style="font-weight:700"' : ''}>${esc(k.name.length > 18 ? k.name.slice(0, 17) + '…' : k.name)}</text><title>${esc(k.name)} · ${esc(k.typ)}</title></g>`; }).join('');
+  return `<svg viewBox="0 0 ${Wd} ${H}" width="100%">${li}${kn}</svg>`;
+}
+function renderInspektor() {
+  const el = $('insp'), k = ir && M.get(ir);
+  if (!k) { el.innerHTML = ''; return; }
+  const mt = modellTyp(k.typ);
   const feld = (f, wert, pflicht, opt) => {
-    const leer = pflicht && !wert ? ' leer' : '';
-    return `<label for="f_${esc(f)}">${esc(f)}${pflicht ? ' <span class="pf">*</span>' : ''}</label>` + (opt
-      ? `<select id="f_${esc(f)}" class="fv${leer}" data-f="${esc(f)}"><option value="">–</option>${opt.map(o => `<option${o === wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
-      : `<input id="f_${esc(f)}" class="fv${leer}" data-f="${esc(f)}" value="${esc(wert || '')}">`);
+    const lk = pflicht && !wert ? ' lk' : '';
+    return `<label for="f_${esc(f)}" title="${esc(f)}">${esc(f)}${pflicht ? ' <span class="pf">*</span>' : ''}</label>` + (opt
+      ? `<select id="f_${esc(f)}" class="fv${lk}" data-f="${esc(f)}"><option value="">–</option>${opt.map(o => `<option${o === wert ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+      : `<input id="f_${esc(f)}" class="fv${lk}" data-f="${esc(f)}" value="${esc(wert || '')}">`);
   };
-  let felder = '';
-  if (mt) {
-    const bek = new Set(mt.felder.map(f => f.name));
-    felder = mt.felder.filter(f => f.name !== mt.namefeld).map(f => feld(f.name, k.felder[f.name], f.pflicht, f.optionen)).join('')
-      + Object.entries(k.felder).filter(([f]) => !bek.has(f)).map(([f, v]) => feld(f, v, false, null)).join('');
-  } else {
-    felder = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('')
-      + `<input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">`;
-  }
-  const gruppen = relGruppen(k.ref);
-  const rel = gruppen.map(g => `<div class="gruppe"><div class="gl">${esc(g.label)}</div><div class="chips">${g.eintraege.map(({e, andere}) => {
+  let felder;
+  if (mt) { const bek = new Set(mt.felder.map(f => f.name)); felder = mt.felder.filter(f => f.name !== mt.namefeld).map(f => feld(f.name, k.felder[f.name], f.pflicht, f.optionen)).join('') + Object.entries(k.felder).filter(([f]) => !bek.has(f)).map(([f, v]) => feld(f, v, false, null)).join(''); }
+  else felder = Object.entries(k.felder).map(([f, v]) => feld(f, v, false, null)).join('') + '<input id="fn" placeholder="neues Feld"><input id="fw" placeholder="Wert + Enter">';
+  const gr = relGruppen(k.ref);
+  const rel = gr.map(g => `<div class="gruppe"><div class="gl">${esc(g.label)}</div><div class="chips">${g.eintraege.map(({e, andere}) => {
     const o = M.get(andere);
     const attr = kf(e.art).map(f => `<select class="kf" data-id="${esc(e.id)}" data-f="${esc(f.name)}" title="${esc(f.name)}"><option value="">${esc(f.name)}: –</option>${(f.optionen || []).map(x => `<option${x === (e.felder || {})[f.name] ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>`).join('');
-    return `<div><span class="chip" data-act="open" data-ref="${esc(andere)}">${punkt(o.typ)}<span>${esc(o.name)}</span><small>${esc(o.typ)}</small><button class="x" data-act="kante_weg" data-id="${esc(e.id)}" title="Verknüpfung entfernen">×</button></span>${attr ? `<div class="attr">${attr}</div>` : ''}</div>`;
+    return `<div><span class="chip" data-act="insp" data-ref="${esc(andere)}">${punkt(o.typ)}<span>${esc(o.name)}</span><small>${esc(o.typ)}</small><button class="x" data-act="kante_weg" data-id="${esc(e.id)}" title="Verknüpfung entfernen">×</button></span>${attr ? `<div class="attr">${attr}</div>` : ''}</div>`;
   }).join('')}</div></div>`).join('');
   const erw = erwaehntIn(k);
-  return `<div class="kopfzeile"><h1 id="titel" contenteditable="plaintext-only" spellcheck="false">${esc(k.name)}</h1><span class="tchip">${punkt(k.typ)}${esc(k.typ)}</span></div>
-  <div class="seite">
-    <div>
-      <h3>Eigenschaften</h3>
-      <div class="felder">${felder}</div>
-      <h3>Notiz</h3>
-      <div id="notiz" class="notiz" data-ph="Notiz … mit [[ andere Objekte erwähnen">${notizHtml(k.notiz)}</div>
-      <h3>Verknüpfungen</h3>
-      ${rel || '<div class="leertext">Noch keine.</div>'}
-      <div class="addrel">
-        <select id="rart"><option value="">Art …</option>${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
-        <select id="rdir"><option value="aus">→ zu</option><option value="ein">← von</option><option value="ungerichtet">— mit</option></select>
-        <input id="rziel" autocomplete="off" placeholder="Verknüpfen mit … (oder „Typ: Name“ = neu anlegen)">
-      </div>
-      <div id="rattr" class="attr"></div>
-      <button class="gefahr" data-act="loeschen">Objekt löschen</button>
-    </div>
-    <div>
-      <div class="karte"><div class="tief"><button data-act="tiefe" data-t="1" class="${graphTiefe === 1 ? 'on' : ''}">1</button><button data-act="tiefe" data-t="2" class="${graphTiefe === 2 ? 'on' : ''}">2</button></div><h3 style="margin:0 0 4px">Nachbarschaft</h3>${gruppen.length ? graphSvg(k.ref, graphTiefe) : '<div class="leertext">Noch keine Verknüpfungen.</div>'}</div>
-      ${erw.length ? `<h3>Erwähnt in</h3><div class="liste">${erw.map(o => `<div class="r" data-act="open" data-ref="${esc(o.ref)}">${punkt(o.typ)}<span>${esc(o.name)}</span><small class="hint">${esc(o.typ)}</small></div>`).join('')}</div>` : ''}
-    </div>
+  el.innerHTML = `<div class="ikopf">${irHist.length ? '<button class="ghost" data-act="irzurueck" title="Zurück">←</button>' : ''}<span class="sp"></span><button class="btn zweit klein" data-act="erkunden" title="Neue Spalte von diesem Objekt aus">Erkunden →</button><button class="ghost" data-act="schliesse" title="Schließen (Esc)">✕</button></div>
+  <div class="ibody">
+    <div id="titel" contenteditable="plaintext-only" spellcheck="false">${esc(k.name)}</div>
+    <div class="tchip">${punkt(k.typ)}${esc(k.typ)}</div>
+    <h3>Eigenschaften</h3><div class="felder">${felder}</div>
+    <h3>Notiz</h3><div id="notiz" class="notiz" data-ph="Notiz … mit [[ andere Objekte erwähnen">${notizHtml(k.notiz)}</div>
+    <h3>Verknüpfungen</h3>${rel || '<div class="dim">Noch keine.</div>'}
+    <div class="addrel"><select id="rart"><option value="">Art …</option>${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
+      <select id="rdir"><option value="aus">→ zu</option><option value="ein">← von</option><option value="ungerichtet">— mit</option></select>
+      <input id="rziel" autocomplete="off" placeholder="Verknüpfen mit …  („Typ: Name“ = neu)"></div>
+    <div id="rattr" class="attr"></div>
+    ${gr.length ? `<h3>Nachbarschaft <span class="tief"><button data-act="tiefe" data-t="1" class="${graphTiefe === 1 ? 'on' : ''}">1</button><button data-act="tiefe" data-t="2" class="${graphTiefe === 2 ? 'on' : ''}">2</button></span></h3><div class="karte">${nachbarSvg(k.ref, graphTiefe)}</div>` : ''}
+    ${erw.length ? `<h3>Erwähnt in</h3><div class="liste">${erw.map(o => `<div class="r" data-act="insp" data-ref="${esc(o.ref)}">${punkt(o.typ)}<span>${esc(o.name)}</span></div>`).join('')}</div>` : ''}
+    <button class="gefahr" data-act="loeschen">Objekt löschen</button>
   </div>`;
+  nachInspektor(k);
 }
-
-/* Baum: Hierarchie einer Beziehungsart, mit Ziehen */
-let baumArt = ls.get('baumart', 'ist Teil von'), baumUmg = null;
-const zu = new Set();
-const umgekehrt = () => baumUmg !== null ? baumUmg : artRichtung(baumArt);
-function kinderVon(ref) { const u = umgekehrt(); return S.kanten.filter(k => k.gerichtet && k.art === baumArt && (u ? k.nach : k.von) === ref).map(k => ({id: k.id, nach: u ? k.von : k.nach})); }
-function istKind(ref) { const u = umgekehrt(); return S.kanten.some(k => k.gerichtet && k.art === baumArt && (u ? k.von : k.nach) === ref); }
-function renderBaum() {
-  const wurzeln = S.knoten.filter(k => kinderVon(k.ref).length && !istKind(k.ref)).sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  const zeichne = (k, kante, pfad) => {
-    const kids = kinderVon(k.ref), zugeklappt = zu.has(k.ref);
-    let h = `<div class="zeilebaum" draggable="true" data-drag='${esc(JSON.stringify({ref: k.ref, kante}))}' data-ziel="${esc(k.ref)}" data-act="open" data-ref="${esc(k.ref)}"><span class="caret" data-act="klapp" data-ref="${esc(k.ref)}">${kids.length ? (zugeklappt ? '▸' : '▾') : ''}</span>${punkt(k.typ)}<span>${esc(k.name)}</span><small class="hint">${esc(k.typ)}</small>${kids.length ? `<small class="hint" style="margin-left:auto">${kids.length}</small>` : ''}</div>`;
-    if (kids.length && !zugeklappt && !pfad.includes(k.ref))
-      h += `<div class="kinder">${kids.sort((a, b) => nameVon(a.nach).localeCompare(nameVon(b.nach), 'de')).filter(e => M.has(e.nach)).map(e => zeichne(M.get(e.nach), e.id, [...pfad, k.ref])).join('')}</div>`;
-    return h;
-  };
-  return `<h1 style="font-size:24px;cursor:default" contenteditable="false">Baum</h1>
-    <div class="zeile" style="margin:10px 0 6px"><span class="hint">Beziehung</span>
-      <select id="bart">${artenListe().map(a => `<option${a === baumArt ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
-      <select id="bumg"><option value="0"${!umgekehrt() ? ' selected' : ''}>A → B: B hängt unter A</option><option value="1"${umgekehrt() ? ' selected' : ''}>A → B: A hängt unter B</option></select></div>
-    <p class="hint">Ziehen: auf ein Objekt = darunterhängen · Strg/Alt gedrückt = zusätzlich einhängen (sonst verschieben).</p>
-    ${wurzeln.length ? wurzeln.map(w => zeichne(w, null, [])).join('') : `<p class="leertext">Noch keine „${esc(baumArt)}“-Hierarchie. Im Objekt unter „Verknüpfungen“ anlegen, oder Liste einfügen (Einrücken = darunter).</p>`}
-    <div class="wurzel" data-ziel="__wurzel">hierher ziehen = aus dem Baum lösen</div>`;
-}
-
-function render() {
-  const fo = document.activeElement, fokus = fo && fo.id && fo.id !== 'notiz' ? {id: fo.id, a: fo.selectionStart, b: fo.selectionEnd} : null;
-  const r = route(); let html = '';
-  if (r.v === 'o' && !M.has(r.ref)) { if (location.hash) location.hash = ''; else render(); return; }
-  if (r.v === 'o') { zuletzt(r.ref); html = renderObjekt(M.get(r.ref)); }
-  else if (r.v === 't') html = renderTyp(r.typ);
-  else if (r.v === 'baum') html = renderBaum();
-  else html = renderStart();
-  renderSeite();
-  $('haupt').innerHTML = html;
-  if (r.v === 'o') nachObjekt(M.get(r.ref));
-  if (fokus && $(fokus.id)) { const e = $(fokus.id); e.focus(); try { e.setSelectionRange(fokus.a, fokus.b); } catch (x) {} }
-}
-
-/* ============ Verhalten der Objektseite ============ */
-function nachObjekt(k) {
+function nachInspektor(k) {
   const t = $('titel');
   t.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); t.blur(); } };
   t.onblur = () => { const n = t.textContent.trim(); if (n && n !== k.name) api('aendern', {ref: k.ref, name: n}); else t.textContent = k.name; };
@@ -404,26 +732,20 @@ function nachObjekt(k) {
     const j = await api('kante', {ref: k.ref, ziel, art: ra.value, richtung: dir, felder});
     if (j && $('rziel')) $('rziel').focus();
   };
-  const gewaehlt = o => {
-    rz.value = o.name; rz.dataset.ref = o.ref;
-    const v = vorhersage(k.typ, o.typ);
-    if (v) { ra.value = v.art; $('rdir').value = v.dir; attrZeigen(); }
-    if (ra.value) verknuepfen(o.ref); else ra.focus();
-  };
+  const gewaehlt = o => { rz.value = o.name; rz.dataset.ref = o.ref; const v = vorhersage(k.typ, o.typ); if (v) { ra.value = v.art; $('rdir').value = v.dir; attrZeigen(); } if (ra.value) verknuepfen(o.ref); else ra.focus(); };
   rz.oninput = () => { delete rz.dataset.ref; sugZeige(rz, treffer(rz.value, k.ref), gewaehlt); };
   rz.onkeydown = async e => {
     if (sugTaste(e)) return;
     if (e.key !== 'Enter' || !rz.value.trim()) return;
-    const eindeutig = rz.dataset.ref || (findeNachName(rz.value) || {}).ref;
-    if (eindeutig && eindeutig !== k.ref) return verknuepfen(eindeutig);
-    const m = rz.value.match(/^([^:]+):\s*(.+)$/);   // „Typ: Name“ legt neu an
+    const eind = rz.dataset.ref || (findeNachName(rz.value) || {}).ref;
+    if (eind && eind !== k.ref) return verknuepfen(eind);
+    const m = rz.value.match(/^([^:]+):\s*(.+)$/);
     if (m && !ra.value) { toast('Erst die Art der Verknüpfung wählen.', true); ra.focus(); return; }
     if (m) { const j = await api('anlegen', {typ: m[1].trim(), name: m[2].trim()}); if (j) return verknuepfen(j.ref); }
     else toast('Kein Objekt mit diesem Namen. Zum Anlegen „Typ: Name“ schreiben.', true);
   };
   rz.onblur = () => setTimeout(sugZu, 120);
-  const fw = $('fw');
-  if (fw) fw.onkeydown = e => { if (e.key === 'Enter' && $('fn').value.trim()) api('aendern', {ref: k.ref, felder: {[$('fn').value.trim()]: fw.value}}); };
+  const fw = $('fw'); if (fw) fw.onkeydown = e => { if (e.key === 'Enter' && $('fn').value.trim()) api('aendern', {ref: k.ref, felder: {[$('fn').value.trim()]: fw.value}}); };
 }
 function notizBearbeiten(k) {
   const nz = $('notiz'); if (nz.tagName === 'TEXTAREA') return;
@@ -431,25 +753,40 @@ function notizBearbeiten(k) {
   ta.id = 'notiz'; ta.className = 'notiz'; ta.value = k.notiz; ta.rows = Math.max(4, k.notiz.split('\n').length + 1);
   nz.replaceWith(ta); ta.focus();
   let fertig = false;
-  const speichern = () => { if (fertig) return; fertig = true; sugZu(); if (ta.value !== k.notiz) api('aendern', {ref: k.ref, notiz: ta.value}); else render(); };
-  ta.onblur = () => setTimeout(speichern, 130);
+  const sp = () => { if (fertig) return; fertig = true; sugZu(); if (ta.value !== k.notiz) api('aendern', {ref: k.ref, notiz: ta.value}); else renderInspektor(); };
+  ta.onblur = () => setTimeout(sp, 130);
   ta.oninput = () => {
     const vor = ta.value.slice(0, ta.selectionStart), m = vor.match(/\[\[([^\]\n]*)$/);
     if (!m) return sugZu();
-    sugZeige(ta, treffer(m[1], k.ref), o => {
-      const von = ta.selectionStart - m[1].length;
-      ta.value = ta.value.slice(0, von) + o.name + ']]' + ta.value.slice(ta.selectionStart);
-      ta.selectionStart = ta.selectionEnd = von + o.name.length + 2; ta.focus();
-    });
+    sugZeige(ta, treffer(m[1], k.ref), o => { const von = ta.selectionStart - m[1].length; ta.value = ta.value.slice(0, von) + o.name + ']]' + ta.value.slice(ta.selectionStart); ta.selectionStart = ta.selectionEnd = von + o.name.length + 2; ta.focus(); });
   };
-  ta.onkeydown = e => { if (sugTaste(e)) return; if (e.key === 'Escape') { ta.value = k.notiz; ta.blur(); } };
+  ta.onkeydown = e => { if (sugTaste(e)) return; if (e.key === 'Escape') { ta.value = k.notiz; ta.blur(); e.stopPropagation(); } };
 }
 
-/* ============ Palette (Suchen / Anlegen) ============ */
+/* ================= Render ================= */
+function renderSpalten() {
+  const sc = {}; document.querySelectorAll('.pane').forEach(el => { sc[el.dataset.pid] = {fac: (el.querySelector('[data-scroll="fac"]') || {}).scrollTop, res: (el.querySelector('[data-scroll="res"]') || {}).scrollTop}; });
+  const hs = $('spalten').scrollLeft, fo = document.activeElement;
+  const fokus = fo && fo.id && /^(ftxt_|neuname_)/.test(fo.id) ? {id: fo.id, a: fo.selectionStart, b: fo.selectionEnd} : null;
+  const unberuehrt = W.panes.length === 1 && !W.panes[0].quelle && !gefiltert(W.panes[0].st) && !ir;
+  $('spalten').innerHTML = W.panes.map(renderPane).join('') + ((zeigeFragen || unberuehrt) && S.knoten.length ? `<div class="pane" style="width:360px"><div class="phead"><div class="p1"><div class="ptitel"><b>Fragen</b></div>${zeigeFragen ? '<button class="ghost" data-act="fragen">✕</button>' : ''}</div><div class="psub">Typische Auswertungen auf Knopfdruck</div></div><div class="pres" style="padding:0">${fragenHtml()}</div></div>` : '');
+  document.querySelectorAll('.pane').forEach(el => { const s = sc[el.dataset.pid]; if (!s) return; const f = el.querySelector('[data-scroll="fac"]'), r = el.querySelector('[data-scroll="res"]'); if (f && s.fac) f.scrollTop = s.fac; if (r && s.res) r.scrollTop = s.res; });
+  $('spalten').scrollLeft = hs;
+  if (fokus && $(fokus.id)) { const e = $(fokus.id); e.focus(); try { e.setSelectionRange(fokus.a, fokus.b); } catch (x) {} }
+  graphAn(); speichern();
+}
+function render() {
+  const fo = document.activeElement, fokus = fo && fo.id && /^(f_|rziel|rart|rdir|fn|fw)/.test(fo.id) ? {id: fo.id, a: fo.selectionStart, b: fo.selectionEnd} : null;
+  berechne(); renderKopf(); renderSpalten(); renderInspektor(); hashSetzen();
+  if (fokus && $(fokus.id)) { const e = $(fokus.id); e.focus(); try { e.setSelectionRange(fokus.a, fokus.b); } catch (x) {} }
+}
+const neuBerechnen = () => { berechne(); renderSpalten(); };
+
+/* ================= Palette, Anlegen, Import ================= */
 let pal = {liste: [], i: 0};
 function palette(vor) {
   $('schleier').style.display = 'flex';
-  $('box').innerHTML = `<input id="palq" autocomplete="off" placeholder="Objekt suchen – oder „Typ: Name“ zum Anlegen"><div id="palr"></div>`;
+  $('box').innerHTML = '<input class="gross" id="palq" autocomplete="off" placeholder="Objekt suchen – oder „Typ: Name“ zum Anlegen"><div id="palr"></div>';
   $('palq').value = vor || ''; $('palq').focus(); pal.i = 0; palMalen();
   $('palq').oninput = () => { pal.i = 0; palMalen(); };
   $('palq').onkeydown = e => {
@@ -459,108 +796,171 @@ function palette(vor) {
     else if (e.key === 'Escape') zuMachen();
   };
 }
-const zuMachen = () => { $('schleier').style.display = 'none'; $('box').innerHTML = ''; };
+const zuMachen = () => { $('schleier').style.display = 'none'; $('box').innerHTML = ''; GZ = null; };
 function palMalen() {
   const q = $('palq').value, m = q.match(/^([^:]+):\s*(.*)$/);
-  const typ = m ? (typenListe().find(t => t.toLowerCase().startsWith(m[1].trim().toLowerCase())) || null) : null;
-  const name = typ ? m[2].trim() : q.trim();
+  const typ = m ? (typenListe().find(t => t.toLowerCase().startsWith(m[1].trim().toLowerCase())) || null) : null, name = typ ? m[2].trim() : q.trim();
   pal.liste = treffer(name, null, 8).map(k => ({k}));
   if (typ && name) pal.liste.unshift({neu: true, typ, name});
   if (!q.trim()) pal.liste = zuletztListe().slice(0, 8).map(r => ({k: M.get(r)}));
   pal.i = Math.min(pal.i, Math.max(0, pal.liste.length - 1));
-  const chips = !typ && q.trim() ? `<div class="hint" style="padding:8px 8px 2px">Neu anlegen als:</div><div class="chips" style="padding:0 8px 8px">${typenListe().map(t => `<button class="chip" data-act="palneu" data-typ="${esc(t)}">${punkt(t)}${esc(t)}</button>`).join('')}</div>` : '';
-  $('palr').innerHTML = pal.liste.map((x, i) => x.neu
-    ? `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">＋ ${punkt(x.typ)}<span>${esc(x.typ)} „${esc(x.name)}“ anlegen</span><small>Enter</small></div>`
-    : `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">${punkt(x.k.typ)}<span>${esc(x.k.name)}</span><small>${esc(x.k.typ)}</small></div>`).join('')
-    + (pal.liste.length || !q.trim() ? '' : '<div class="leertext" style="padding:8px">Nichts gefunden.</div>') + chips;
+  const chips = !typ && q.trim() ? `<div class="dim" style="padding:8px 9px 3px">Neu anlegen als:</div><div class="cchips" style="padding:0 9px 9px">${typenListe().map(t => `<button class="cc" data-act="palneu" data-typ="${esc(t)}">${punkt(t)} ${esc(t)}</button>`).join('')}</div>` : '';
+  $('palr').innerHTML = pal.liste.map((x, i) => x.neu ? `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">＋ ${punkt(x.typ)}<span>${esc(x.typ)} „${esc(x.name)}“ anlegen</span><small>Enter</small></div>` : `<div class="pz${i === pal.i ? ' on' : ''}" data-pi="${i}">${punkt(x.k.typ)}<span>${esc(x.k.name)}</span><small>${esc(x.k.typ)}</small></div>`).join('')
+    + (pal.liste.length || !q.trim() ? '' : '<div class="dim" style="padding:10px">Nichts gefunden.</div>') + chips;
 }
-async function palAus(x) {
-  if (!x) return;
-  if (x.neu) return neuAnlegen(x.typ, x.name);
-  zuMachen(); oeffne(x.k.ref);
+async function palAus(x) { if (!x) return; if (x.neu) return neuAnlegen(x.typ, x.name); zuMachen(); oeffneInsp(x.k.ref); }
+async function neuAnlegen(typ, name, p) {
+  const k = p ? kontext(p) : {typ: null, felder: {}, ver: []};
+  const j = await api('anlegen', {typ, name, felder: k.typ === typ ? k.felder : {}, verknuepfen: k.ver});
+  if (j) { zuMachen(); ls.set('neutyp', typ); oeffneInsp(j.ref); }
+  return j;
 }
-async function neuAnlegen(typ, name) {
-  const j = await api('anlegen', {typ, name}); if (j) { zuMachen(); oeffne(j.ref); }
-}
-
-/* ============ Liste einfügen ============ */
 function importDialog() {
-  const r = route(), unter = r.v === 'o' && M.get(r.ref);
+  const unter = ir && M.get(ir);
   $('schleier').style.display = 'flex';
-  $('box').innerHTML = `<div class="dlg" style="padding:6px 10px 10px">
-    <b>Liste einfügen</b>
-    <label>Eine Zeile pro Objekt. Einrücken = hängt unter der Zeile darüber. „Typ: Name“ setzt den Typ der Zeile.</label>
-    <textarea id="imptext" placeholder="Plant: Linie 1&#10;  Equipment: Autoklav&#10;  Raum: Reinraum C"></textarea>
-    <div class="zeile" style="margin-top:8px">
-      <select id="imptyp">${typenListe().map(t => `<option>${esc(t)}</option>`).join('')}</select><span class="hint">Standardtyp</span>
-      <select id="impart">${artenListe().map(a => `<option${a === baumArt ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
-      <select id="impumg"><option value="0">A → B: B darunter</option><option value="1">A → B: A darunter</option></select>
-    </div>
-    ${unter ? `<label><input type="checkbox" id="impunter" checked> erste Ebene unter „${esc(unter.name)}“ hängen</label>` : ''}
-    <div class="zeile" style="margin-top:12px;justify-content:flex-end"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="impgo">Anlegen</button></div></div>`;
-  const vorschlag = () => { $('impumg').value = artRichtung($('impart').value) ? '1' : '0'; };
-  $('impart').onchange = vorschlag; vorschlag(); $('imptext').focus();
+  $('box').innerHTML = `<div class="dlg" style="padding:8px 12px 12px"><b style="font-size:15px">Liste einfügen</b>
+    <label class="l">Eine Zeile pro Objekt · Einrücken = hängt unter der Zeile darüber · „Typ: Name“ setzt den Typ der Zeile</label>
+    <textarea id="imptext" placeholder="Prozess: Sterilisation&#10;  Prozessschritt: Beladen&#10;  Prozessschritt: Sterilisieren"></textarea>
+    <div class="zeile" style="margin-top:10px"><select id="imptyp">${typenListe().map(t => `<option>${esc(t)}</option>`).join('')}</select><span class="dim">Standardtyp</span>
+      <select id="impart">${artenListe().map(a => `<option>${esc(a)}</option>`).join('')}</select>
+      <select id="impumg"><option value="0">A → B: B darunter</option><option value="1">A → B: A darunter</option></select></div>
+    ${unter ? `<label style="display:block;margin-top:10px"><input type="checkbox" id="impunter" checked> erste Ebene unter „${esc(unter.name)}“ hängen</label>` : ''}
+    <div class="zeile" style="margin-top:14px;justify-content:flex-end"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="impgo">Anlegen</button></div></div>`;
+  const u = () => { $('impumg').value = artRichtung($('impart').value) ? '1' : '0'; }; $('impart').onchange = u; u(); $('imptext').focus();
 }
 
-/* ============ Ereignisse ============ */
+/* ================= Ereignisse ================= */
+function toggleWert(p, key, v) {
+  const st = p.st; let arr;
+  if (key === 'typ') arr = st.typen; else if (key.startsWith('p:')) arr = (st.props[key.slice(2)] ||= []); else arr = (st.rel[key.slice(2)] ||= []);
+  tgl(arr, v);
+  if (!arr.length && key !== 'typ') { if (key.startsWith('p:')) delete st.props[key.slice(2)]; else delete st.rel[key.slice(2)]; }
+  p.zeilenMax = 200;
+}
 const AKT = {
-  open: t => oeffne(t.dataset.ref),
-  start: () => gehe(''), baum: () => gehe('baum'), typ: t => gehe('t/' + enc(t.dataset.typ)),
-  neu_typ: t => palette(t.dataset.typ + ': '),
   palette: () => palette(''), zu: zuMachen, import: importDialog,
+  fragen: () => { zeigeFragen = !zeigeFragen; renderSpalten(); },
+  menue: t => popover(t, '<button class="pz" data-act="import" style="width:100%">☰ Liste einfügen …</button><button class="pz" data-act="alles_zu" style="width:100%">⟲ Arbeitsfeld zurücksetzen</button>'),
+  alles_zu: () => { popZu(); W = {panes: [paneNeu()]}; fokusId = W.panes[0].id; render(); },
+  spalte_frei: () => { const p = paneNeu(); W.panes.push(p); fokusId = p.id; render(); const el = document.querySelector(`.pane[data-pid="${p.id}"]`); if (el) el.scrollIntoView({inline: 'nearest'}); },
+  fw: t => { const p = paneVon(t); toggleWert(p, t.dataset.k, t.dataset.v); fokusId = p.id; neuBerechnen(); },
+  pill: t => { const p = paneVon(t), k = t.dataset.k, v = +t.dataset.v, st = p.st; if (k === 'luecke' || k === 'lose') st[k] = st[k] === v ? 0 : v; else { const ty = k.slice(2); st.mit[ty] = st.mit[ty] === v ? 0 : v; if (!st.mit[ty]) delete st.mit[ty]; } p.zeilenMax = 200; neuBerechnen(); },
+  text: t => { paneVon(t).st.text = ''; neuBerechnen(); },
+  pzurueck: t => { paneVon(t).st = leer(); neuBerechnen(); },
+  fklapp: t => { tgl(paneVon(t).umF, t.dataset.k); renderSpalten(); },
+  fmehr: t => { tgl(paneVon(t).mehrF, t.dataset.k); renderSpalten(); },
+  fac: t => { const p = paneVon(t); p.fac = !p.fac; renderSpalten(); },
+  neu: t => { const p = t.closest('.pane') ? paneVon(t) : (paneById(fokusId) || W.panes[0]); p.neu = !p.neu; fokusId = p.id; renderSpalten(); if (p.neu) setTimeout(() => { const n = $('neuname_' + p.id); if (n) n.focus(); }, 0); },
+  ans: t => { const p = paneVon(t); p.ansicht = t.dataset.v; renderSpalten(); },
+  sort: t => { const p = paneVon(t); p.sortR = p.sortSp === t.dataset.sp ? -p.sortR : 1; p.sortSp = t.dataset.sp; neuBerechnen(); },
+  mehrzeilen: t => { paneVon(t).zeilenMax += 300; renderSpalten(); },
+  sel: t => { const p = t.closest('.pane') ? paneVon(t) : null; if (p) waehleInPane(p, t.dataset.sel); else oeffneInsp(t.dataset.sel); },
+  insp: t => oeffneInsp(t.dataset.ref),
+  schliesse: () => { irHist = []; oeffneInsp(null); },
+  irzurueck: () => { const r = irHist.pop(); oeffneInsp(r, true); },
+  erkunden: () => { const k = M.get(ir); if (k) weiterDialog({refs: [k.ref], label: k.name}); },
+  weiter: t => weiterDialog(paneVon(t)),
+  quelle_bearb: t => { const p = paneVon(t); weiterDialog(null, p); },
+  modus_alle: t => { const p = paneVon(t); p.quelle.modus = 'alle'; neuBerechnen(); },
+  pclose: t => {
+    const p = paneVon(t), weg = new Set([p.id]);
+    for (let g = true; g;) { g = false; for (const x of W.panes) if (!weg.has(x.id) && x.quelle && x.quelle.kind === 'pane' && weg.has(x.quelle.von)) { weg.add(x.id); g = true; } }
+    W.panes = W.panes.filter(x => !weg.has(x.id)); if (!W.panes.length) W.panes = [paneNeu()];
+    if (!paneById(fokusId)) fokusId = W.panes[0].id; neuBerechnen();
+  },
+  pmenue: t => { const p = paneVon(t); popPid = p.id; popover(t, '<button class="pz" data-act="spalten" style="width:100%">▦ Spalten wählen …</button><button class="pz" data-act="pcsv" style="width:100%">⇩ Als CSV</button><button class="pz" data-act="pdup" style="width:100%">⧉ Duplizieren</button>'); },
+  pcsv: () => { popZu(); const p = paneById(popPid); if (p) csv(p); },
+  pdup: () => { popZu(); const p = paneById(popPid); if (!p) return; const c = JSON.parse(JSON.stringify(p, (k, v) => (k === 'ERG' || k === 'T' || k === 'basis' || k === 'cols_') ? undefined : v)); c.id = pid++; W.panes.splice(W.panes.indexOf(p) + 1, 0, c); neuBerechnen(); },
+  spalten: () => {
+    const p = paneById(popPid); if (!p) return;
+    const typen = [...new Set(p.T.map(k => k.typ))], felder = [...new Set(typen.flatMap(ty => (modellTyp(ty) ? modellTyp(ty).felder.map(f => f.name).filter(f => f !== modellTyp(ty).namefeld) : [])))];
+    const arten = [...new Set(p.T.flatMap(k => nbrs(k.ref).map(n => n.dir + '|' + n.art)))];
+    $('pop').innerHTML = `<div class="ueber">Eigenschaften</div>${felder.map(f => `<div class="fz${p.cols.includes('f:' + f) ? ' on' : ''}" data-act="spalte" data-k="f:${esc(f)}"><span class="cb"></span><span class="fl">${esc(f)}</span></div>`).join('') || '<div class="dim">–</div>'}
+      <div class="ueber">Verknüpfungen</div>${arten.map(a => { const [d, n] = a.split('|'); return `<div class="fz${p.cols.includes('r:' + a) ? ' on' : ''}" data-act="spalte" data-k="r:${esc(a)}"><span class="cb"></span><span class="fl">${d === 'ein' ? '← ' : ''}${esc(n)}${d === 'aus' ? ' →' : ''}</span></div>`; }).join('') || '<div class="dim">–</div>'}`;
+  },
+  spalte: t => { const p = paneById(popPid); tgl(p.cols, t.dataset.k); t.classList.toggle('on'); neuBerechnen(); },
+  ansichten: t => {
+    const a = ansichten();
+    popover(t, `<div class="zeile" style="margin-bottom:6px"><input id="ansname" placeholder="Arbeitsfeld benennen + Enter" style="flex:1"></div>
+      ${a.map((x, i) => `<div class="pz" data-act="ansicht_laden" data-i="${i}"><span>★ ${esc(x.name)}</span><small data-act="ansicht_weg" data-i="${i}">löschen</small></div>`).join('') || '<div class="dim" style="padding:6px">Noch keine gespeicherten Ansichten.</div>'}`);
+    setTimeout(() => { const i = $('ansname'); if (i) { i.focus(); i.onkeydown = e => { if (e.key === 'Enter' && i.value.trim()) { ls.set('ansichten', JSON.stringify([...a, {name: i.value.trim(), w: JSON.parse(JSON.stringify(W, (k, v) => (k === 'ERG' || k === 'T' || k === 'basis' || k === 'cols_') ? undefined : v))}])); popZu(); toast('Ansicht gespeichert.'); renderKopf(); } }; } }, 0);
+  },
+  ansicht_laden: t => { const x = ansichten()[+t.dataset.i]; if (x) { W = JSON.parse(JSON.stringify(x.w)); pid = Math.max(...W.panes.map(p => p.id)) + 1; fokusId = W.panes[0].id; popZu(); render(); } },
+  ansicht_weg: t => { const a = ansichten(); a.splice(+t.dataset.i, 1); ls.set('ansichten', JSON.stringify(a)); popZu(); renderKopf(); },
+  gzmodus: t => { GZ.quelle.modus = t.dataset.v; gzMalen(); },
+  gztiefe: t => { GZ.quelle.tiefe = +t.dataset.n; gzMalen(); },
+  gzrichtung: t => { GZ.quelle.richtung = t.dataset.v; gzMalen(); },
+  gzart: t => { const a = t.dataset.a, q = GZ.quelle; q.arten = q.arten || []; tgl(q.arten, a); if (!q.arten.length) q.arten = null; gzMalen(); },
+  gzsprung: t => { GZ.quelle.typ = t.dataset.t; GZ.quelle.tiefe = 3; gzGo(); },
+  gzgo: gzGo,
   palneu: t => { const n = $('palq').value.trim(); if (n) neuAnlegen(t.dataset.typ, n); },
   kante_weg: t => api('kante_weg', {id: t.dataset.id}),
-  tiefe: t => { graphTiefe = +t.dataset.t; ls.set('tiefe', graphTiefe); render(); },
-  sort: t => { sortR = sortSp === t.dataset.sp ? -sortR : 1; sortSp = t.dataset.sp; render(); },
-  klapp: t => { zu.has(t.dataset.ref) ? zu.delete(t.dataset.ref) : zu.add(t.dataset.ref); render(); },
-  loeschen: () => {
-    const r = route(), n = nameVon(r.ref);
-    api('loeschen', {ref: r.ref}).then(j => { if (j) { gehe(''); toast(`„${n}“ gelöscht`, false, () => api('zurueck', {ref: r.ref}).then(() => oeffne(r.ref))); } });
-  },
-  impgo: async () => {
-    const r = route(), unter = $('impunter') && $('impunter').checked ? r.ref : null;
-    const j = await api('massen', {text: $('imptext').value, typ: $('imptyp').value, art: $('impart').value, umgekehrt: $('impumg').value === '1', unter});
-    if (j) zuMachen();
-  }
+  tiefe: t => { graphTiefe = +t.dataset.t; ls.set('tiefe', graphTiefe); renderInspektor(); },
+  klapp: t => { const p = paneVon(t); tgl(p.zuB, t.dataset.ref); renderSpalten(); },
+  loeschen: () => { const ref = ir, n = nameVon(ref); api('loeschen', {ref}).then(j => { if (j) { irHist = []; oeffneInsp(null); toast(`„${n}“ gelöscht`, false, () => api('zurueck', {ref}).then(() => oeffneInsp(ref))); } }); },
+  impgo: async () => { const j = await api('massen', {text: $('imptext').value, typ: $('imptyp').value, art: $('impart').value, umgekehrt: $('impumg').value === '1', unter: $('impunter') && $('impunter').checked ? ir : null}); if (j) zuMachen(); },
 };
 document.addEventListener('click', e => {
-  const pz = e.target.closest('[data-pi]');
-  if (pz) return palAus(pal.liste[+pz.dataset.pi]);
+  if (!e.target.closest('#pop') && !e.target.closest('[data-act="pmenue"],[data-act="ansichten"],[data-act="menue"]')) popZu();
+  const pz = e.target.closest('[data-pi]'); if (pz) return palAus(pal.liste[+pz.dataset.pi]);
   if (e.target === $('schleier')) return zuMachen();
+  const pane = e.target.closest('.pane'); if (pane && +pane.dataset.pid !== fokusId && paneById(+pane.dataset.pid)) { fokusId = +pane.dataset.pid; document.querySelectorAll('.pane').forEach(x => x.classList.toggle('fokus', +x.dataset.pid === fokusId)); }
   const t = e.target.closest('[data-act]');
   if (t && AKT[t.dataset.act]) { e.stopPropagation(); AKT[t.dataset.act](t, e); }
 });
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.classList.contains('fv')) { const r = route(); api('aendern', {ref: r.ref, felder: {[t.dataset.f]: t.value}}); }
+  if (t.classList.contains('fv')) api('aendern', {ref: ir, felder: {[t.dataset.f]: t.value}});
   else if (t.classList.contains('kf')) api('kante_felder', {id: t.dataset.id, felder: {[t.dataset.f]: t.value}});
-  else if (t.id === 'nurl') { nurLuecke = t.checked; render(); }
-  else if (t.id === 'bart') { baumArt = t.value; baumUmg = null; ls.set('baumart', baumArt); render(); }
-  else if (t.id === 'bumg') { baumUmg = t.value === '1'; render(); }
+  else if (t.id === 'gztyp') { GZ.quelle.typ = t.value; gzMalen(); }
+  else if (t.classList.contains('pbart')) { const p = paneVon(t); p.baumArt = t.value.replace(/ \(\d+\)$/, ''); p.baumUmg = null; renderSpalten(); }
+  else if (t.classList.contains('pbumg')) { const p = paneVon(t); p.baumUmg = t.value === '1'; renderSpalten(); }
+});
+let ftimer;
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.classList.contains('ftxt')) { const p = paneVon(t); clearTimeout(ftimer); ftimer = setTimeout(() => { p.st.text = t.value; p.zeilenMax = 200; neuBerechnen(); }, 180); }
+  else if (t.dataset && t.dataset.frage) { const f = FRAGEN.find(x => x.id === t.dataset.frage); sugZeige(t, treffer(t.value, null, 8, f.start), k => { t.value = ''; frageStarten(f, k.ref); }); }
+});
+document.addEventListener('focusin', e => {
+  const t = e.target; if (!(t.dataset && t.dataset.frage) || t.value) return;
+  const f = FRAGEN.find(x => x.id === t.dataset.frage);
+  sugZeige(t, S.knoten.filter(k => !f.start || k.typ === f.start).sort((a, b) => a.name.localeCompare(b.name, 'de')).slice(0, 8), k => { t.value = ''; frageStarten(f, k.ref); });
 });
 document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (t.dataset && t.dataset.frage && sugTaste(e)) return;
+  if (t.id && t.id.startsWith('neuname_') && e.key === 'Enter' && t.value.trim()) {
+    e.preventDefault(); const p = paneById(+t.id.slice(8)), nm = t.value.trim();
+    neuAnlegen($('neutyp_' + p.id).value, nm, p).then(j => { if (j) { p.neu = true; renderSpalten(); const n = $('neuname_' + p.id); if (n) n.focus(); } }); return;
+  }
   const typt = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); palette(''); }
   else if (e.key === '/' && !typt) { e.preventDefault(); palette(''); }
-  else if (e.key === 'Escape' && $('schleier').style.display === 'flex') zuMachen();
-  else if (e.key === 'Enter' && e.target.id === 'neuname' && e.target.value.trim()) neuAnlegen(route().typ, e.target.value.trim());
+  else if (e.key === 'Escape') { if ($('schleier').style.display === 'flex') zuMachen(); else popZu(); if (!typt && ir && $('schleier').style.display !== 'flex') { irHist = []; oeffneInsp(null); } }
+  else if (!typt && ['ArrowDown', 'ArrowUp', 'j', 'k'].includes(e.key)) {
+    const p = paneById(fokusId); if (!p || !p.T || !p.T.length) return;
+    const i = p.T.findIndex(k => k.ref === p.sel), d = (e.key === 'ArrowDown' || e.key === 'j') ? 1 : -1, n = p.T[Math.max(0, Math.min(p.T.length - 1, i < 0 ? 0 : i + d))];
+    if (n) { e.preventDefault(); waehleInPane(p, n.ref); const z = document.querySelector(`.pane[data-pid="${p.id}"] [data-sel="${CSS.escape(n.ref)}"]`); if (z) z.scrollIntoView({block: 'nearest'}); }
+  }
 });
-document.addEventListener('input', e => { if (e.target.id === 'ftext') { filterText = e.target.value; render(); } });
-/* Ziehen im Baum */
+/* Ziehen im Baum (je Spalte) */
 document.addEventListener('dragstart', e => { const z = e.target.closest('[data-drag]'); if (z) { e.dataTransfer.setData('text/plain', z.dataset.drag); e.dataTransfer.effectAllowed = 'copyMove'; } });
-document.addEventListener('dragover', e => { const z = e.target.closest('[data-ziel]'); if (z) { e.preventDefault(); z.classList.add('ueber'); } });
-document.addEventListener('dragleave', e => { const z = e.target.closest('[data-ziel]'); if (z) z.classList.remove('ueber'); });
+document.addEventListener('dragover', e => { const z = e.target.closest('[data-ziel]'); if (z) { e.preventDefault(); z.classList.add('ueber2'); } });
+document.addEventListener('dragleave', e => { const z = e.target.closest('[data-ziel]'); if (z) z.classList.remove('ueber2'); });
 document.addEventListener('drop', e => {
   const z = e.target.closest('[data-ziel]'); if (!z) return;
-  e.preventDefault(); z.classList.remove('ueber');
+  e.preventDefault(); z.classList.remove('ueber2');
   let d; try { d = JSON.parse(e.dataTransfer.getData('text/plain')); } catch (x) { return; }
+  const p = paneVon(z); if (!p || !p.baumArt) return;
   if (z.dataset.ziel === '__wurzel') { if (d.kante) api('kante_weg', {id: d.kante}); return; }
   if (d.ref === z.dataset.ziel) return;
-  const kopie = e.ctrlKey || e.altKey;
-  api('einhaengen', {eltern: z.dataset.ziel, kind: d.ref, art: baumArt, umgekehrt: umgekehrt(), alte_kante: d.kante && !kopie ? d.kante : null});
+  const u = p.baumUmg !== null ? p.baumUmg : artRichtung(p.baumArt);
+  api('einhaengen', {eltern: z.dataset.ziel, kind: d.ref, art: p.baumArt, umgekehrt: u, alte_kante: d.kante && !(e.ctrlKey || e.altKey) ? d.kante : null});
 });
+window.addEventListener('hashchange', () => { hashLesen(); renderInspektor(); });
 
-fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); render(); });
+fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); if (location.hash.length > 1) hashLesen(); render(); });
 </script>
 </body>
 </html>

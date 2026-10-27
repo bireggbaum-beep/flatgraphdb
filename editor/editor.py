@@ -253,6 +253,20 @@ class Editor:
         self.db.create_node(typ, kid, daten)
         return f"{typ}/{kid}", True
 
+    def anlegen_im_kontext(self, typ, name, felder=None, verknuepfen=None):
+        """Anlegen mit Werten und Verknüpfungen aus dem aktiven Filter (der
+        Explorer schlägt sie vor): alles oder nichts.
+        `verknuepfen`: [{ziel, art, richtung: aus|ein|ungerichtet}].
+        Rückgabe (ref, neu); gab es das Objekt schon, bleiben seine Felder
+        unberührt und nur die Verknüpfungen kommen hinzu."""
+        with self.db.transaction():
+            ref, neu = self.knoten_anlegen(typ, name, felder)
+            for v in verknuepfen or []:
+                richtung = v.get("richtung", "aus")
+                von, nach = (v["ziel"], ref) if richtung == "ein" else (ref, v["ziel"])
+                self.kante_anlegen(von, nach, v["art"], gerichtet=richtung != "ungerichtet")
+        return ref, neu
+
     def knoten_aendern(self, ref, name=None, felder=None, notiz=None):
         typ, _, kid = ref.partition("/")
         nf = self._namefeld(typ)
@@ -394,7 +408,8 @@ class Editor:
 
 def _aktionen(ed):
     def anlegen(d):
-        ref, neu = ed.knoten_anlegen(d["typ"], d["name"])
+        ref, neu = ed.anlegen_im_kontext(d["typ"], d["name"], d.get("felder"),
+                                         d.get("verknuepfen"))
         if d.get("unter") and ref != d["unter"]:
             ed.einhaengen(d["unter"], ref, d["art"], umgekehrt=d.get("umgekehrt", False))
         return {"ref": ref, "hinweis": None if neu else "Gab es schon – nicht doppelt angelegt."}
