@@ -14,6 +14,21 @@ Pflichtfelder erscheinen als Lücke (rotes „!“, Filter „Datenqualität“)
 Auswahlfelder nehmen nur Werte aus dem Modell; unbekannte Typen und
 Beziehungsarten werden abgelehnt. Ohne Modell: `--modell keins`.
 
+## Regelwerk und Beispiel
+
+- `editor/regeln.json` sagt, **welche Beziehung zwischen welchen Typen** gilt
+  („Equipment steht in Raum“, „Parameter gehört zu Prozessschritt“, …). Das
+  Datenmodell nennt nur die Beziehungsarten, nicht die Typpaare; die 26 Regeln
+  sind **Annahmen** und frei änderbar. Sie warnen nur (⚠ am Verknüpfungs-Chip,
+  Filter „Gegen das Regelwerk“, Menü ⋯ → Regelwerk anzeigen) und steuern die
+  Wege „nach Regelwerk“. `nicht_durchlaufen` (Dokument, Medium, Software) sind
+  Ziele, aber keine Zwischenschritte; `nur_einzeln` (Nachfolger) wird nicht mit
+  weiteren Schritten verkettet.
+- `python editor/beispiel.py --bestand editor/bestand_beispiel` baut einen
+  Beispielbestand: Fertigung eines Teststreifens über Chemlabor, Siebdruck
+  (Ag/Carbon), Dispensieren, Trocknungen, Montage auf anderer Plant und QC
+  (130 Objekte, 252 Verknüpfungen, mit absichtlichen Lücken).
+
 ## Arbeitsfeld aus Spalten
 
 Mehrere **Spalten** nebeneinander. Jede ist eine eigene Abfrage mit eigener
@@ -22,25 +37,27 @@ Ansicht (**Tabelle, Liste, Baum, Graph**) und eigenen **Facetten**
 mit/ohne, und jede Beziehung einzeln mit ihren Werten und „keine“). Zahlen in
 den Facetten rechnen die anderen Filter der Spalte mit.
 
-- **Zusammenhang** (Facette, in jeder Spalte): der allgemeine Weg. Ein Zusammenhang
-  ist eine Wegbeschreibung — bis wie viele Beziehungsschritte (1–4), welche
-  Richtung, welche Beziehungsarten, und ob der Weg durch gleichartige Objekte
-  laufen darf. Darunter stehen die erreichbaren Objekte **nach Typ** mit Zahlen
-  und „keine“. Innerhalb einer Typ-Liste gilt ODER, zwischen den Listen und
+- **Zusammenhang** (Facette, in jeder Spalte): der allgemeine Weg. Standard ist
+  **„nach Regelwerk“**: bis zu n Typ-Schritte, gegangen werden nur Wege, die das
+  Regelwerk vorsieht (Prozess ← Prozessschritt → Material). Mit **„frei“** wählst
+  du Richtung, Beziehungsarten und Tiefe selbst. Darunter stehen die
+  erreichbaren Objekte **nach Typ** mit Zahlen und „keine“. Innerhalb einer Typ-Liste gilt ODER, zwischen den Listen und
   zwischen mehreren Zusammenhängen UND. Voreinstellungen: „↑ gehört zu“
   (Zugehörigkeitsarten von unten nach oben — „Equipments in Raum X“),
   „↓ enthält“, „beliebig“. So lässt sich jede Kombination bilden, etwa
   „Prozessschritt + Equipment, die zu Prozess Y gehören“ (Typ-Facette beide
   anhaken, Zusammenhang Prozess Y) oder „Equipment in Raum X und Plant Y“.
   **Die Reichweite berechnet flatgraph** (`traverse` mit Kantenfilter) über
-  `/api/reichweite`; die Oberfläche merkt sich das Ergebnis je Wegbeschreibung.
+  `/api/reichweite` (frei: `traverse` mit Kantenfilter; nach Regelwerk: ein
+  `get_connected` je Schritt mit Art, Richtung und Zieltyp); die Oberfläche
+  merkt sich das Ergebnis je Wegbeschreibung.
 - **Menge aus anderer Spalte** (Facette): „in“ oder „nicht in“ den Treffern einer
   früheren Spalte — Schnitt und Differenz.
 - **Eigene Frage** (Fragen-Spalte oder Strg K): ein Satz wird zu Filtern einer
-  freien Spalte; für jede Bedingung wird zuerst „↑ gehört zu“ versucht, sonst
-  „beliebig“. Danach mit den Facetten änderbar.
-- **Weiter →** legt eine Folgespalte an: Ziel-Typ, Tiefe (1–5 Beziehungsschritte),
-  Richtung, nur über bestimmte Beziehungsarten. Quelle ist entweder die
+  freien Spalte (je Bedingung ein Zusammenhang nach Regelwerk, 2 Typ-Schritte).
+  Danach mit den Facetten änderbar.
+- **Weiter →** legt eine Folgespalte an: Ziel-Typ und Tiefe; im Dialog stehen die
+  Wege, die gegangen werden. Frei: Richtung, Beziehungsarten. Quelle ist entweder die
   **Auswahl** in der Spalte (Klick auf eine Zeile füllt die nächste Spalte live)
   oder **alle Treffer**. Mehrere Folgespalten aus derselben Quelle sind möglich.
   Die Spalte „über“ zeigt, über welches Objekt der Vorgänger ein Ergebnis
@@ -76,9 +93,9 @@ Titel zum Umbenennen anklicken; Eigenschaften nach Modell, darunter „+ eigenes
 (beliebiger Name und Wert, ohne Dropdown und Pflichtprüfung; bereits benutzte
 Namen werden vorgeschlagen; auch als Tabellenspalte wählbar); **Notiz** mit
 `[[Name]]` (Vorschläge beim Tippen von `[[`; Umbenennen zieht die Verweise
-nach); **Umfeld**: je Typ, was bis 3 Beziehungsschritte erreichbar ist (gleichartige
-Geschwister blockieren den Weg, so hängt der Temperaturfühler nicht an der Nachbar-CPP);
-Klick öffnet eine Spalte; Verknüpfungen nach Art und Richtung gruppiert, die Art wird aus dem
+nach); **Wo** (oben): die Zugehörigkeitskette (Plant, Raum, Prozess, Prozessschritt);
+**Umfeld**: je Typ, was bis 1–3 Typ-Schritte nach Regelwerk erreichbar ist; Klick öffnet eine Spalte;
+Abschnitte lassen sich einklappen; Verknüpfungen nach Art und Richtung gruppiert, die Art wird aus dem
 vorgeschlagen, was zwischen den beiden Typen schon benutzt wurde; „Erwähnt in“;
 Nachbarschaftsgraph. **Erkunden →** startet eine Spalte von diesem Objekt aus.
 

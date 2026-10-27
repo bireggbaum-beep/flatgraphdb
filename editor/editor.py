@@ -97,6 +97,7 @@ class Modell:
             if k not in gesehen or a == a.lower():
                 gesehen[k] = a
         self.arten = list(gesehen.values())
+        self.regeln, self.hubs, self.einzeln = [], [], []
         self.kantenfelder = {}  # Art -> [Feld]
         for name, spez in kante.get("properties", {}).get("properties", {}).items():
             m = re.search(r"'([^']+)'", spez.get("description", ""))
@@ -104,6 +105,23 @@ class Modell:
             if art:
                 self.kantenfelder.setdefault(art, []).append(
                     {"name": name, "optionen": spez.get("enum")})
+
+    def lade_regeln(self, pfad):
+        """Regelwerk „welche Beziehung zwischen welchen Typen“. Es warnt nur.
+        Gibt die Regeln zurück, die zum Modell nicht passen (unbekannter Typ
+        oder unbekannte Art), damit eine Änderung an der Datei auffällt."""
+        with open(pfad, encoding="utf-8") as f:
+            daten = json.load(f)
+        self.regeln, fehler = [], []
+        self.hubs = [t for t in (self.kanon_typ(x) for x in daten.get("nicht_durchlaufen", [])) if t]
+        self.einzeln = [a for a in (self.kanon_art(x) for x in daten.get("nur_einzeln", [])) if a]
+        for r in daten.get("regeln", []):
+            art, von, nach = self.kanon_art(r.get("art")), self.kanon_typ(r.get("von")), self.kanon_typ(r.get("nach"))
+            if not (art and von and nach):
+                fehler.append(r)
+                continue
+            self.regeln.append({"von": von, "art": art, "nach": nach, "sinn": r.get("sinn", "")})
+        return fehler
 
     def kanon_art(self, text):
         for a in self.arten:
@@ -119,7 +137,8 @@ class Modell:
 
     def als_json(self):
         return {"typen": self.typen, "arten": self.arten,
-                "kantenfelder": self.kantenfelder}
+                "kantenfelder": self.kantenfelder, "regeln": self.regeln,
+                "hubs": self.hubs, "einzeln": self.einzeln}
 
 
 class Editor:
@@ -204,7 +223,73 @@ class Editor:
         return {"knoten": knoten, "kanten": kanten,
                 "modell": self.modell.als_json() if self.modell else None}
 
-    def reichweite(self, quellen, richtung="beide", tiefe=2, arten=None, halt=False):
+    def metapfade(self, von, nach=None, max_hops=2):
+        """Typisierte Wege zwischen Typen nach dem Regelwerk (`regeln.json`).
+
+        Jeder Weg ist eine Liste von Schritten {art, richtung, typ}: „Prozess <-
+        ist Teil von <- Prozessschritt -> benötigt Input -> Material“. Ein Typ
+        kommt je Weg nur einmal vor (kein Kreisen); Typen aus `nicht_durchlaufen`
+        (Dokument, Medium, Software) enden einen Weg, statt ihn fortzusetzen; nur ein Selbstbezug wie
+        „Prozess ist Teil von Prozess“ gilt als erster Schritt. Ohne `nach`
+        alle Wege bis `max_hops` Schritte."""
+        if not (self.modell and self.modell.regeln):
+            return []
+        nachbarn = {}
+        for r in self.modell.regeln:
+            nachbarn.setdefault(r["von"], []).append((r["art"], "aus", r["nach"]))
+            nachbarn.setdefault(r["nach"], []).append((r["art"], "ein", r["von"]))
+        ergebnis = []
+
+        def geh(typ, pfad, besucht):
+            if len(pfad) >= max_hops:
+                return
+            for art, richt, t2 in nachbarn.get(typ, []):
+                einzeln = art in self.modell.einzeln
+                if t2 in besucht and not (not pfad and t2 == typ):
+                    continue
+                neu = pfad + [{"art": art, "richtung": richt, "typ": t2}]
+                if nach is None or t2 == nach:
+                    ergebnis.append(neu)
+                if t2 not in self.modell.hubs and not einzeln:   # Hubs und Reihenfolge enden den Weg
+                    geh(t2, neu, besucht | {t2})
+        geh(von, [], {von})
+        return ergebnis
+
+    def _regel_reichweite(self, quellen, tiefe, typen):
+        """Reichweite entlang der Metapfade: jeder Schritt ist ein flatgraph-
+        `get_connected` mit Kantenart, Richtung und Zieltyp — es wird nur
+        gegangen, was das Regelwerk vorsieht."""
+        tiefe = max(1, min(int(tiefe), 4))
+        ziele = {self._typ_b(t) for t in typen} if typen else None
+        pfade_je_typ, ergebnis = {}, {}
+        for start in quellen:
+            if self.db.get_node(start, readonly=True) is None:
+                continue
+            typ0 = start.partition("/")[0]
+            if typ0 not in pfade_je_typ:
+                pfade_je_typ[typ0] = [p for p in self.metapfade(_anzeige(typ0), None, tiefe)
+                                      if ziele is None or self._typ_b(p[-1]["typ"]) in ziele]
+            tiefen = {}
+            for pfad in pfade_je_typ[typ0]:
+                aktuell = {start}
+                for schritt in pfad:
+                    naechste = set()
+                    for n in aktuell:
+                        naechste.update(self.db.get_connected(
+                            n, direction="out" if schritt["richtung"] == "aus" else "in",
+                            rel_type=self._art_b(schritt["art"]),
+                            target_collection=self._typ_b(schritt["typ"])))
+                    aktuell = naechste
+                    if not aktuell:
+                        break
+                else:
+                    for z in aktuell:
+                        if z != start:
+                            tiefen[z] = min(tiefen.get(z, 99), len(pfad))
+            ergebnis[start] = tiefen
+        return ergebnis
+
+    def reichweite(self, quellen, richtung="beide", tiefe=2, arten=None, halt=False, modus="frei", typen=None):
         """Wer ist von jeder Quelle aus erreichbar — mit flatgraphs `traverse`.
 
         Rückgabe {quelle: {ziel: kürzeste Tiefe}}. Richtung aus | ein | beide;
@@ -213,7 +298,11 @@ class Editor:
         gleichartiges Objekt ist nur als direkter Nachbar erreichbar. So
         hängt eine Nachbar-Parameter nicht „an“ dieser, nur weil beide im
         selben Prozessschritt liegen.
-        Die Tiefe je Ziel ergibt sich aus Läufen mit wachsender Tiefe."""
+        Die Tiefe je Ziel ergibt sich aus Läufen mit wachsender Tiefe.
+        `modus="regel"`: nur entlang der Wege des Regelwerks (Tiefe = Zahl der
+        Typ-Schritte, höchstens 4), optional nur zu den Zieltypen `typen`."""
+        if modus == "regel":
+            return self._regel_reichweite(quellen, tiefe, typen)
         richt = {"aus": "out", "ein": "in", "beide": "both"}.get(richtung)
         if richt is None:
             raise Fehler(f"Unbekannte Richtung „{richtung}“.")
@@ -508,7 +597,11 @@ def _aktionen(ed):
     def reichweite(d):
         sp = d.get("spec") or {}
         return {"reichweite": ed.reichweite(d["quellen"], sp.get("richtung", "beide"), sp.get("tiefe", 2),
-                                            sp.get("arten") or None, bool(sp.get("halt"))), "_nur": True}
+                                            sp.get("arten") or None, bool(sp.get("halt")),
+                                            sp.get("modus", "frei"), sp.get("typen") or None), "_nur": True}
+
+    def metapfade(d):
+        return {"metapfade": ed.metapfade(d["von"], d.get("nach"), int(d.get("tiefe", 2))), "_nur": True}
 
     def mehrere_aendern(d):
         g, u = ed.mehrere_aendern(d["refs"], d.get("felder"), d.get("verknuepfen"))
@@ -543,7 +636,7 @@ def _aktionen(ed):
             "loeschen": loeschen, "zurueck": zurueck, "kante": kante,
             "kante_weg": kante_weg, "kante_felder": kante_felder,
             "mehrere_aendern": mehrere_aendern, "mehrere_loeschen": mehrere_loeschen,
-            "mehrere_zurueck": mehrere_zurueck, "reichweite": reichweite,
+            "mehrere_zurueck": mehrere_zurueck, "reichweite": reichweite, "metapfade": metapfade,
             "einhaengen": einhaengen}
 
 
@@ -606,6 +699,11 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--modell", default=os.path.join(HIER, "modell.json"),
                    help="Datenmodell (JSON-Schema); 'keins' = ohne Modell, alles frei")
+    p.add_argument("--regeln", default=os.path.join(HIER, "regeln.json"),
+                   help="Regelwerk Typ-Art-Typ (Annahmen, warnt nur); 'keine' = ohne")
     a = p.parse_args()
     modell = None if a.modell == "keins" else Modell(a.modell)
+    if modell and a.regeln != "keine" and os.path.exists(a.regeln):
+        for r in modell.lade_regeln(a.regeln):
+            print("Regel passt nicht zum Modell, ignoriert:", r)
     bedienen(Editor(a.bestand, modell), a.port)

@@ -366,6 +366,82 @@ check("Reichweite: von einem gelöschten Objekt aus gibt es nichts", e.reichweit
 e.schliessen()
 shutil.rmtree(W6, ignore_errors=True)
 
+# --- Regelwerk und Beispielbestand (Teststreifenfertigung) ---
+import importlib.util as _iu
+_sp = _iu.spec_from_file_location("beispiel_pruefling", "editor/beispiel.py")
+bsp = _iu.module_from_spec(_sp)
+_sp.loader.exec_module(bsp)
+mm = Modell("editor/modell.json")
+fehler = mm.lade_regeln("editor/regeln.json")
+check("Regelwerk: jede Regel passt zu Typen und Arten des Modells", fehler == [] and len(mm.regeln) == 26, str(fehler))
+W7 = tempfile.mkdtemp(prefix="editor_test_")
+e = Editor(os.path.join(W7, "b"), mm)
+O = bsp.bauen(e)
+z = e.zustand()
+check("Beispiel: baut mit Modellprüfung durch (Typen, Auswahlwerte, Arten)",
+      len(z["knoten"]) >= 120 and len(z["kanten"]) >= 240, f'{len(z["knoten"])}/{len(z["kanten"])}')
+typ = {k["ref"]: k["typ"] for k in z["knoten"]}
+erlaubt = {(r["von"], r["art"], r["nach"]) for r in mm.regeln}
+abweichend = [(typ[k["von"]], k["art"], typ[k["nach"]]) for k in z["kanten"] if (typ[k["von"]], k["art"], typ[k["nach"]]) not in erlaubt]
+check("Beispiel: jede Verknüpfung folgt dem Regelwerk", abweichend == [], str(abweichend[:3]))
+unbenutzt = erlaubt - {(typ[k["von"]], k["art"], typ[k["nach"]]) for k in z["kanten"]}
+check("Beispiel: jede Regel kommt im Beispiel mindestens einmal vor", unbenutzt == set(), str(unbenutzt))
+namen = {k["ref"]: k["name"] for k in z["knoten"]}
+r = e.reichweite([O["p_elek"]], "ein", 2, ["ist Teil von", "gehört zu"])[O["p_elek"]]
+par_el = sorted(namen[x] for x in r if typ[x] == "Parameter")
+erwartet = sorted(namen[O[k]] for k in ("a_rak", "a_nass", "a_tag", "a_zag", "a_rf", "a_rakc", "a_tc", "a_zc", "a_dos", "a_dd", "a_vak", "a_tv", "a_zv"))
+check("Beispiel: „enthält“ (ein, ist Teil von/gehört zu, 2 Schritte) liefert genau die 13 Parameter der Elektrodenfertigung",
+      par_el == erwartet, str(par_el))
+r = e.reichweite([O["plm"]], "ein", 2, ["ist Teil von", "steht in"])[O["plm"]]
+check("Beispiel: Equipment der Plant Montage über Raum (ein, 2 Schritte) = Laminierer, Schneider, Verpackung",
+      sorted(namen[x] for x in r if typ[x] == "Equipment") == sorted(namen[O[k]] for k in ("ma01", "sn01", "vp01")))
+mit_dok = {k["nach"] for k in z["kanten"] if k["art"] == "unterstützt" and typ[k["von"]] == "Dokument"}
+ohne = sorted(namen[x] for x in typ if typ[x] == "Equipment" and x not in mit_dok)
+check("Beispiel: Equipment ohne Qualifizierungsdokument sind genau die absichtlichen Lücken",
+      ohne == sorted(namen[O[k]] for k in ("oi01", "tr02", "sn01", "vp01", "w01", "rw01", "vk01", "ks01", "ms01", "kl01")), str(ohne))
+check("Beispiel: eine Pflichtfeld-Lücke (Mikroskop ohne Kategorie)",
+      [k["name"] for k in z["knoten"] if "EquipmentCategory" in k["fehlt"]] == [namen[O["ms01"]]])
+# Wege nach Regelwerk
+mp = e.metapfade("Prozess", "Material", 2)
+check("Regelwerk-Wege: Prozess -> Material nur über den Schritt (Input und Output)",
+      sorted(tuple((x["art"], x["richtung"], x["typ"]) for x in w) for w in mp) == sorted([
+          (("ist Teil von", "ein", "Prozessschritt"), ("benötigt Input", "aus", "Material")),
+          (("ist Teil von", "ein", "Prozessschritt"), ("erzeugt Output", "aus", "Material"))]), str(mp))
+check("Regelwerk-Wege: ein Dokument verbindet nicht zwei Dinge, die es nur gemeinsam definiert",
+      not any(x["typ"] == "Dokument" for w in e.metapfade("Prozess", "Material", 3) for x in w[:-1]))
+check("Regelwerk-Wege: Dokument ist aber als Ziel erreichbar",
+      any(w[-1]["typ"] == "Dokument" for w in e.metapfade("Prozess", "Dokument", 1)))
+check("Regelwerk-Wege: der Nachfolger eines Schritts gehört nicht über den Vorgänger zu dessen Prozess",
+      not any(x["art"].startswith("führt zu Nachfolger") for w in e.metapfade("Prozessschritt", "Prozess", 3) for x in w))
+check("Regelwerk-Wege: ein Weg mit „Nachfolger“ besteht nur aus diesem einen Schritt",
+      all(len(w) == 1 for w in e.metapfade("Prozess", None, 3) + e.metapfade("Prozessschritt", None, 3)
+          if any(x["art"].startswith("führt zu Nachfolger") for x in w)))
+check("Regelwerk-Wege: die Reihenfolge selbst bleibt als einzelner Schritt erreichbar (vor und zurück)",
+      sorted(w[0]["richtung"] for w in e.metapfade("Prozessschritt", "Prozessschritt", 1) if w[0]["art"].startswith("führt zu Nachfolger")) == ["aus", "ein"])
+check("Regelwerk: Schritte, die zum Prozess gehören — nur die eigenen, nicht die Schritte des Nachfolgeprozesses",
+      sorted(namen[k] for k, v in e.reichweite([O[x] for x in ("s_lam", "s_kuehl", "s_ag", "s_vak")], modus="regel", tiefe=2, typen=["Prozess"]).items()
+             for k2 in v if k2 == O["p_elek"] for k in [k]) == sorted(namen[O[x]] for x in ("s_ag", "s_vak")))
+check("Regelwerk-Wege: kein Weg über Geschwister (Equipment -> Raum -> Equipment gibt es nicht)",
+      e.metapfade("Equipment", "Equipment", 3) == [])
+check("Regelwerk-Wege: Selbstbezug nur als erster Schritt (Prozess -> Prozess, 1 Schritt)",
+      [[(x["art"], x["richtung"]) for x in w] for w in e.metapfade("Prozess", "Prozess", 1)] ==
+      [[("ist Teil von", "aus")], [("ist Teil von", "ein")]])
+check("Regelwerk-Wege: ohne Regelwerk keine Wege", Editor(os.path.join(W7, "x"), Modell("editor/modell.json")).metapfade("Prozess", "Material", 2) == [])
+rg = e.reichweite([O["p_elek"]], modus="regel", tiefe=2, typen=["Parameter"])[O["p_elek"]]
+frei = e.reichweite([O["p_elek"]], "beide", 3)[O["p_elek"]]
+check("Regelwerk: Parameter des Prozesses sind genau die 13 — frei über alles wären es mehr (Streuung über den Ablauf)",
+      sorted(namen[x] for x in rg) == erwartet and len([x for x in frei if typ[x] == "Parameter" and "Parameter" in typ[x]]) > 13,
+      f'{len(rg)} / {len([x for x in frei if typ[x] == "Parameter"])}')
+check("Regelwerk: Equipment, das einen Parameter steuert oder überwacht (1 Schritt)",
+      set(e.reichweite([O["a_tag"]], modus="regel", tiefe=1, typen=["Equipment"])[O["a_tag"]]) == {O["tr01"]})
+check("Regelwerk: Plant eines Equipments über den Raum (2 Schritte), nicht darüber hinaus",
+      set(e.reichweite([O["ma01"]], modus="regel", tiefe=2, typen=["Plant"])[O["ma01"]]) == {O["plm"]})
+check("Regelwerk: die Tiefe zählt Typ-Schritte",
+      e.reichweite([O["ma01"]], modus="regel", tiefe=2, typen=["Plant"])[O["ma01"]][O["plm"]] == 2
+      and e.reichweite([O["ma01"]], modus="regel", tiefe=1, typen=["Plant"])[O["ma01"]] == {})
+e.schliessen()
+shutil.rmtree(W7, ignore_errors=True)
+
 shutil.rmtree(WURZEL, ignore_errors=True)
 bestanden = sum(1 for _, ok, _ in results if ok)
 print(f"\n{bestanden}/{len(results)} Checks bestanden")
