@@ -204,6 +204,40 @@ class Editor:
         return {"knoten": knoten, "kanten": kanten,
                 "modell": self.modell.als_json() if self.modell else None}
 
+    def reichweite(self, quellen, richtung="beide", tiefe=2, arten=None, halt=False):
+        """Wer ist von jeder Quelle aus erreichbar — mit flatgraphs `traverse`.
+
+        Rückgabe {quelle: {ziel: kürzeste Tiefe}}. Richtung aus | ein | beide;
+        `arten` (Anzeigenamen) beschränkt die Wege auf diese Beziehungsarten.
+        `halt`: der Weg läuft nicht durch Objekte vom Typ der Quelle — ein
+        gleichartiges Objekt ist nur als direkter Nachbar erreichbar. So
+        hängt eine Nachbar-Parameter nicht „an“ dieser, nur weil beide im
+        selben Prozessschritt liegen.
+        Die Tiefe je Ziel ergibt sich aus Läufen mit wachsender Tiefe."""
+        richt = {"aus": "out", "ein": "in", "beide": "both"}.get(richtung)
+        if richt is None:
+            raise Fehler(f"Unbekannte Richtung „{richtung}“.")
+        tiefe = max(1, min(int(tiefe), 6))
+        arten_b = {self._art_b(a) for a in arten} if arten else None
+        ergebnis = {}
+        for start in quellen:
+            if self.db.get_node(start, readonly=True) is None:
+                continue
+            gleich = start.partition("/")[0] + "/"
+
+            def kante_ok(k, start=start, gleich=gleich):
+                if arten_b is not None and k["type"] not in arten_b:
+                    return False
+                if halt and start != k["source"] and start != k["target"]:
+                    return not (k["source"].startswith(gleich) or k["target"].startswith(gleich))
+                return True
+            tiefen = {}
+            for d in range(1, tiefe + 1):
+                for ziel in self.db.traverse(start, direction=richt, max_depth=d, kantenfilter=kante_ok):
+                    tiefen.setdefault(ziel, d)
+            ergebnis[start] = tiefen
+        return ergebnis
+
     def _erreichbar(self, start, ziel, art):
         """Führt von `start` über gerichtete Kanten dieser Art ein Weg zu `ziel`?"""
         gesehen, offen = set(), [start]
@@ -471,6 +505,11 @@ def _aktionen(ed):
     def zurueck(d):
         ed.knoten_zurueck(d["ref"])
 
+    def reichweite(d):
+        sp = d.get("spec") or {}
+        return {"reichweite": ed.reichweite(d["quellen"], sp.get("richtung", "beide"), sp.get("tiefe", 2),
+                                            sp.get("arten") or None, bool(sp.get("halt"))), "_nur": True}
+
     def mehrere_aendern(d):
         g, u = ed.mehrere_aendern(d["refs"], d.get("felder"), d.get("verknuepfen"))
         teile = ([f"{g} Objekte geändert"] if d.get("felder") else []) + ([f"{u} übersprungen (Feld gehört zu anderem Typ)"] if u else [])
@@ -504,7 +543,7 @@ def _aktionen(ed):
             "loeschen": loeschen, "zurueck": zurueck, "kante": kante,
             "kante_weg": kante_weg, "kante_felder": kante_felder,
             "mehrere_aendern": mehrere_aendern, "mehrere_loeschen": mehrere_loeschen,
-            "mehrere_zurueck": mehrere_zurueck,
+            "mehrere_zurueck": mehrere_zurueck, "reichweite": reichweite,
             "einhaengen": einhaengen}
 
 
@@ -542,6 +581,8 @@ def bedienen(ed, port):
                 return self._senden(400, {"fehler": str(f)})
             except Exception as f:  # der Benutzer soll den Grund sehen, nicht nur "500"
                 return self._senden(400, {"fehler": f"{type(f).__name__}: {f}"})
+            if antwort.pop("_nur", False):      # reine Abfrage: kein Zustand mitschicken
+                return self._senden(200, antwort)
             antwort["zustand"] = ed.zustand()
             self._senden(200, antwort)
 

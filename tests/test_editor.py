@@ -324,6 +324,48 @@ check("Masse: zurückholen bringt alle samt Verknüpfungen zurück",
 e.schliessen()
 shutil.rmtree(W5, ignore_errors=True)
 
+# --- Reichweite über flatgraphs traverse ---
+W6 = tempfile.mkdtemp(prefix="editor_test_")
+e = Editor(os.path.join(W6, "b"), m)
+pr, _ = e.knoten_anlegen("Prozess", "P1")
+s1, _ = e.knoten_anlegen("Prozessschritt", "S1")
+s2, _ = e.knoten_anlegen("Prozessschritt", "S2")
+pa, _ = e.knoten_anlegen("Parameter", "A")
+pb, _ = e.knoten_anlegen("Parameter", "B")
+e1, _ = e.knoten_anlegen("Equipment", "E1")
+e2, _ = e.knoten_anlegen("Equipment", "E2")
+rr, _ = e.knoten_anlegen("Raum", "R")
+for v, n, a in [(s1, pr, "ist Teil von"), (s2, pr, "ist Teil von"), (pa, s1, "ist Teil von"),
+                (pb, s2, "ist Teil von"), (e1, pa, "überwacht/regelt"), (e2, pb, "überwacht/regelt"),
+                (e1, rr, "steht in"), (e2, rr, "steht in")]:
+    e.kante_anlegen(v, n, a)
+r = e.reichweite([pr], "beide", 3)[pr]
+check("Reichweite: Tiefe je Ziel (Schritte 1, Parameter 2, Equipment 3)",
+      r[s1] == 1 and r[s2] == 1 and r[pa] == 2 and r[pb] == 2 and r[e1] == 3 and r[e2] == 3, str(r))
+check("Reichweite: die Tiefe begrenzt", pa not in e.reichweite([pr], "beide", 1)[pr])
+check("Reichweite: Richtung „ein“ folgt nur eingehenden Kanten",
+      set(e.reichweite([pr], "ein", 3)[pr]) == {s1, s2, pa, pb, e1, e2}
+      and e.reichweite([pr], "aus", 3)[pr] == {})
+check("Reichweite: Arten beschränken den Weg",
+      set(e.reichweite([e1], "beide", 3, ["überwacht/regelt"])[e1]) == {pa}, str(e.reichweite([e1], "beide", 3, ["überwacht/regelt"])))
+check("Reichweite: die Nachbar-Parameter liegt über Schritt und Prozess in Tiefe 4",
+      e.reichweite([pa], "beide", 4)[pa].get(pb) == 4 and pb not in e.reichweite([pa], "beide", 3)[pa])
+tf = e.reichweite([pa], "beide", 4)[pa]
+th = e.reichweite([pa], "beide", 4, None, True)[pa]
+check("Reichweite: ohne halt kommt man über den Prozess zur anderen Parameter", pb in tf, str(tf))
+check("Reichweite: mit halt läuft der Weg nicht durch Objekte gleichen Typs",
+      pb not in th and e1 in th and s1 in th, str(th))
+try:
+    e.reichweite([pr], "beide", 2, ["wohnt in"])
+    check("Reichweite: unbekannte Beziehungsart wird abgelehnt", False)
+except Fehler:
+    check("Reichweite: unbekannte Beziehungsart wird abgelehnt", True)
+e.knoten_loeschen(s1)
+check("Reichweite: gelöschte Objekte zählen nicht", s1 not in e.reichweite([pr], "beide", 3)[pr])
+check("Reichweite: von einem gelöschten Objekt aus gibt es nichts", e.reichweite([s1], "beide", 3) == {})
+e.schliessen()
+shutil.rmtree(W6, ignore_errors=True)
+
 shutil.rmtree(WURZEL, ignore_errors=True)
 bestanden = sum(1 for _, ok, _ in results if ok)
 print(f"\n{bestanden}/{len(results)} Checks bestanden")

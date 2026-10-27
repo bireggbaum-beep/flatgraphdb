@@ -22,13 +22,30 @@ Ansicht (**Tabelle, Liste, Baum, Graph**) und eigenen **Facetten**
 mit/ohne, und jede Beziehung einzeln mit ihren Werten und „keine“). Zahlen in
 den Facetten rechnen die anderen Filter der Spalte mit.
 
+- **Zusammenhang** (Facette, in jeder Spalte): der allgemeine Weg. Ein Zusammenhang
+  ist eine Wegbeschreibung — bis wie viele Beziehungsschritte (1–4), welche
+  Richtung, welche Beziehungsarten, und ob der Weg durch gleichartige Objekte
+  laufen darf. Darunter stehen die erreichbaren Objekte **nach Typ** mit Zahlen
+  und „keine“. Innerhalb einer Typ-Liste gilt ODER, zwischen den Listen und
+  zwischen mehreren Zusammenhängen UND. Voreinstellungen: „↑ gehört zu“
+  (Zugehörigkeitsarten von unten nach oben — „Equipments in Raum X“),
+  „↓ enthält“, „beliebig“. So lässt sich jede Kombination bilden, etwa
+  „Prozessschritt + Equipment, die zu Prozess Y gehören“ (Typ-Facette beide
+  anhaken, Zusammenhang Prozess Y) oder „Equipment in Raum X und Plant Y“.
+  **Die Reichweite berechnet flatgraph** (`traverse` mit Kantenfilter) über
+  `/api/reichweite`; die Oberfläche merkt sich das Ergebnis je Wegbeschreibung.
+- **Menge aus anderer Spalte** (Facette): „in“ oder „nicht in“ den Treffern einer
+  früheren Spalte — Schnitt und Differenz.
+- **Eigene Frage** (Fragen-Spalte oder Strg K): ein Satz wird zu Filtern einer
+  freien Spalte; für jede Bedingung wird zuerst „↑ gehört zu“ versucht, sonst
+  „beliebig“. Danach mit den Facetten änderbar.
 - **Weiter →** legt eine Folgespalte an: Ziel-Typ, Tiefe (1–5 Beziehungsschritte),
   Richtung, nur über bestimmte Beziehungsarten. Quelle ist entweder die
   **Auswahl** in der Spalte (Klick auf eine Zeile füllt die nächste Spalte live)
   oder **alle Treffer**. Mehrere Folgespalten aus derselben Quelle sind möglich.
   Die Spalte „über“ zeigt, über welches Objekt der Vorgänger ein Ergebnis
   erreicht wurde. ⚙ ändert die Quelle nachträglich.
-- **Fragen** (oben): typische Auswertungen als fertige Spaltenkette, zum Beispiel
+- **Fragen** (oben): Vorlagen für typische Auswertungen als fertige Spaltenkette, zum Beispiel
   „CPPs eines Prozesses – und wer sie kontrolliert“ oder „Materialien in einem
   Prozess“. Objekt wählen, fertig.
 - **Anlegen im Kontext** (＋ in der Spalte): Filter, die genau einen Wert

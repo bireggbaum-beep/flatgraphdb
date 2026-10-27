@@ -86,6 +86,8 @@ kbd{font:11px ui-monospace,monospace;border:1px solid var(--lin2);border-radius:
 .pill.on.neg{background:var(--warn);border-color:var(--warn)}.pill.null{opacity:.35}
 .mehr{padding:2px 9px;color:var(--akz);font-size:12px}
 .fhint{padding:2px 10px 8px;color:var(--dim);font-size:12px}
+.zblock{border:1px solid var(--lin);border-radius:8px;margin:4px 4px 8px;padding:4px 2px 6px;background:rgba(255,255,255,.015)}
+.zkopf{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:4px 8px 6px}.zkopf select{padding:2px 6px;font-size:12px}.zkopf .chk{font-size:12px;color:var(--mut);display:flex;gap:4px;align-items:center}
 .fsub{padding:8px 8px 2px;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-top:1px dashed var(--lin);margin-top:6px}
 
 /* Ergebnisse */
@@ -224,7 +226,7 @@ async function api(aktion, daten) {
   const r = await fetch('/api/' + aktion, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(daten || {})});
   const j = await r.json();
   if (!r.ok) { toast(j.fehler || 'Fehler', true); return null; }
-  S = j.zustand; indexieren();
+  S = j.zustand; indexieren(); RC.clear();
   if (ir && !M.has(ir)) ir = null;
   if (j.hinweis) toast(j.hinweis);
   render();
@@ -232,7 +234,8 @@ async function api(aktion, daten) {
 }
 
 /* ================= Arbeitsfeld: Spalten ================= */
-const leer = () => ({typen: [], props: {}, mit: {}, rel: {}, nprop: {}, text: '', luecke: 0, lose: 0});
+const nid = () => Math.random().toString(36).slice(2, 8);
+const leer = () => ({typen: [], props: {}, mit: {}, rel: {}, nprop: {}, zus: [], mengen: {}, text: '', luecke: 0, lose: 0});
 let pid = 1;
 const paneNeu = o => ({id: pid++, quelle: null, st: leer(), ansicht: 'tabelle', sel: null, sortSp: null, sortR: 1, zeilenMax: 200, cols: [],
   fac: false, neu: false, baumArt: null, baumUmg: null, zuB: [], umF: [], mehrF: [], gruppe: null, zuG: [], ...(o || {})});
@@ -243,7 +246,7 @@ const paneById = id => W.panes.find(p => p.id === id);
 const paneVon = t => { const el = t.closest('.pane'); return el ? paneById(+el.dataset.pid) : paneById(fokusId); };
 const speichern = () => ls.set('arbeitsfeld', JSON.stringify(W, (k, v) => (k === 'ERG' || k === 'T' || k === 'basis' || k === 'cols_') ? undefined : v));
 
-function pruefungen(st) {
+function pruefungen(st, U) {
   const P = [];
   if (st.typen.length) P.push({key: 'typ', f: k => st.typen.includes(k.typ)});
   for (const [f, v] of Object.entries(st.props)) if (v.length) P.push({key: 'p:' + f, f: k => v.includes(k.felder[f] ?? '')});
@@ -251,6 +254,17 @@ function pruefungen(st) {
   for (const [rk, v] of Object.entries(st.rel)) if (v.length) {
     const [dir, art] = rk.split('|');
     P.push({key: 'r:' + rk, f: k => { const ns = nbrs(k.ref).filter(n => n.dir === dir && n.art === art).map(n => n.andere); return v.some(x => x === '∅' ? !ns.length : ns.includes(x)); }});
+  }
+  for (const c of st.zus || []) {
+    const m = reichKarte(U.map(k => k.ref), c.spec);          // vermerkt Fehlendes zum Nachladen
+    for (const [typ, list] of Object.entries(c.anker)) if (list.length) P.push({key: 'z:' + c.id + '|' + typ, f: k => {
+      const r = m.get(k.ref); if (!r) return true;           // noch nicht geladen: vorläufig durchlassen
+      return list.some(x => x === '∅' ? ![...r.keys()].some(t => (M.get(t) || {}).typ === typ) : r.has(x));
+    }});
+  }
+  for (const [id, v] of Object.entries(st.mengen || {})) if (v) {
+    const pm = paneById(+id), set = new Set(pm && pm.ERG ? pm.ERG.treffer.map(k => k.ref) : []);
+    P.push({key: 'e:' + id, f: k => set.has(k.ref) === (v > 0)});
   }
   for (const [nk, v] of Object.entries(st.nprop || {})) if (v.length) {
     const [dir, art, fld] = nk.split('|');
@@ -262,39 +276,43 @@ function pruefungen(st) {
   return P;
 }
 function auswerten(st, basis) {
-  const U = basis ? basis.refs.map(r => M.get(r)).filter(Boolean) : S.knoten, P = pruefungen(st);
+  const U = basis ? basis.refs.map(r => M.get(r)).filter(Boolean) : S.knoten, P = pruefungen(st, U);
   const info = U.map(k => ({k, f: P.filter(p => !p.f(k)).map(p => p.key)}));
   return {U, treffer: info.filter(x => !x.f.length).map(x => x.k), el: key => info.filter(x => !x.f.length || (x.f.length === 1 && x.f[0] === key)).map(x => x.k)};
 }
 const zaehl = (liste, fn) => { const m = new Map(); for (const k of liste) { const v = fn(k); if (v !== undefined) m.set(v, (m.get(v) || 0) + 1); } return m; };
-const gefiltert = st => st.typen.length || Object.keys(st.props).length || Object.keys(st.mit).length || Object.keys(st.rel).length || Object.keys(st.nprop || {}).length || st.text || st.luecke || st.lose;
+const gefiltert = st => st.typen.length || (st.zus || []).some(c => Object.values(c.anker).some(l => l.length)) || Object.values(st.mengen || {}).some(Boolean) || Object.keys(st.props).length || Object.keys(st.mit).length || Object.keys(st.rel).length || Object.keys(st.nprop || {}).length || st.text || st.luecke || st.lose;
 
-/* Weitergehen: von einer Menge zu Objekten (eines Typs) über mehrere Beziehungen */
-function erreichbar(quellen, o) {
-  const ziele = new Map();
-  for (const q of quellen) {
-    const gesehen = new Set([q]); let front = [q];
-    for (let d = 1; d <= o.tiefe && front.length; d++) {
-      const next = [];
-      for (const r of front) for (const n of nbrs(r)) {
-        if ((o.richtung === 'aus' && n.dir === 'ein') || (o.richtung === 'ein' && n.dir === 'aus')) continue;
-        if (o.arten && o.arten.length && !o.arten.includes(n.art)) continue;
-        if (gesehen.has(n.andere)) continue;
-        const k = M.get(n.andere); if (!k) continue;
-        gesehen.add(n.andere);
-        if (!o.typ || k.typ === o.typ) {
-          if (!ziele.has(n.andere)) ziele.set(n.andere, new Set()); ziele.get(n.andere).add(q);
-          // Trefferobjekte nur dann weiter durchlaufen, wenn die Arten eingeschränkt sind (Ketten wie „Nachfolger“)
-          if (o.typ && !(o.arten && o.arten.length)) continue;
-        }
-        if (o.halt && k.typ === o.halt) continue;     // nicht durch gleichartige Geschwister hindurch
-        next.push(n.andere);
-      }
-      front = next;
-    }
-  }
+/* Weitergehen: die Reichweite kommt von flatgraph (traverse) über /api/reichweite.
+   Hier liegt nur ein Zwischenspeicher je Wegbeschreibung (Richtung, Tiefe, Arten, halt).
+   Fehlendes wird beim Rechnen vermerkt und danach in einem Zug nachgeladen. */
+const RC = new Map(); let MISS = new Map();
+const specKey = o => JSON.stringify([o.richtung || 'beide', o.tiefe, o.arten && o.arten.length ? [...o.arten].sort() : null, o.halt ? 1 : 0]);
+function reichKarte(quellen, o) {     // Map Quelle -> Map(Ziel -> Tiefe)
+  const key = specKey(o); let c = RC.get(key); if (!c) { c = new Map(); RC.set(key, c); }
+  const fehl = quellen.filter(q => !c.has(q));
+  if (fehl.length) { if (!MISS.has(key)) MISS.set(key, {o, key, refs: new Set()}); fehl.forEach(q => MISS.get(key).refs.add(q)); }
+  return c;
+}
+async function holeMiss() {
+  const jobs = [...MISS.values()]; MISS = new Map();
+  await Promise.all(jobs.map(async j => {
+    const refs = [...j.refs], c = RC.get(j.key);
+    try {
+      const r = await fetch('/api/reichweite', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({quellen: refs, spec: {richtung: j.o.richtung || 'beide', tiefe: j.o.tiefe, arten: j.o.arten || null, halt: !!j.o.halt}})});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.fehler || 'Fehler');
+      for (const q of refs) c.set(q, new Map(Object.entries(d.reichweite[q] || {})));
+    } catch (e) { toast('Reichweite nicht berechnet: ' + e.message, true); for (const q of refs) c.set(q, new Map()); }
+  }));
+}
+function erreichbar(quellen, o) {      // Map Ziel -> Menge der Quellen; der Typ-Filter wirkt erst auf das Ergebnis
+  const c = reichKarte(quellen, o), ziele = new Map();
+  for (const q of quellen) { const r = c.get(q); if (!r) continue; for (const t of r.keys()) { const k = M.get(t); if (!k || (o.typ && k.typ !== o.typ)) continue; if (!ziele.has(t)) ziele.set(t, new Set()); ziele.get(t).add(q); } }
   return ziele;
 }
+let rechneGen = 0;
+async function rechne() { for (let i = 0; i < 12; i++) { MISS = new Map(); berechne(); if (!MISS.size) return; await holeMiss(); } }
 function pfad(quellen, q) {
   if (q.tiefe === 0) return {refs: quellen.slice(), herkunft: {}};
   const z = erreichbar(quellen, q), herkunft = {}; z.forEach((v, k) => herkunft[k] = [...v]);
@@ -310,10 +328,10 @@ function berechne() {
   const fertig = new Set();
   const f = p => {
     if (fertig.has(p.id)) return; fertig.add(p.id);
-    const q = p.quelle; p.basis = null; p.wartet = false; p.st.nprop ||= {}; p.zuG ||= [];
+    const q = p.quelle; p.basis = null; p.wartet = false; p.st.nprop ||= {}; p.st.zus ||= []; p.st.mengen ||= {}; p.zuG ||= [];
+    for (const id of Object.keys(p.st.mengen)) { const m = paneById(+id); if (m && m !== p) f(m); else delete p.st.mengen[id]; }
     if (q) {
       if (q.kind === 'pane') { const par = paneById(q.von); if (!par) { p.quelle = null; } else { f(par); const qs = quellenVon(q); p.wartet = !qs.length && q.modus !== 'alle'; p.basis = pfad(qs, q); } }
-      else if (q.kind === 'anker') p.basis = ankerPfad(q);
       else p.basis = pfad(quellenVon(q), q);
     }
     p.ERG = auswerten(p.st, p.basis);
@@ -350,7 +368,7 @@ function oeffneInsp(ref, ohneHist) {   // nur den Inspektor bewegen, nicht die S
 }
 function waehleInPane(p, ref) {
   p.sel = ref; fokusId = p.id; if (ref) { if (ir && ref !== ir) irHist.push(ir); ir = ref; zuletzt(ref); }
-  berechne(); renderSpalten(); renderInspektor(); hashSetzen(); speichern();
+  rechne().then(() => { renderSpalten(); renderInspektor(); hashSetzen(); speichern(); });
 }
 function hashSetzen() { const h = ir ? enc(ir) : ''; if (location.hash.slice(1) !== h) history.replaceState(null, '', '#' + h); }
 function hashLesen() { const h = decodeURIComponent(location.hash.slice(1)); ir = h && M.has(h) ? h : null; }
@@ -434,12 +452,16 @@ function facettenHtml(p) {
     out.push(facette(p, key, esc(f.name), zeilenListe(p, key, werte.map(v => ({n: c.get(v) || 0, on: a.includes(v), html: fzRow('fw', key, v, v === '' ? '(leer)' : v, c.get(v) || 0, a.includes(v), mx)}))), a.length, true));
   }
   if (!st.typen.length) out.push('<div class="fhint" style="padding-top:8px">Typ wählen, um nach Eigenschaften zu filtern.</div>');
+  const aktivZ = (st.zus || []).reduce((n, c) => n + Object.values(c.anker).reduce((m, l) => m + l.length, 0), 0);
+  out.push(facette(p, 'zus', 'Zusammenhang', (st.zus || []).map(c => zusBlock(p, c, A)).join('') + '<button class="mehr" data-act="zus_neu">＋ Zusammenhang hinzufügen</button>' + ((st.zus || []).length ? '' : '<div class="fhint">Objekte, die bis zu n Beziehungsschritte mit gewählten Objekten zusammenhängen — ohne die Beziehungsart zu kennen. Mehrere Listen gelten zusammen.</div>'), aktivZ, true));
   const cl = zaehl(A.el('luecke'), k => k.fehlt.length > 0), cb = zaehl(A.el('lose'), k => hatBez(k.ref));
   out.push(facette(p, 'qual', 'Datenqualität',
     (S.modell ? pillZeile('luecke', 'Pflichtfelder', cl.get(false) || 0, cl.get(true) || 0, st.luecke, 'komplett', 'Lücke') : '')
     + pillZeile('lose', 'Verknüpfungen', cb.get(true) || 0, cb.get(false) || 0, st.lose, 'mit', 'ohne'), (st.luecke ? 1 : 0) + (st.lose ? 1 : 0), false));
   const mitRows = typenListe().map(t => { const c = zaehl(A.el('m:' + t), k => hatTyp(k.ref, t)); return {t, ja: c.get(true) || 0, nein: c.get(false) || 0}; }).filter(r => r.ja || st.mit[r.t]);
   out.push(facette(p, 'mit', 'Verknüpft mit Typ', mitRows.map(r => pillZeile('m:' + r.t, r.t, r.ja, r.nein, st.mit[r.t] || 0, 'mit', 'ohne')).join('') || '<div class="fhint">Noch keine Verknüpfungen.</div>', Object.values(st.mit).filter(Boolean).length, false));
+  const fruehere = W.panes.slice(0, W.panes.indexOf(p)).filter(x => x.ERG);
+  if (fruehere.length) out.push(facette(p, 'mengen', 'Menge aus anderer Spalte', fruehere.map(x => { const set = new Set(x.ERG.treffer.map(k => k.ref)), c = zaehl(A.el('e:' + x.id), k => set.has(k.ref)); return pillZeile('e:' + x.id, paneTitel(x).t + ' (' + set.size + ')', c.get(true) || 0, c.get(false) || 0, (st.mengen || {})[x.id] || 0, 'in', 'nicht in'); }).join(''), Object.values(st.mengen || {}).filter(Boolean).length, false));
   const combos = new Map();
   for (const k of A.treffer) { const g = new Set(); for (const n of nbrs(k.ref)) { const rk = n.dir + '|' + n.art; if (!g.has(rk)) { g.add(rk); combos.set(rk, (combos.get(rk) || 0) + 1); } } }
   for (const rk of Object.keys(st.rel)) if (!combos.has(rk)) combos.set(rk, 0);
@@ -463,6 +485,42 @@ function facettenHtml(p) {
   });
   return `<div class="fkopf"><input class="ftxt" id="ftxt_${p.id}" placeholder="Im Ergebnis suchen …" value="${esc(st.text)}" autocomplete="off"></div>${out.join('')}`;
 }
+// Wege: „gehört zu“ folgt den Zugehörigkeitsarten von unten nach oben, „enthält“ umgekehrt, „beliebig“ ist ungerichtet über alles
+const zugArten = () => [...new Set(S.kanten.map(e => e.art))].filter(a => artRichtung(a));
+function presetSpec(name, tiefe) {
+  const arten = zugArten(), t = tiefe || 3;
+  if (name === 'zugehoerig' && arten.length) return {richtung: 'aus', tiefe: t, arten, halt: true};
+  if (name === 'enthaelt' && arten.length) return {richtung: 'ein', tiefe: t, arten, halt: true};
+  return {richtung: 'beide', tiefe: t, arten: null, halt: true};
+}
+function presetVon(sp) {
+  const arten = zugArten(), gleich = (sp.arten || []).slice().sort().join('|') === arten.slice().sort().join('|');
+  if (sp.arten && sp.arten.length && gleich && sp.richtung === 'aus') return 'zugehoerig';
+  if (sp.arten && sp.arten.length && gleich && sp.richtung === 'ein') return 'enthaelt';
+  if (!sp.arten && sp.richtung === 'beide') return 'beliebig';
+  return '';
+}
+function zusBlock(p, c, A) {
+  const rm = reichKarte(A.U.map(k => k.ref), c.spec);
+  const typen = [...new Set(A.U.flatMap(k => { const r = rm.get(k.ref); return r ? [...r.keys()].map(t => (M.get(t) || {}).typ).filter(Boolean) : []; }))];
+  for (const t of Object.keys(c.anker)) if (!typen.includes(t)) typen.push(t);
+  typen.sort((a, b) => typenListe().indexOf(a) - typenListe().indexOf(b));
+  const pv = presetVon(c.spec), pb = (n, t, tip) => `<button class="${pv === n ? 'on' : ''}" data-act="zus_preset" data-id="${c.id}" data-p="${n}" title="${tip}">${t}</button>`;
+  const kopf = `<div class="zkopf" style="padding-bottom:0"><div class="seg">${pb('zugehoerig', '↑ gehört zu', 'Zugehörigkeitsarten von unten nach oben (ist Teil von, gehört zu, steht in)')}${pb('enthaelt', '↓ enthält', 'umgekehrt: was dazu gehört')}${pb('beliebig', 'beliebig', 'alle Beziehungen, in beide Richtungen')}</div></div>
+    <div class="zkopf"><span class="dim">bis</span><div class="seg">${[1, 2, 3, 4].map(n => `<button class="${c.spec.tiefe === n ? 'on' : ''}" data-act="zus_tiefe" data-id="${c.id}" data-n="${n}">${n}</button>`).join('')}</div><span class="dim">Schritte</span>
+    <select class="zusrichtung" data-id="${c.id}">${[['beide', 'in beide Richtungen'], ['aus', 'nur ausgehend →'], ['ein', 'nur ← eingehend']].map(([v, t]) => `<option value="${v}"${c.spec.richtung === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
+    <button class="ghost" data-act="zus_arten" data-id="${c.id}" style="padding:1px 6px">Arten${c.spec.arten && c.spec.arten.length ? ` <span class="badge">${c.spec.arten.length}</span>` : ' alle'}</button>
+    <label class="chk" title="Der Weg läuft nicht durch Objekte vom Typ des geprüften Objekts"><input type="checkbox" class="zushalt" data-id="${c.id}"${c.spec.halt ? ' checked' : ''}> nicht durch Gleichartige</label><button class="x" data-act="zus_weg" data-id="${c.id}" title="Diesen Zusammenhang entfernen">×</button></div>`;
+  const listen = typen.map(t => {
+    const key = 'z:' + c.id + '|' + t, a = c.anker[t] || [], cnt = new Map(); let keine = 0;
+    for (const k of A.el(key)) { const r = rm.get(k.ref); if (!r) continue; let any = false; for (const tg of r.keys()) { const o = M.get(tg); if (o && o.typ === t) { cnt.set(tg, (cnt.get(tg) || 0) + 1); any = true; } } if (!any) keine++; }
+    const mx = Math.max(1, ...cnt.values()), rows = [...cnt.entries()].map(([r, n]) => ({n, on: a.includes(r), html: fzRow('fw', key, r, nameVon(r), n, a.includes(r), mx)}));
+    for (const r of a) if (r !== '∅' && !cnt.has(r) && M.has(r)) rows.push({n: 0, on: true, html: fzRow('fw', key, r, nameVon(r), 0, true, mx)});
+    const kz = `<div class="fz${a.includes('∅') ? ' on' : ''}${!keine && !a.includes('∅') ? ' null' : ''}" data-act="fw" data-k="${esc(key)}" data-v="∅"><span class="cb"></span><span class="fl"><i>keine</i></span><span class="fn">${keine}</span></div>`;
+    return `<div class="fsub">${punkt(t)} ${esc(t)}</div>${kz}${zeilenListe(p, key, rows)}`;
+  }).join('');
+  return `<div class="zblock">${kopf}${listen || '<div class="fhint">Keine Zusammenhänge in dieser Menge — oder noch nicht geladen.</div>'}</div>`;
+}
 function filterChips(p) {
   const st = p.st, c = [];
   const chip = (txt, act, k, v, neg) => c.push(`<span class="fchip${neg ? ' neg' : ''}">${txt}<button data-act="${act}" data-k="${esc(k)}" data-v="${esc(v)}" title="Entfernen">×</button></span>`);
@@ -471,6 +529,8 @@ function filterChips(p) {
   for (const [t, v] of Object.entries(st.mit)) if (v) chip(`${v > 0 ? 'mit' : 'ohne'} ${esc(t)}`, 'pill', 'm:' + t, v, v < 0);
   for (const [rk, v] of Object.entries(st.rel)) { const [dir, art] = rk.split('|'); v.forEach(x => chip(`${dir === 'ein' ? '← ' : ''}${esc(art)}${dir === 'aus' ? ' →' : ''} ${x === '∅' ? '<i>keine</i>' : esc(nameVon(x))}`, 'fw', 'r:' + rk, x, x === '∅')); }
   for (const [nk, v] of Object.entries(st.nprop || {})) { const [dir, art, fld] = nk.split('|'); v.forEach(x => chip(`${dir === 'ein' ? '← ' : ''}${esc(art)}${dir === 'aus' ? ' →' : ''} · ${esc(fld)} = ${esc(x === '' ? '(leer)' : x)}`, 'fw', 'n:' + nk, x)); }
+  for (const c of st.zus || []) for (const [t, v] of Object.entries(c.anker)) v.forEach(x => chip(`≤${c.spec.tiefe} Schritte · ${esc(t)} ${x === '∅' ? '<i>keine</i>' : '„' + esc(nameVon(x)) + '“'}`, 'fw', 'z:' + c.id + '|' + t, x, x === '∅'));
+  for (const [id, v] of Object.entries(st.mengen || {})) if (v) { const m = paneById(+id); chip(`${v > 0 ? 'in' : 'nicht in'} „${esc(m ? paneTitel(m).t : '?')}“`, 'pill', 'e:' + id, v, v < 0); }
   if (st.luecke) chip(st.luecke > 0 ? 'Pflichtfelder komplett' : 'Pflichtfeld-Lücke', 'pill', 'luecke', st.luecke, st.luecke < 0);
   if (st.lose) chip(st.lose > 0 ? 'mit Verknüpfung' : 'ohne Verknüpfung', 'pill', 'lose', st.lose, st.lose < 0);
   if (st.text) chip(`„${esc(st.text)}“`, 'text', '', '');
@@ -482,7 +542,6 @@ function paneTitel(p) {
   const q = p.quelle;
   if (!q) return {t: 'Alle Objekte', s: 'freie Spalte', typ: null};
   const art = q.arten && q.arten.length ? ' · ' + q.arten.join(' / ') : '';
-  if (q.kind === 'anker') return {t: q.ziele.join(' + '), s: `zu ${q.anker.map(nameVon).join(' · ')} · ≤ ${q.tiefe}`, typ: q.ziele.length === 1 ? q.ziele[0] : null};
   if (q.kind === 'refs') return q.tiefe === 0 ? {t: q.label, s: 'Start', typ: null} : {t: q.typ || 'Objekte', s: `≤ ${q.tiefe} Schritte von „${q.label}“${art}`, typ: q.typ};
   const par = paneById(q.von);
   return {t: q.typ || 'Objekte', s: `${q.modus === 'alle' ? 'alle Treffer' : 'Auswahl'} aus „${par ? paneTitel(par).t : '?'}“ · ≤ ${q.tiefe}${art}`, typ: q.typ};
@@ -490,7 +549,7 @@ function paneTitel(p) {
 function ansichtBreite(p) { return (p.ansicht === 'tabelle' ? 600 : p.ansicht === 'graph' || p.ansicht === 'fluss' ? 620 : 420) + (p.fac ? 252 : 0); }
 function renderPane(p) {
   const A = p.ERG, T = p.T, ti = paneTitel(p), st_ = p.st;
-  const aktiv = st_.typen.length + Object.values(st_.props).reduce((n, v) => n + v.length, 0) + Object.values(st_.mit).filter(Boolean).length + Object.values(st_.rel).reduce((n, v) => n + v.length, 0) + Object.values(st_.nprop || {}).reduce((n, v) => n + v.length, 0) + (st_.text ? 1 : 0) + (st_.luecke ? 1 : 0) + (st_.lose ? 1 : 0);
+  const aktiv = st_.typen.length + Object.values(st_.props).reduce((n, v) => n + v.length, 0) + Object.values(st_.mit).filter(Boolean).length + Object.values(st_.rel).reduce((n, v) => n + v.length, 0) + Object.values(st_.nprop || {}).reduce((n, v) => n + v.length, 0) + (st_.zus || []).reduce((n, c) => n + Object.values(c.anker).reduce((m, l) => m + l.length, 0), 0) + Object.values(st_.mengen || {}).filter(Boolean).length + (st_.text ? 1 : 0) + (st_.luecke ? 1 : 0) + (st_.lose ? 1 : 0);
   const ansichtBtn = (v, t) => `<button class="${p.ansicht === v ? 'on' : ''}" data-act="ans" data-v="${v}">${t}</button>`;
   let inhalt;
   if (p.wartet) inhalt = `<div class="leer">Links in „${esc(paneTitel(paneById(p.quelle.von)).t)}“ ein Objekt wählen.<br><br><button class="btn zweit klein" data-act="modus_alle">Stattdessen alle Treffer verwenden</button></div>`;
@@ -506,7 +565,7 @@ function renderPane(p) {
   return `<div class="pane${p.id === fokusId ? ' fokus' : ''}" data-pid="${p.id}" style="width:${ansichtBreite(p)}px">
     <div class="phead">
       <div class="p1"><div class="ptitel">${ti.typ ? punkt(ti.typ) : ''}<b title="${esc(ti.t)}">${esc(ti.t)}</b><span class="pn">${T.length}</span></div>
-        ${p.quelle && p.quelle.kind !== 'anker' ? '<button class="ghost" data-act="quelle_bearb" title="Quelle ändern">⚙</button>' : ''}<button class="ghost" data-act="pmenue" title="Mehr">⋯</button><button class="ghost" data-act="pclose" title="Spalte schließen">✕</button></div>
+        ${p.quelle ? '<button class="ghost" data-act="quelle_bearb" title="Quelle ändern">⚙</button>' : ''}<button class="ghost" data-act="pmenue" title="Mehr">⋯</button><button class="ghost" data-act="pclose" title="Spalte schließen">✕</button></div>
       <div class="psub" title="${esc(ti.s)}">${esc(ti.s)}</div>
       <div class="p2"><div class="seg">${ansichtBtn('tabelle', 'Tabelle')}${ansichtBtn('liste', 'Liste')}${ansichtBtn('baum', 'Baum')}${ansichtBtn('graph', 'Graph')}${ansichtBtn('diagramm', 'Diagramm')}${flussKanten(p).length || p.ansicht === 'fluss' ? ansichtBtn('fluss', 'Fluss') : ''}</div><span class="sp"></span>
         <button class="ghost" data-act="gruppe_menue">Gruppe${p.gruppe ? ' <span class="badge">1</span>' : ''}</button><button class="ghost" data-act="fac">Filter${aktiv ? ` <span class="badge">${aktiv}</span>` : ''}</button><button class="ghost" data-act="neu" title="Im Kontext der Filter anlegen">＋</button><button class="btn zweit klein" data-act="weiter">Weiter →</button></div>
@@ -688,9 +747,9 @@ function frageStarten(f, ref) {
   panes[0].sel = ref;
   for (const s of f.pfad) {
     const vor = panes[panes.length - 1], st = leer(); if (s.props) st.props = JSON.parse(JSON.stringify(s.props));
-    panes.push(paneNeu({quelle: {kind: 'pane', von: vor.id, modus: s.modus || 'alle', typ: s.typ, tiefe: s.tiefe, arten: s.arten || null, richtung: 'beide'}, st, fac: false, ansicht: s.ansicht || 'tabelle'}));
+    panes.push(paneNeu({quelle: {kind: 'pane', von: vor.id, modus: s.modus || 'alle', typ: s.typ, tiefe: s.tiefe, arten: s.arten || null, richtung: 'beide', halt: true}, st, fac: false, ansicht: s.ansicht || 'tabelle'}));
   }
-  W = {panes}; fokusId = panes[panes.length - 1].id; ir = ref; zeigeFragen = false; zuMachen(); berechne(); render();
+  W = {panes}; fokusId = panes[panes.length - 1].id; ir = ref; zeigeFragen = false; zuMachen(); render();
 }
 
 /* ================= Fragen in einfachen Sätzen ================= */
@@ -741,21 +800,22 @@ function frageParsen(text) {
 function frageText(fr) {
   return `<b>${fr.ziele.map(esc).join(' + ')}${fr.props ? ' (' + esc(fr.props.ParameterClass[0]) + ')' : ''}</b>${fr.anker.length ? ' zu ' + fr.beschr.map(esc).join(' <span class="dim">und</span> ') : ' <span class="dim">(alle)</span>'}`;
 }
-function ankerPfad(q) {   // Objekte der Ziel-Typen, die mit ALLEN Ankern zusammenhängen
-  let acc = null;
-  for (const a of q.anker) {
-    if (!M.has(a)) continue; const s = new Set();
-    for (const t of q.ziele) erreichbar([a], {typ: t, tiefe: q.tiefe, arten: q.arten || null, richtung: 'beide', halt: M.get(a).typ}).forEach((v, k) => s.add(k));
-    acc = acc === null ? s : new Set([...acc].filter(x => s.has(x)));
-  }
-  return {refs: [...(acc || [])].filter(r => !q.anker.includes(r)), herkunft: {}};
-}
-function frageAusfuehren(fr) {
-  const p = fr.anker.length ? paneNeu({quelle: {kind: 'anker', anker: fr.anker, ziele: fr.ziele, tiefe: 3, arten: null}}) : paneNeu();
-  if (!fr.anker.length) p.st.typen = fr.ziele.slice();
+async function frageAusfuehren(fr) {   // die Frage wird zu Filtern einer freien Spalte — mit den Facetten weiter änderbar
+  const p = paneNeu(); p.st.typen = fr.ziele.slice(); p.fac = true;
   if (fr.props) p.st.props = JSON.parse(JSON.stringify(fr.props));
-  W.panes.push(p); fokusId = p.id; zuMachen(); zeigeFragen = false; neuBerechnen();
-  const el = document.querySelector(`.pane[data-pid="${p.id}"]`); if (el) el.scrollIntoView({inline: 'nearest', behavior: 'smooth'});
+  const subjekte = S.knoten.filter(k => fr.ziele.includes(k.typ)).map(k => k.ref);
+  for (const a of fr.anker) {
+    // Erst „gehört zu“ (genau), und nur wenn dabei für einen Ziel-Typ gar nichts herauskommt, „beliebig“
+    let spec = presetSpec('beliebig', 3);
+    if (zugArten().length) {
+      const sz = presetSpec('zugehoerig', 3); reichKarte(subjekte, sz); await holeMiss();
+      const m = RC.get(specKey(sz));
+      if (fr.ziele.every(t => subjekte.some(r => M.get(r).typ === t && m.get(r) && m.get(r).has(a)))) spec = sz;
+    }
+    p.st.zus.push({id: nid(), spec, anker: {[M.get(a).typ]: [a]}});
+  }
+  W.panes.push(p); fokusId = p.id; zuMachen(); zeigeFragen = false;
+  await neuBerechnen(); const el = document.querySelector(`.pane[data-pid="${p.id}"]`); if (el) el.scrollIntoView({inline: 'nearest', behavior: 'smooth'});
 }
 function frageVorschau(text) {
   const el = $('fragevor'); if (!el) return;
@@ -773,11 +833,14 @@ function weiterDialog(von, edit) {
   Object.assign(q, {typ: q.typ || '', tiefe: q.tiefe || 2, arten: q.arten || null, richtung: q.richtung || 'beide'});
   if (q.tiefe === 0) q.tiefe = 2;
   GZ = {quelle: q, editId: edit ? edit.id : null, nach: von && von.id ? von.id : null};
+  if (q.halt === undefined) q.halt = new Set(gzQuellen().map(r => (M.get(r) || {}).typ)).size === 1;   // gleichartige Quellen: nicht durch Geschwister
   $('schleier').style.display = 'flex'; gzMalen();
 }
 function gzMalen() {
   const q = GZ.quelle, quellen = gzQuellen(), vor = gzVorschau(), alleArten = [...new Set(S.kanten.map(e => e.art))].sort();
-  const vorschlaege = typenListe().map(t => { for (let d = 1; d <= 3; d++) if (erreichbar(quellen, {typ: t, tiefe: d, arten: null, richtung: 'beide'}).size) return {t, d, n: erreichbar(quellen, {typ: t, tiefe: 3, arten: null, richtung: 'beide'}).size}; return null; }).filter(Boolean).sort((a, b) => a.d - b.d || b.n - a.n);
+  const karte = reichKarte(quellen, {richtung: 'beide', tiefe: 3, arten: null, halt: !!q.halt}), best = new Map();
+  for (const qq of quellen) { const m = karte.get(qq); if (!m) continue; for (const [t, d] of m) { const ty = (M.get(t) || {}).typ; if (!ty) continue; const e = best.get(ty) || {d: 9, set: new Set()}; e.d = Math.min(e.d, d); e.set.add(t); best.set(ty, e); } }
+  const vorschlaege = [...best].map(([t, e]) => ({t, d: e.d, n: e.set.size})).sort((a, b) => a.d - b.d || b.n - a.n);
   const par = q.kind === 'pane' ? paneById(q.von) : null;
   $('box').innerHTML = `<div class="dlg" style="padding:8px 12px 12px"><b style="font-size:15px">${GZ.editId ? 'Quelle ändern' : 'Neue Spalte'}</b>
     <div class="mut" style="margin-top:2px">von ${q.kind === 'refs' ? '„' + esc(q.label) + '“' : `„${esc(par ? paneTitel(par).t : '?')}“ (${quellen.length} ${quellen.length === 1 ? 'Objekt' : 'Objekte'})`}</div>
@@ -787,10 +850,12 @@ function gzMalen() {
     <label class="l">Wie weit (Beziehungsschritte)</label><div class="seg">${[1, 2, 3, 4, 5].map(n => `<button class="${q.tiefe === n ? 'on' : ''}" data-act="gztiefe" data-n="${n}">${n}</button>`).join('')}</div>
     <label class="l">Richtung</label><div class="seg">${[['beide', 'beide'], ['aus', 'ausgehend →'], ['ein', '← eingehend']].map(([v, t]) => `<button class="${q.richtung === v ? 'on' : ''}" data-act="gzrichtung" data-v="${v}">${t}</button>`).join('')}</div>
     <label class="l">Nur über diese Beziehungsarten ${q.arten ? '' : '<span class="dim">(alle)</span>'}</label><div class="cchips">${alleArten.map(a => `<button class="cc${q.arten && q.arten.includes(a) ? ' on' : ''}" data-act="gzart" data-a="${esc(a)}">${esc(a)}</button>`).join('') || '<span class="dim">Noch keine Beziehungen.</span>'}</div>
+    <label class="chk" style="display:flex;gap:6px;align-items:center;margin-top:12px;color:var(--mut)"><input type="checkbox" id="gzhalt"${q.halt ? ' checked' : ''}> Weg nicht durch Objekte vom Typ der Quelle führen</label>
     <div class="vorschau"><b>${vor.size}</b> ${vor.size === 1 ? 'Objekt' : 'Objekte'} in der neuen Spalte</div>
     <div class="zeile" style="margin-top:12px;justify-content:flex-end"><button class="btn zweit" data-act="zu">Abbrechen</button><button class="btn" data-act="gzgo">${GZ.editId ? 'Übernehmen' : 'Spalte hinzufügen'}</button></div></div>`;
+  if (MISS.size) holeMiss().then(() => { if (GZ) gzMalen(); });
 }
-function gzGo() {
+async function gzGo() {
   const q = JSON.parse(JSON.stringify(GZ.quelle)); q.typ = q.typ || null;
   if (GZ.editId) { const p = paneById(GZ.editId); p.quelle = q; if (q.typ) p.st.typen = [q.typ]; }
   else {
@@ -798,13 +863,13 @@ function gzGo() {
     const i = GZ.nach ? W.panes.findIndex(x => x.id === GZ.nach) : W.panes.length - 1;
     W.panes.splice(i + 1, 0, p); fokusId = p.id;
   }
-  zuMachen(); berechne(); render();
+  zuMachen(); await render();
   const el = document.querySelector(`.pane[data-pid="${fokusId}"]`); if (el) el.scrollIntoView({inline: 'nearest', behavior: 'smooth'});
 }
 
 /* ================= Ansichten, CSV, Popover ================= */
 const ansichten = () => { try { return JSON.parse(ls.get('ansichten', '[]')); } catch (e) { return []; } };
-let popPid = null;
+let popPid = null, popZus = null;
 function popover(anker, html) {
   const p = $('pop'), r = anker.getBoundingClientRect();
   p.innerHTML = html; p.style.display = 'block'; p.style.left = Math.min(r.left, innerWidth - 270) + 'px'; p.style.top = Math.min(r.bottom + 4, innerHeight - 100) + 'px';
@@ -845,17 +910,15 @@ function nachbarSvg(ref, tiefe) {
   return `<svg viewBox="0 0 ${Wd} ${H}" width="100%">${li}${kn}</svg>`;
 }
 /* Umfeld: „wo steckt das drin, was hängt daran?“ — je Typ, was bis 3 Beziehungsschritte erreichbar ist */
+let umfeldTiefe = +ls.get('utiefe', '2');
 function umfeldHtml(k) {
-  const z = typenListe().map(t => {
-    const max = t === k.typ ? 1 : 3;   // gleichartige Objekte nur, wenn direkt verknüpft
-    for (let d = 1; d <= max; d++) if (erreichbar([k.ref], {typ: t, tiefe: d, arten: null, richtung: 'beide', halt: k.typ}).size) {
-      const alle = erreichbar([k.ref], {typ: t, tiefe: max, arten: null, richtung: 'beide', halt: k.typ});
-      return {t, d, n: alle.size, namen: [...alle.keys()].slice(0, 3).map(nameVon)};
-    }
-    return null;
-  }).filter(Boolean).sort((a, b) => a.d - b.d || b.n - a.n);
+  const m = reichKarte([k.ref], {richtung: 'beide', tiefe: umfeldTiefe, arten: null, halt: true}).get(k.ref);
+  if (!m) return '<h3>Umfeld</h3><div class="dim">wird berechnet …</div>';
+  const g = new Map();
+  for (const [r, d] of m) { const o = M.get(r); if (!o || (o.typ === k.typ && d > 1)) continue; const e = g.get(o.typ) || {t: o.typ, d: 9, namen: []}; e.d = Math.min(e.d, d); e.namen.push(o.name); g.set(o.typ, e); }
+  const z = [...g.values()].sort((a, b) => a.d - b.d || b.namen.length - a.namen.length);
   if (!z.length) return '';
-  return `<h3>Umfeld <span class="dim" style="text-transform:none;letter-spacing:0">bis 3 Schritte</span></h3><div class="liste">${z.map(x => `<div class="r" data-act="umfeld" data-t="${esc(x.t)}" title="Als Spalte öffnen">${punkt(x.t)}<span><b>${x.n}</b> ${esc(x.t)}</span><small class="dim" style="margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">${esc(x.namen.join(', '))}${x.n > 3 ? ' …' : ''}</small></div>`).join('')}</div>`;
+  return `<h3>Umfeld <span class="tief">${[1, 2, 3].map(n => `<button data-act="utiefe" data-t="${n}" class="${umfeldTiefe === n ? 'on' : ''}" title="bis ${n} Beziehungsschritte">${n}</button>`).join('')}</span></h3><div class="liste">${z.map(x => `<div class="r" data-act="umfeld" data-t="${esc(x.t)}" title="Als Spalte öffnen">${punkt(x.t)}<span><b>${x.namen.length}</b> ${esc(x.t)}</span><small class="dim" style="margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px">${esc(x.namen.slice(0, 3).join(', '))}${x.namen.length > 3 ? ' …' : ''}</small></div>`).join('')}</div>`;
 }
 function renderInspektor() {
   const el = $('insp'), k = ir && M.get(ir);
@@ -895,6 +958,7 @@ function renderInspektor() {
     <button class="gefahr" data-act="loeschen">Objekt löschen</button>
   </div>`;
   nachInspektor(k);
+  if (MISS.size) holeMiss().then(() => { if (ir === k.ref) renderInspektor(); });
 }
 function nachInspektor(k) {
   const t = $('titel');
@@ -956,12 +1020,13 @@ function renderSpalten() {
   if (fokus && $(fokus.id)) { const e = $(fokus.id); e.focus(); try { e.setSelectionRange(fokus.a, fokus.b); } catch (x) {} }
   graphAn(); speichern();
 }
-function render() {
+async function render() {
   const fo = document.activeElement, fokus = fo && fo.id && /^(f_|rziel|rart|rdir|fn|fw)/.test(fo.id) ? {id: fo.id, a: fo.selectionStart, b: fo.selectionEnd} : null;
-  berechne(); renderKopf(); renderSpalten(); renderInspektor(); hashSetzen();
+  const g = ++rechneGen; await rechne(); if (g !== rechneGen) return;
+  renderKopf(); renderSpalten(); renderInspektor(); hashSetzen();
   if (fokus && $(fokus.id)) { const e = $(fokus.id); e.focus(); try { e.setSelectionRange(fokus.a, fokus.b); } catch (x) {} }
 }
-const neuBerechnen = () => { berechne(); renderSpalten(); };
+async function neuBerechnen() { const g = ++rechneGen; await rechne(); if (g === rechneGen) renderSpalten(); }
 
 /* ================= Palette, Anlegen, Import ================= */
 let pal = {liste: [], i: 0};
@@ -1052,6 +1117,7 @@ function mbLoesch() {
 /* ================= Ereignisse ================= */
 function toggleWert(p, key, v) {
   const st = p.st; let arr;
+  if (key.startsWith('z:')) { const [cid, typ] = key.slice(2).split('|'), c = st.zus.find(x => x.id === cid); if (!c) return; arr = (c.anker[typ] ||= []); tgl(arr, v); if (!arr.length) delete c.anker[typ]; p.zeilenMax = 200; return; }
   if (key === 'typ') arr = st.typen; else if (key.startsWith('p:')) arr = (st.props[key.slice(2)] ||= []); else if (key.startsWith('n:')) arr = (st.nprop[key.slice(2)] ||= []); else arr = (st.rel[key.slice(2)] ||= []);
   tgl(arr, v);
   if (!arr.length && key !== 'typ') { if (key.startsWith('p:')) delete st.props[key.slice(2)]; else if (key.startsWith('n:')) delete st.nprop[key.slice(2)]; else delete st.rel[key.slice(2)]; }
@@ -1064,8 +1130,18 @@ const AKT = {
   alles_zu: () => { popZu(); W = {panes: [paneNeu()]}; fokusId = W.panes[0].id; render(); },
   spalte_frei: () => { const p = paneNeu(); W.panes.push(p); fokusId = p.id; render(); const el = document.querySelector(`.pane[data-pid="${p.id}"]`); if (el) el.scrollIntoView({inline: 'nearest'}); },
   fw: t => { const p = paneVon(t); toggleWert(p, t.dataset.k, t.dataset.v); fokusId = p.id; neuBerechnen(); },
-  pill: t => { const p = paneVon(t), k = t.dataset.k, v = +t.dataset.v, st = p.st; if (k === 'luecke' || k === 'lose') st[k] = st[k] === v ? 0 : v; else { const ty = k.slice(2); st.mit[ty] = st.mit[ty] === v ? 0 : v; if (!st.mit[ty]) delete st.mit[ty]; } p.zeilenMax = 200; neuBerechnen(); },
+  pill: t => { const p = paneVon(t), k = t.dataset.k, v = +t.dataset.v, st = p.st; if (k.startsWith('e:')) { const id = k.slice(2); st.mengen[id] = st.mengen[id] === v ? 0 : v; if (!st.mengen[id]) delete st.mengen[id]; p.zeilenMax = 200; return neuBerechnen(); } if (k === 'luecke' || k === 'lose') st[k] = st[k] === v ? 0 : v; else { const ty = k.slice(2); st.mit[ty] = st.mit[ty] === v ? 0 : v; if (!st.mit[ty]) delete st.mit[ty]; } p.zeilenMax = 200; neuBerechnen(); },
   text: t => { paneVon(t).st.text = ''; neuBerechnen(); },
+  zus_preset: t => { const p = paneVon(t), c = p.st.zus.find(x => x.id === t.dataset.id); if (c) { c.spec = presetSpec(t.dataset.p, c.spec.tiefe); neuBerechnen(); } },
+  zus_neu: t => { const p = paneVon(t); p.st.zus.push({id: nid(), spec: presetSpec('beliebig', 2), anker: {}}); fokusId = p.id; neuBerechnen(); },
+  zus_tiefe: t => { const p = paneVon(t), c = p.st.zus.find(x => x.id === t.dataset.id); if (c) { c.spec.tiefe = +t.dataset.n; neuBerechnen(); } },
+  zus_weg: t => { const p = paneVon(t); p.st.zus = p.st.zus.filter(x => x.id !== t.dataset.id); neuBerechnen(); },
+  zus_arten: t => {
+    const p = paneVon(t), c = p.st.zus.find(x => x.id === t.dataset.id); if (!c) return; popPid = p.id; popZus = c.id;
+    const alle = [...new Set(S.kanten.map(e => e.art))].sort();
+    popover(t, `<div class="ueber">Nur über diese Beziehungsarten</div>${alle.map(a => `<div class="fz${c.spec.arten && c.spec.arten.includes(a) ? ' on' : ''}" data-act="zus_art" data-a="${esc(a)}"><span class="cb"></span><span class="fl">${esc(a)}</span></div>`).join('') || '<div class="dim">Noch keine Beziehungen.</div>'}<div class="dim" style="padding:6px 4px;font-size:12px">Nichts gewählt = alle Arten.</div>`);
+  },
+  zus_art: t => { const p = paneById(popPid), c = p && p.st.zus.find(x => x.id === popZus); if (!c) return; c.spec.arten = c.spec.arten || []; tgl(c.spec.arten, t.dataset.a); if (!c.spec.arten.length) c.spec.arten = null; t.classList.toggle('on'); neuBerechnen(); },
   pzurueck: t => { paneVon(t).st = leer(); neuBerechnen(); },
   fklapp: t => { tgl(paneVon(t).umF, t.dataset.k); renderSpalten(); },
   fmehr: t => { tgl(paneVon(t).mehrF, t.dataset.k); renderSpalten(); },
@@ -1096,11 +1172,12 @@ const AKT = {
   schliesse: () => { irHist = []; oeffneInsp(null); },
   irzurueck: () => { const r = irHist.pop(); oeffneInsp(r, true); },
   erkunden: () => { const k = M.get(ir); if (k) weiterDialog({refs: [k.ref], label: k.name}); },
+  utiefe: t => { umfeldTiefe = +t.dataset.t; ls.set('utiefe', umfeldTiefe); renderInspektor(); },
   weiter: t => weiterDialog(paneVon(t)),
   fbsp: t => { const i = $('fragetext'); i.value = t.dataset.t; frageVorschau(i.value); i.focus(); },
   umfeld: t => {
     const k = M.get(ir); if (!k) return;
-    const p = paneNeu({quelle: {kind: 'refs', refs: [k.ref], label: k.name, typ: t.dataset.t, tiefe: t.dataset.t === k.typ ? 1 : 3, arten: null, richtung: 'beide', halt: k.typ}, ansicht: 'liste'});
+    const p = paneNeu({quelle: {kind: 'refs', refs: [k.ref], label: k.name, typ: t.dataset.t, tiefe: t.dataset.t === k.typ ? 1 : umfeldTiefe, arten: null, richtung: 'beide', halt: true}, ansicht: 'liste'});
     W.panes.push(p); fokusId = p.id; neuBerechnen();
     const el = document.querySelector(`.pane[data-pid="${p.id}"]`); if (el) el.scrollIntoView({inline: 'nearest', behavior: 'smooth'});
   },
@@ -1163,6 +1240,9 @@ document.addEventListener('change', e => {
   }
   if (t.classList.contains('fv')) api('aendern', {ref: ir, felder: {[t.dataset.f]: t.value}});
   else if (t.classList.contains('kf')) api('kante_felder', {id: t.dataset.id, felder: {[t.dataset.f]: t.value}});
+  else if (t.classList.contains('zusrichtung')) { const p = paneVon(t), c = p.st.zus.find(x => x.id === t.dataset.id); if (c) { c.spec.richtung = t.value; neuBerechnen(); } }
+  else if (t.classList.contains('zushalt')) { const p = paneVon(t), c = p.st.zus.find(x => x.id === t.dataset.id); if (c) { c.spec.halt = t.checked; neuBerechnen(); } }
+  else if (t.id === 'gzhalt') { GZ.quelle.halt = t.checked; gzMalen(); }
   else if (t.id === 'gztyp') { GZ.quelle.typ = t.value; gzMalen(); }
   else if (t.classList.contains('pbart')) { const p = paneVon(t); p.baumArt = t.value.replace(/ \(\d+\)$/, ''); p.baumUmg = null; renderSpalten(); }
   else if (t.classList.contains('pbumg')) { const p = paneVon(t); p.baumUmg = t.value === '1'; renderSpalten(); }
@@ -1216,7 +1296,7 @@ document.addEventListener('drop', e => {
 });
 window.addEventListener('hashchange', () => { hashLesen(); renderInspektor(); });
 
-fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); if (location.hash.length > 1) hashLesen(); render(); });
+fetch('/api/zustand').then(r => r.json()).then(j => { S = j.zustand; indexieren(); RC.clear(); if (location.hash.length > 1) hashLesen(); render(); });
 </script>
 </body>
 </html>
