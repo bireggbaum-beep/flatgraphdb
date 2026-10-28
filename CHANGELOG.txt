@@ -1,6 +1,9 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.4.0 (Speicherform 3)
+- find_path(start, ziel, rel_type, direction, max_depth, kantenfilter): kürzester Weg nach Sprüngen, ungewichtet; gibt [(knoten, kanten_id)] oder None. Fehlender Start oder Ziel wirft KnotenFehlt. pDMS: keine.
+
 4.3.0 (Speicherform 3)
 - reverse_edge(edge_id): dreht eine gerichtete Kante, Kennung und created_at bleiben. Wirft ValueError bei ungerichteter Kante, Kaskadenkante und nicht erlaubtem Paar. Neues Ereignis reverse_edge in bei_aenderung. pDMS: keine.
 

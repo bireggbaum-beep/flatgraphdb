@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.3.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.4.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -452,6 +452,26 @@ nur in der Meldung, nicht an der Kante selbst.
 
 Geprüft in `tests/test_flatgraph_kante_drehen.py`.
 
+### 2.11 Kürzester Weg: `find_path`
+
+Ab `4.4.0`. `find_path(start, ziel, rel_type=None, direction="out",
+max_depth=None, kantenfilter=None)` sucht den Weg mit den wenigsten
+Sprüngen (Breitensuche, **ungewichtet**) und nimmt dieselben Parameter wie
+`traverse`, einschließlich `direction="both"` und ungerichteter Kanten.
+
+- **Rückgabe:** `[(knoten, kanten_id), …]`, beginnend mit `(start, None)`;
+  `kanten_id` ist die Kante, über die man zu diesem Knoten kam. Ohne Weg
+  (auch innerhalb von `max_depth`) `None`. Start gleich Ziel ist
+  `[(start, None)]`.
+- **Mehrere gleich kurze Wege:** Welcher zurückkommt, ist nicht zugesagt.
+- **Fehlender oder weich gelöschter Start oder Ziel:** `KnotenFehlt`. Ein
+  vertippter Verweis soll nicht wie „kein Weg“ aussehen. Weich gelöschte
+  Knoten liegen nie auf dem Weg.
+- **Kosten:** wie `traverse`, höchstens alle Knoten und Kanten, die ab dem
+  Start erreichbar sind. Gemessen ist das nicht.
+
+Geprüft in `tests/test_flatgraph_weg.py`.
+
 ---
 
 ## 4. Verhalten im Fehlerfall
@@ -471,6 +491,7 @@ Geprüft in `tests/test_flatgraph_kante_drehen.py`.
 | `loeschfolgen` auf fehlenden Knoten (ab Entwurf) | `KnotenFehlt` |
 | `delete_edge` auf fehlende Kante | `KanteFehlt` |
 | `reverse_edge` auf fehlende Kante (ab 4.3.0) | `KanteFehlt` |
+| `find_path` mit fehlendem oder weich gelöschtem Start/Ziel (ab 4.4.0) | `KnotenFehlt` |
 | `reverse_edge` auf ungerichtete Kante, Kaskadenkante oder nicht erlaubtes Paar (ab 4.3.0) | `ValueError` |
 | `get_node` mit kaputter Referenz | `UngueltigeReferenz` |
 | `get_node` auf fehlenden Knoten | `None` |

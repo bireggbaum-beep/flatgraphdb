@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.3.0"
+__version__ = "4.4.0"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -2722,14 +2722,18 @@ class FlatGraphDB:
         return results
 
     def _nachbarn_gefiltert(self, node_ref, direction, rel_type, target_collection,
-                            include_deleted, kantenfilter):
-        """Wie get_connected, aber nur ueber Kanten, die `kantenfilter` erfuellen."""
+                            include_deleted, kantenfilter, mit_kante=False):
+        """Wie get_connected, aber nur ueber Kanten, die `kantenfilter` erfuellen.
+
+        Mit `mit_kante` je Nachbar (kanten_id, nachbar) statt nur der Nachbar;
+        `kantenfilter` darf dann None sein (find_path braucht die Kante).
+        """
         results = []
-        for _, edge, target in self._kanten_am_knoten(
+        for eid, edge, target in self._kanten_am_knoten(
                 node_ref, direction, rel_type, mit_gegenueber=True):
             # MappingProxyType statt Kopie: kostet nichts und verhindert,
             # dass ein Filter die Kante im Zwischenspeicher veraendert.
-            if not kantenfilter(types.MappingProxyType(edge)):
+            if kantenfilter and not kantenfilter(types.MappingProxyType(edge)):
                 continue
             if target_collection and not target.startswith(f"{target_collection}/"):
                 continue
@@ -2738,8 +2742,49 @@ class FlatGraphDB:
                 raw = self._cache["nodes"].get(col, {}).get(nid)
                 if raw is None or self._is_deleted(raw):
                     continue
-            results.append(target)
+            results.append((eid, target) if mit_kante else target)
         return results
+
+    def find_path(self, start_ref, target_ref, rel_type=None, direction="out",
+                  max_depth=None, kantenfilter=None):
+        """
+        Kuerzester Weg nach Spruengen (ungewichtet, Breitensuche).
+
+        Parameter wie bei `traverse`. Jeder Knoten merkt sich, von wem und ueber
+        welche Kante er zuerst erreicht wurde; daraus wird der Weg rueckwaerts
+        gelesen. Weich geloeschte Knoten liegen nie auf dem Weg.
+
+        :return: [(knoten_ref, kanten_id)], beginnend mit (start_ref, None);
+                 kanten_id ist die Kante, ueber die man zu diesem Knoten kam.
+                 None, wenn es keinen Weg (innerhalb max_depth) gibt.
+        :raises KnotenFehlt: Start oder Ziel gibt es nicht — ein vertippter
+                 Verweis soll nicht wie „kein Weg“ aussehen.
+        """
+        for ref in (start_ref, target_ref):
+            if self.get_node(ref) is None:
+                raise KnotenFehlt(f"Node '{ref}' does not exist or is soft-deleted.")
+        vorgaenger = {start_ref: None}
+        ebene, tiefe = [start_ref], 0
+        while ebene and target_ref not in vorgaenger:
+            if max_depth is not None and tiefe >= max_depth:
+                return None
+            naechste = []
+            for knoten in ebene:
+                for eid, nachbar in self._nachbarn_gefiltert(
+                        knoten, direction, rel_type, None, False, kantenfilter,
+                        mit_kante=True):
+                    if nachbar not in vorgaenger:
+                        vorgaenger[nachbar] = (knoten, eid)
+                        naechste.append(nachbar)
+            ebene, tiefe = naechste, tiefe + 1
+        if target_ref not in vorgaenger:
+            return None
+        weg, ref = [], target_ref
+        while vorgaenger[ref] is not None:
+            weg.append((ref, vorgaenger[ref][1]))
+            ref = vorgaenger[ref][0]
+        weg.append((start_ref, None))
+        return weg[::-1]
 
     def collect_related(self, start_ref, rel_type_path, direction="out"):
         """
