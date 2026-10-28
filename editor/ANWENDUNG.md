@@ -125,7 +125,7 @@ gespeichert. **CSV** exportiert die Tabelle, wie sie zu sehen ist.
 
 ## Tasten
 
-Strg K: Suche (filtert die Tabelle und findet Objekte im ganzen Bestand) ·
+Strg K: Suche nach Name oder Nummer (Equipment-, Materialnummer …; filtert die Tabelle und findet Objekte im ganzen Bestand, Enter öffnet den ersten Treffer – bei einer genauen Nummer genau dieses Objekt, dann „Als Bereich →“) ·
 ↑ ↓ oder j k: nächste Zeile · Esc: Auswahl aufheben, dann Inspektor leeren.
 
 Der frühere Editor mit Spalten, Fragen und Fluss liegt unter `/alt`.

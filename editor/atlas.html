@@ -390,9 +390,13 @@ function seite() {
   const s = A.suche.trim().toLowerCase();
   let h = `<div class="suche"><span>⌕</span><input id="suchfeld" placeholder="Name oder Wert suchen …" value="${esc(A.suche)}"></div>`;
   if (s) {
-    const treffer = A.z.knoten.filter(k => k.name.toLowerCase().includes(s)).sort((a, b) => vergleich(a.name, b.name)).slice(0, 40);
+    // Name und alle Werte (Equipment- oder Materialnummer); genaue ID zuerst
+    const idVon = k => String(k.felder[A.M?.typen[k.typ]?.idfeld] ?? "");
+    const treffer = A.z.knoten.filter(k => [k.name, ...Object.values(k.felder)].some(v => String(v).toLowerCase().includes(s)))
+      .sort((a, b) => (idVon(b).toLowerCase() === s) - (idVon(a).toLowerCase() === s) || vergleich(a.name, b.name)).slice(0, 40);
+    A.trefferJetzt = treffer;
     h += `<div class="abschn"><span>Im Bestand</span><span>${treffer.length}</span></div>`;
-    h += treffer.map(k => `<div class="eintrag" data-oeffne="${esc(k.ref)}" title="${esc(k.typ)}"><span class="nm">${esc(k.name)}</span><span class="zahl">${esc(kuerzel(k.typ))}</span></div>`).join("")
+    h += treffer.map(k => `<div class="eintrag" data-oeffne="${esc(k.ref)}" title="${esc(k.typ)} ${esc(idVon(k))}"><span class="nm">${esc(k.name)}${idVon(k) ? ` <span style="color:var(--leise);font:11px var(--mono)">${esc(idVon(k))}</span>` : ""}</span><span class="zahl">${esc(kuerzel(k.typ))}</span></div>`).join("")
       || `<div class="eintrag"><span class="nm" style="color:var(--leise)">nichts gefunden</span></div>`;
   }
   h += `<div class="abschn"><span>Bereich</span></div>` + eintrag("", "Alle Objekte", A.z.knoten.length);
@@ -423,6 +427,8 @@ function seite() {
   el.innerHTML = h;
   const f = $("#suchfeld");
   f.oninput = () => { A.suche = f.value; seite(); tafel(); fuss(); };
+  // Enter: der erste Treffer (bei einer genauen Nummer genau dieser) wird geöffnet
+  f.onkeydown = e => { if (e.key === "Enter" && A.trefferJetzt?.length) { const r = A.trefferJetzt[0].ref; A.suche = ""; seite(); tafel(); fuss(); oeffne(r); } };
   if (fokus) { f.focus(); f.setSelectionRange(pos, pos); }
   el.querySelectorAll("[data-auf]").forEach(e => e.onclick = ev => {
     ev.stopPropagation(); A.offen[e.dataset.auf] = !A.aufJetzt[e.dataset.auf]; seite();
