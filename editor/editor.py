@@ -107,7 +107,7 @@ class Modell:
         for a in kante.get("relation", {}).get("enum", []):
             art_merken(a)
         self.arten = list(gesehen.values())
-        self.hubs, self.einzeln = [], []
+        self.hubs, self.einzeln, self.grob, self.kontext = [], [], set(), []
         self.regeln, self.kantenfelder = [], {}      # Regel: von, art, nach; Art -> [Attribut]
         for von, art, nach, attr in paare:
             art = self.kanon_art(art)
@@ -136,6 +136,12 @@ class Modell:
         fehler = []
         self.hubs = [t for t in (self.kanon_typ(x) for x in daten.get("nicht_durchlaufen", [])) if t]
         self.einzeln = [a for a in (self.kanon_art(x) for x in daten.get("nur_einzeln", [])) if a]
+        # „Plant führt aus Prozess“: grober Weg, gilt nur, wenn kein gleich kurzer feiner da ist
+        paare = {f"{r['von']} {r['art']} {r['nach']}": (r["von"], r["art"], r["nach"]) for r in self.regeln}
+        self.grob = {paare[x] for x in daten.get("grob", []) if x in paare}
+        fehler += [x for x in daten.get("grob", []) if x not in paare]
+        self.kontext = [t for t in (self.kanon_typ(x) for x in daten.get("kontext", [])) if t]
+        fehler += [x for x in daten.get("kontext", []) if not self.kanon_typ(x)]
         fehler += [x for x in daten.get("nicht_durchlaufen", []) if not self.kanon_typ(x)]
         fehler += [x for x in daten.get("nur_einzeln", []) if not self.kanon_art(x)]
         return fehler
@@ -183,6 +189,9 @@ class Editor:
         # Bestand nicht erlaubt, die Anzeige soll trotzdem das Original zeigen)
         self._art_anzeige = {_name_fuer_bestand(a, "Art"): a
                              for a in (modell.arten if modell else [])}
+        # Tabellenlayouts liegen beim Bestand, damit alle dieselben sehen;
+        # flatgraph liest im Wurzelverzeichnis nur seine eigenen Ordner.
+        self._layoutdatei = os.path.join(pfad, "layouts.json")
 
     def _art_b(self, art):
         """Art-Name für den Bestand; mit Modell nur, was das Modell kennt."""
@@ -289,6 +298,139 @@ class Editor:
         geh(von, [], {von})
         return ergebnis
 
+    def _gehen(self, start, pfad):
+        """Ein Metapfad ab `start`: je Schritt ein flatgraph-`get_connected`
+        mit Art, Richtung und Zieltyp. Rückgabe: die erreichten Objekte."""
+        aktuell = {start}
+        for schritt in pfad:
+            naechste = set()
+            for n in aktuell:
+                naechste.update(self.db.get_connected(
+                    n, direction="out" if schritt["richtung"] == "aus" else "in",
+                    rel_type=self._art_b(schritt["art"]),
+                    target_collection=self._typ_b(schritt["typ"])))
+            aktuell = naechste
+            if not aktuell:
+                break
+        aktuell.discard(start)
+        return aktuell
+
+    def _ist_grob(self, von, pfad):
+        typ = von
+        for s in pfad:
+            paar = (typ, s["art"], s["typ"]) if s["richtung"] == "aus" else (s["typ"], s["art"], typ)
+            if paar in self.modell.grob:
+                return True
+            typ = s["typ"]
+        return False
+
+    def kurze_wege(self, von, max_hops):
+        """Je Zieltyp die kürzesten Wege laut Modell — der innere Kreis.
+        Gibt es neben einem groben Weg (`grob` in regeln.json, „Plant führt aus
+        Prozess“) einen gleich kurzen feinen, gilt nur der feine: am Prozess
+        beteiligt ist, wer einen seiner Schritte ausführt."""
+        je_typ = {}
+        for p in self.metapfade(von, None, max_hops):
+            je_typ.setdefault(p[-1]["typ"], []).append(p)
+        ergebnis = {}
+        for typ, wege in je_typ.items():
+            kurz = [p for p in wege if len(p) == min(len(q) for q in wege)]
+            ergebnis[typ] = [p for p in kurz if not self._ist_grob(von, p)] or kurz
+        return ergebnis
+
+    def bereich(self, anker=None, max_hops=3):
+        """Was zum Anker gehört, je Typ {typ: [refs]} — Equipments im Raum (über
+        die Plant), Schritte am Prozess. Ohne Anker: alle Objekte."""
+        if anker is None:
+            return {_anzeige(t): sorted(f"{t}/{k}" for k in self.db.list_nodes(t, readonly=True))
+                    for t in self.db.list_collections()}
+        if self.db.get_node(anker, readonly=True) is None:
+            raise Fehler("Dieses Objekt gibt es nicht (mehr).")
+        ergebnis = {}
+        for typ, wege in self.kurze_wege(_anzeige(anker.partition("/")[0]), max_hops).items():
+            refs = set()
+            for p in wege:
+                refs |= self._gehen(anker, p)
+            if refs:
+                ergebnis[typ] = sorted(refs)
+        return ergebnis
+
+    def spalten(self, typ, max_hops=2):
+        """Abgeleitete Spalten eines Typs aus dem Modell: je Zieltyp der kürzeste
+        Weg; mehrere gleich kurze (Material als Input und als Output) werden je
+        eine Spalte. Sichtbar ab Werk: direkte Nachbarn und die Kontexttypen
+        (`kontext` in regeln.json) — der Raum eines Equipments über die Plant."""
+        def art_kurz(s):
+            return ("← " if s["richtung"] == "ein" else "") + re.sub(r"\s*\(\d+:\w+\)", "", s["art"])
+        ergebnis = []
+        for ziel, wege in sorted(self.kurze_wege(typ, max_hops).items()):
+            zusatz = [""] * len(wege)
+            if len(wege) > 1:
+                for kandidat in ([art_kurz(p[-1]) for p in wege],
+                                 [f"über {p[-2]['typ']}" if len(p) > 1 else art_kurz(p[-1]) for p in wege],
+                                 [" ".join(art_kurz(s) for s in p) for p in wege]):
+                    if len(set(kandidat)) == len(wege):
+                        zusatz = kandidat
+                        break
+            for p, z in zip(wege, zusatz):
+                ergebnis.append({
+                    "key": "|".join(f"{s['richtung']}:{s['art']}:{s['typ']}" for s in p),
+                    "titel": f"{ziel} ({z})" if z else ziel, "typ": ziel, "pfad": p,
+                    "weg": " ".join(f"{'←' if s['richtung'] == 'ein' else '→'} {s['art']} {'←' if s['richtung'] == 'ein' else '→'} {s['typ']}" for s in p),
+                    "standard": len(p) == 1 or ziel in self.modell.kontext})
+        return ergebnis
+
+    def tabelle(self, anker, typ):
+        """Primär (Anker oder alle) → Sekundär (Typ): die Zeilen, die Zahl je Typ
+        für die Auswahl darüber, die abgeleiteten Spalten und ihre Werte."""
+        typ = _anzeige(self._typ_b(typ))
+        bereich = self.bereich(anker)
+        zeilen = bereich.get(typ, [])
+        spalten = self.spalten(typ) if self.modell else []
+        werte = {r: {s["key"]: sorted(self._gehen(r, s["pfad"])) for s in spalten} for r in zeilen}
+        return {"zahlen": {t: len(r) for t, r in bereich.items()}, "zeilen": zeilen,
+                "spalten": spalten, "werte": werte}
+
+    def umfeld(self, ref):
+        """Die abgeleiteten Spalten eines einzelnen Objekts (für den Inspektor)."""
+        if self.db.get_node(ref, readonly=True) is None:
+            raise Fehler("Dieses Objekt gibt es nicht (mehr).")
+        spalten = self.spalten(_anzeige(ref.partition("/")[0])) if self.modell else []
+        return {"spalten": spalten, "werte": {s["key"]: sorted(self._gehen(ref, s["pfad"])) for s in spalten}}
+
+    # --- Tabellenlayouts (wie Layout-Varianten in SAP) ---------------------
+
+    def layouts(self):
+        try:
+            with open(self._layoutdatei, encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+
+    def layout_speichern(self, typ, name, layout=None, vorgabe=False):
+        """Variante speichern (`layout` None = löschen). Geschrieben wird über
+        eine Arbeitsdatei daneben, fsync, os.replace — nie an Ort und Stelle."""
+        name = (name or "").strip()
+        if not name:
+            raise Fehler("Der Name der Variante fehlt.")
+        alle = self.layouts()
+        eintrag = alle.setdefault(typ, {"varianten": {}, "vorgabe": None})
+        if layout is None:
+            eintrag["varianten"].pop(name, None)
+            if eintrag["vorgabe"] == name:
+                eintrag["vorgabe"] = None
+        else:
+            eintrag["varianten"][name] = {k: layout.get(k) for k in ("spalten", "sort", "absteigend", "gruppe")}
+            if vorgabe:
+                eintrag["vorgabe"] = name
+        arbeit = self._layoutdatei + ".arbeit"
+        with open(arbeit, "w", encoding="utf-8") as f:
+            json.dump(alle, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(arbeit, self._layoutdatei)
+        return alle
+
     def _regel_reichweite(self, quellen, tiefe, typen):
         """Reichweite entlang der Metapfade: jeder Schritt ist ein flatgraph-
         `get_connected` mit Kantenart, Richtung und Zieltyp — es wird nur
@@ -305,21 +447,8 @@ class Editor:
                                       if ziele is None or self._typ_b(p[-1]["typ"]) in ziele]
             tiefen = {}
             for pfad in pfade_je_typ[typ0]:
-                aktuell = {start}
-                for schritt in pfad:
-                    naechste = set()
-                    for n in aktuell:
-                        naechste.update(self.db.get_connected(
-                            n, direction="out" if schritt["richtung"] == "aus" else "in",
-                            rel_type=self._art_b(schritt["art"]),
-                            target_collection=self._typ_b(schritt["typ"])))
-                    aktuell = naechste
-                    if not aktuell:
-                        break
-                else:
-                    for z in aktuell:
-                        if z != start:
-                            tiefen[z] = min(tiefen.get(z, 99), len(pfad))
+                for z in self._gehen(start, pfad):
+                    tiefen[z] = min(tiefen.get(z, 99), len(pfad))
             ergebnis[start] = tiefen
         return ergebnis
 
@@ -419,7 +548,7 @@ class Editor:
         with self.db.transaction():
             ref, neu = self.knoten_anlegen(typ, name, felder)
             for v in verknuepfen or []:
-                self.verknuepfe(ref, v["ziel"], v.get("art"), v.get("richtung", "aus"))
+                self.verknuepfe(ref, v["ziel"], v.get("art"), v.get("richtung", "aus"), v.get("felder"))
         return ref, neu
 
     def _fremde_felder(self, typ):
@@ -539,7 +668,10 @@ class Editor:
             art_k = self.modell.kanon_art(art) if art else None
             moegl = self.modell.zwischen(tv, tn, art_k)
             if len(moegl) == 1:
-                art, richtung = moegl[0]
+                # Bei einer Selbstbeziehung (Schritt führt zu Schritt) gibt es nur
+                # eine Regel, aber zwei Richtungen: die verlangte bleibt.
+                art, r0 = moegl[0]
+                richtung = richtung if tv == tn and richtung in ("aus", "ein") else r0
             elif not moegl:
                 raise Fehler(self._regelfehler(tv, art_k or art or "…", tn))
             elif not (art and richtung):
@@ -686,6 +818,16 @@ def _aktionen(ed):
     def metapfade(d):
         return {"metapfade": ed.metapfade(d["von"], d.get("nach"), int(d.get("tiefe", 2))), "_nur": True}
 
+    def tabelle(d):
+        return {**ed.tabelle(d.get("anker"), d["typ"]), "_nur": True}
+
+    def umfeld(d):
+        return {**ed.umfeld(d["ref"]), "_nur": True}
+
+    def layout(d):
+        return {"layouts": ed.layout_speichern(d["typ"], d["name"], d.get("layout"), bool(d.get("vorgabe"))),
+                "_nur": True}
+
     def mehrere_aendern(d):
         g, u = ed.mehrere_aendern(d["refs"], d.get("felder"), d.get("verknuepfen"))
         teile = ([f"{g} Objekte geändert"] if d.get("felder") else []) + ([f"{u} übersprungen (Feld gehört zu anderem Typ)"] if u else [])
@@ -718,7 +860,7 @@ def _aktionen(ed):
             "kante_weg": kante_weg, "kante_felder": kante_felder,
             "mehrere_aendern": mehrere_aendern, "mehrere_loeschen": mehrere_loeschen,
             "mehrere_zurueck": mehrere_zurueck, "reichweite": reichweite, "metapfade": metapfade,
-            "einhaengen": einhaengen}
+            "einhaengen": einhaengen, "tabelle": tabelle, "umfeld": umfeld, "layout": layout}
 
 
 def bedienen(ed, port):
@@ -737,9 +879,10 @@ def bedienen(ed, port):
 
         def do_GET(self):
             if self.path == "/api/zustand":
-                return self._senden(200, {"zustand": ed.zustand()})
-            if self.path in ("/", "/index.html"):
-                with open(os.path.join(HIER, "index.html"), "rb") as f:
+                return self._senden(200, {"zustand": ed.zustand(), "layouts": ed.layouts()})
+            seiten = {"/": "atlas.html", "/index.html": "atlas.html", "/alt": "index.html"}
+            if self.path in seiten:
+                with open(os.path.join(HIER, seiten[self.path]), "rb") as f:
                     return self._senden(200, f.read(), "text/html; charset=utf-8")
             self._senden(404, {"fehler": "nicht gefunden"})
 

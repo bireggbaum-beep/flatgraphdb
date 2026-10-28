@@ -539,6 +539,50 @@ check("Regelwerk: die Tiefe zählt Typ-Schritte (Equipment -> Schritt -> Prozess
 check("Regelwerk: Schritte, die zum Prozess gehören — nur die eigenen, nicht die des Nachbarprozesses",
       {k for k, v in e.reichweite([O[x] for x in ("s_lam", "s_kuehl", "s_ag", "s_vak")], modus="regel", tiefe=2, typen=["Prozess"]).items()
        if O["p_elek"] in v} == {O["s_ag"], O["s_vak"]})
+# --- Atlas: Primär → Sekundär, abgeleitete Spalten, Layouts ---
+b_mo = e.bereich(O["rmo"])
+check("Bereich: Equipments im Raum sind die der Plants in diesem Raum (Equipment → Plant → Raum)",
+      set(b_mo.get("Equipment", [])) == {O["ma01"], O["sn01"], O["vp01"]}, str(sorted(namen[x] for x in b_mo.get("Equipment", []))))
+check("Bereich: Prozessschritte am Prozess sind genau seine Schritte",
+      set(e.bereich(O["p_mont"])["Prozessschritt"]) == {O["s_lam"], O["s_schn"], O["s_kon"]})
+check("Bereich: ein Prozess hat genau einen Weg zu Equipment — über die Schritte, nicht grob über die Plant",
+      [[s["typ"] for s in w] for w in e.kurze_wege("Prozess", 3)["Equipment"]] == [["Prozessschritt", "Equipment"]])
+# Ein Gerät der Linie, das keinen Schritt ausführt: grob über die Plant wäre es dabei
+reserve, _ = e.knoten_anlegen("Equipment", "Reserveofen", {"EquipmentID": "EQ-199", "EquipmentGXP": "GXP", "EquipmentCategory": "Kat 3"})
+e.verknuepfe(reserve, O["pl1"])
+z = e.zustand()
+ausfuehrend = {k["von"] for k in z["kanten"] if k["art"] == "führt aus" and k["nach"] in e.bereich(O["p_elek"])["Prozessschritt"]}
+check("Bereich: am Prozess beteiligt ist, wer einen seiner Schritte ausführt",
+      set(e.bereich(O["p_elek"])["Equipment"]) == ausfuehrend and reserve not in ausfuehrend, str(len(ausfuehrend)))
+check("Bereich: ohne Anker alle Objekte je Typ",
+      sum(len(v) for v in e.bereich(None).values()) == len(e.zustand()["knoten"]) > 100)
+sp_eq = {s["titel"]: s for s in e.spalten("Equipment")}
+check("Spalten: der Raum eines Equipments kommt über die Plant und ist ab Werk sichtbar",
+      [x["typ"] for x in sp_eq["Raum"]["pfad"]] == ["Plant", "Raum"] and sp_eq["Raum"]["standard"])
+check("Spalten: Material als Input und als Output sind zwei Spalten, keine vermischte",
+      {"Material (benötigt Input)", "Material (erzeugt Output)"} <= set(sp_eq) and "Material" not in sp_eq, str(sorted(sp_eq)))
+check("Spalten: Vorgänger und Nachfolger eines Schritts sind getrennte Spalten",
+      sorted(s["pfad"][0]["richtung"] for s in e.spalten("Prozessschritt") if s["typ"] == "Prozessschritt") == ["aus", "ein"])
+tb = e.tabelle(O["p_elek"], "Parameter")
+k_eq = next(s["key"] for s in tb["spalten"] if s["titel"] == "Equipment")
+check("Tabelle: die 13 Parameter des Prozesses mit dem Equipment, das sie regelt",
+      sorted(namen[x] for x in tb["zeilen"]) == erwartet and tb["werte"][O["a_tag"]][k_eq] == [O["tr01"]] and tb["werte"][O["a_rf"]][k_eq] == [])
+check("Tabelle: die Zahlen je Typ sind die Größen des Bereichs", tb["zahlen"]["Parameter"] == 13 and tb["zahlen"]["Prozessschritt"] == 7, str(tb["zahlen"]))
+check("Inspektor: das Umfeld eines Objekts sind dieselben Werte wie in seiner Tabellenzeile",
+      e.umfeld(O["a_tag"])["werte"] == tb["werte"][O["a_tag"]])
+e.layout_speichern("Equipment", "Qualifizierung", {"spalten": ["f:EquipmentID", k_eq], "sort": "name", "gruppe": ""}, vorgabe=True)
+lay_neu = Editor.__new__(Editor); lay_neu._layoutdatei = e._layoutdatei
+check("Layout: eine Variante liegt beim Bestand und ist Vorgabe für den Typ",
+      lay_neu.layouts()["Equipment"]["vorgabe"] == "Qualifizierung"
+      and lay_neu.layouts()["Equipment"]["varianten"]["Qualifizierung"]["spalten"][0] == "f:EquipmentID")
+e.layout_speichern("Equipment", "Qualifizierung", None)
+check("Layout: löschen entfernt Variante und Vorgabe, keine Arbeitsdatei bleibt liegen",
+      e.layouts()["Equipment"] == {"varianten": {}, "vorgabe": None} and not os.path.exists(e._layoutdatei + ".arbeit"))
+sa, _ = e.knoten_anlegen("Prozessschritt", "Testschritt A")
+sb, _ = e.knoten_anlegen("Prozessschritt", "Testschritt B")
+e.verknuepfe(sa, sb, "führt zu Nachfolger (0:n)", "ein", {"ProcessstepType": "Standard-Fertigungsschritt"})
+check("Verknüpfen: bei einer Selbstbeziehung bleibt die verlangte Richtung (Vorgänger eintragen)",
+      e.db.get_connected(sb, "out", target_collection="Prozessschritt") == [sa] and e.db.get_connected(sa, "out") == [])
 e.schliessen()
 shutil.rmtree(W7, ignore_errors=True)
 

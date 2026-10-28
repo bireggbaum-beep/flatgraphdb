@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fertigungsatlas</title>
+<style>
+:root{
+  --bg:#121110; --rail:#0e0d0c; --panel:#181614; --fl:#1e1c1a; --fl2:#262320; --linie:#2b2825; --linie2:#3a3632;
+  --text:#ebe6e0; --gedimmt:#a39b93; --leise:#6f6861; --akzent:#f07c62; --akzent2:#ff9277; --akzentbg:rgba(240,124,98,.14);
+  --wahl:#3a221d; --wahl2:#46281f; --rot:#ff6b6b; --gruen:#4fbf8a;
+  --mono:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+  --sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 var(--sans)}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.app{display:grid;grid-template-columns:50px 200px minmax(0,1fr) 320px;grid-template-rows:48px minmax(0,1fr);height:100vh}
+.app.ohne-ins{grid-template-columns:50px 200px minmax(0,1fr) 0}
+/* Leiste ganz links */
+.rail{grid-row:1/3;background:var(--rail);border-right:1px solid var(--linie);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:10px}
+.rail .kachel{width:32px;height:32px;border-radius:7px;display:grid;place-items:center;color:var(--akzent);background:var(--akzentbg);font:700 12px var(--mono)}
+.rail .knopf{width:32px;height:32px;border-radius:7px;display:grid;place-items:center;color:var(--leise);background:none;border:0}
+.rail .knopf:hover{color:var(--text);background:var(--fl)}
+.rail .platz{flex:1}
+/* Kopf */
+.kopf{grid-column:2/5;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--linie);background:var(--bg);min-width:0}
+.marke{font:700 13px var(--sans);letter-spacing:.12em;white-space:nowrap}
+.marke b{color:var(--akzent);font:600 10.5px var(--mono);letter-spacing:.14em;margin-left:6px}
+.etikett{font:600 10px var(--mono);letter-spacing:.14em;color:var(--leise);text-transform:uppercase;white-space:nowrap}
+.k-neu{background:var(--akzent);color:#1b0f0b;border:0;border-radius:5px;padding:6px 12px;font-weight:700;white-space:nowrap}
+.k-neu:hover{background:var(--akzent2)}
+.sel{background:var(--fl);border:1px solid var(--linie2);border-radius:5px;padding:5px 8px;max-width:180px}
+.k{background:var(--fl);border:1px solid var(--linie2);border-radius:5px;padding:5px 10px;white-space:nowrap}
+.k:hover{border-color:var(--leise)}
+.k.an{background:var(--akzent);border-color:var(--akzent);color:#1b0f0b;font-weight:600}
+.kopf .rechts{margin-left:auto;font:12px var(--mono);color:var(--leise);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Seitenleiste */
+.seite{background:var(--panel);border-right:1px solid var(--linie);overflow:auto;padding:10px 8px 20px}
+.suche{display:flex;align-items:center;gap:6px;background:var(--fl);border:1px solid var(--linie2);border-radius:6px;padding:6px 8px;margin-bottom:10px}
+.suche input{background:none;border:0;outline:0;flex:1;min-width:0}
+.suche span{color:var(--leise)}
+.abschn{font:600 10px var(--mono);letter-spacing:.14em;color:var(--leise);text-transform:uppercase;margin:16px 6px 6px;display:flex;justify-content:space-between}
+.eintrag{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:5px;cursor:pointer;color:var(--text);white-space:nowrap}
+.eintrag:hover{background:var(--fl)}
+.eintrag.an{background:var(--akzent);color:#1b0f0b;font-weight:600}
+.eintrag.an .zahl{color:#1b0f0b}
+.eintrag .nm{overflow:hidden;text-overflow:ellipsis;flex:1}
+.eintrag .zahl{font:11px var(--mono);color:var(--leise)}
+.eintrag .pfeil{width:10px;color:var(--leise);font-size:9px;flex:none}
+.eintrag.kind{padding-left:22px;color:var(--gedimmt)}
+.eintrag.kind.an{color:#1b0f0b}
+.dazu{display:block;width:100%;text-align:left;margin:4px 0 0;padding:5px 8px;border:1px dashed var(--linie2);border-radius:5px;background:none;color:var(--leise);font:11px var(--mono)}
+.dazu:hover{color:var(--text);border-color:var(--leise)}
+/* Mitte */
+.mitte{display:flex;flex-direction:column;min-width:0;min-height:0}
+.leiste{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--linie);overflow-x:auto;white-space:nowrap;min-height:42px}
+.leiste::-webkit-scrollbar{height:4px}
+#typen{flex-wrap:wrap;overflow:visible;white-space:normal;row-gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--linie2);background:var(--fl);border-radius:999px;padding:3px 10px;font:12px var(--mono);color:var(--gedimmt);cursor:pointer}
+.chip:hover{color:var(--text);border-color:var(--leise)}
+.chip.an{background:var(--akzent);border-color:var(--akzent);color:#1b0f0b;font-weight:600}
+.chip i{font-style:normal;opacity:.65}
+.chip .punkt{width:7px;height:7px;border-radius:50%}
+.bereich{font:12px var(--mono);color:var(--gedimmt);margin-right:6px}
+.bereich b{color:var(--text);font-weight:600}
+.bereich a{color:var(--akzent);cursor:pointer;margin-left:6px}
+.massen{display:flex;align-items:center;gap:6px;padding:7px 12px;background:var(--wahl);border-bottom:1px solid var(--linie);flex-wrap:wrap}
+.massen b{margin-right:6px}
+.massen .k{background:#2a1a16;border-color:#5a3328}
+.massen .k.rot{color:var(--rot)}
+.tafel{flex:1;overflow:auto;min-height:0}
+table{border-collapse:separate;border-spacing:0;width:100%}
+th{position:sticky;top:0;z-index:2;background:var(--bg);text-align:left;font:600 10px var(--mono);letter-spacing:.12em;color:var(--leise);text-transform:uppercase;padding:9px 10px;border-bottom:1px solid var(--linie);white-space:nowrap;cursor:pointer;user-select:none}
+th:hover{color:var(--text)}
+th.sortiert{color:var(--akzent)}
+td{padding:7px 10px;border-bottom:1px solid var(--linie);white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+tr.z{cursor:pointer}
+tr.z:hover td{background:var(--fl)}
+tr.z.wahl td{background:var(--wahl)}
+tr.z.aktiv td{background:var(--wahl2)}
+td.cb,th.cb{width:30px;padding-right:0}
+td.bild{width:38px;padding:4px 4px 4px 8px}
+.typbild{width:28px;height:28px;border-radius:5px;display:grid;place-items:center;font:700 9.5px var(--mono);letter-spacing:.04em}
+td.nm{font-weight:500;color:var(--text)}
+td.mono{font-family:var(--mono);font-size:12px;color:var(--gedimmt)}
+td .lk{color:var(--gedimmt)}
+td .lk:hover{color:var(--akzent);text-decoration:underline}
+td .leer{color:var(--leise)}
+td .fehlt{color:var(--rot);font:11px var(--mono)}
+tr.gruppe td{background:var(--panel);font:600 11px var(--mono);letter-spacing:.06em;color:var(--gedimmt);cursor:pointer;padding:6px 10px}
+tr.gruppe td b{color:var(--text)}
+input[type=checkbox]{accent-color:var(--akzent);width:14px;height:14px;cursor:pointer}
+.fuss{border-top:1px solid var(--linie);padding:6px 12px;font:12px var(--mono);color:var(--leise);display:flex;gap:16px}
+.leerhinweis{padding:60px 20px;text-align:center;color:var(--leise)}
+/* Inspektor */
+.ins{border-left:1px solid var(--linie);background:var(--panel);overflow:auto;min-width:0}
+.app.ohne-ins .ins{display:none}
+.ins .nix{padding:120px 30px;text-align:center;color:var(--leise)}
+.ins-kopf{padding:16px 16px 10px;display:flex;gap:12px;align-items:flex-start}
+.ins-kopf .typbild{width:44px;height:44px;font-size:12px;border-radius:8px;flex:none}
+.ins h2{margin:0;font-size:16px;line-height:1.3;cursor:text;word-break:break-word}
+.ins h2:hover{text-decoration:underline dotted var(--leise)}
+.ins .typ{font:11px var(--mono);color:var(--leise);margin-top:3px}
+.ins .aktionen{display:flex;gap:6px;padding:0 16px 12px;flex-wrap:wrap}
+.ins .aktionen .k{font-size:12px;padding:4px 9px}
+.karte{margin:0 12px 12px;border:1px solid var(--linie2);border-radius:7px;background:var(--fl);overflow:hidden}
+.zeile{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--linie)}
+.zeile:last-child{border-bottom:0}
+.zeile .l{color:var(--gedimmt);white-space:nowrap}
+.zeile .l .stern{color:var(--akzent)}
+.zeile .w{font:12px var(--mono);text-align:right;cursor:pointer;min-width:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.zeile .w:hover{color:var(--akzent)}
+.zeile .w.fehlt{color:var(--rot)}
+.zeile .w.leer{color:var(--leise)}
+.zeile input,.zeile select{background:var(--bg);border:1px solid var(--akzent);border-radius:4px;padding:3px 6px;font:12px var(--mono);max-width:170px;outline:0}
+.ins .abschn{margin:14px 16px 6px}
+.bez{margin:0 12px 10px}
+.bez .titel{font:11px var(--mono);color:var(--gedimmt);margin:0 4px 5px;display:flex;justify-content:space-between}
+.bez .titel em{font-style:normal;color:var(--leise)}
+.marken{display:flex;flex-wrap:wrap;gap:5px}
+.marke2{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--linie2);background:var(--fl);border-radius:999px;padding:2px 4px 2px 9px;font-size:12px;max-width:100%}
+.marke2 span{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.marke2 span:hover{color:var(--akzent)}
+.marke2 button{border:0;background:none;color:var(--leise);padding:0 4px;font-size:13px;line-height:1}
+.marke2 button:hover{color:var(--rot)}
+.marke2.nur{padding-right:9px}
+.plus{border:1px dashed var(--linie2);background:none;border-radius:999px;padding:2px 10px;color:var(--leise);font-size:12px}
+.plus:hover{color:var(--text);border-color:var(--leise)}
+.zuordnen{display:flex;gap:5px;margin-top:6px}
+.zuordnen input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--akzent);border-radius:5px;padding:4px 8px;outline:0}
+.kette{margin:0 12px 12px;display:flex;flex-direction:column;gap:2px}
+.kette .glied{display:flex;gap:8px;font-size:12px;padding:3px 4px}
+.kette .glied .l{width:120px;flex:none;color:var(--leise);font:11px var(--mono);padding-top:1px}
+.kette .glied .w{color:var(--text)}
+.kette .glied .w span{cursor:pointer}
+.kette .glied .w span:hover{color:var(--akzent)}
+textarea.notiz{width:calc(100% - 24px);margin:0 12px 16px;min-height:70px;background:var(--fl);border:1px solid var(--linie2);border-radius:7px;padding:8px 10px;resize:vertical;outline:0}
+textarea.notiz:focus{border-color:var(--akzent)}
+/* Menü, Dialog, Meldung */
+.menue{position:fixed;z-index:50;background:var(--fl);border:1px solid var(--linie2);border-radius:7px;padding:4px;min-width:200px;box-shadow:0 10px 30px rgba(0,0,0,.5);max-height:70vh;overflow:auto}
+.menue button{display:block;width:100%;text-align:left;background:none;border:0;padding:6px 10px;border-radius:5px}
+.menue button:hover{background:var(--fl2)}
+.menue hr{border:0;border-top:1px solid var(--linie);margin:4px 0}
+.menue .etikett{padding:6px 10px 2px}
+.schleier{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;display:grid;place-items:center}
+.dialog{background:var(--panel);border:1px solid var(--linie2);border-radius:10px;padding:18px;width:min(440px,calc(100vw - 32px));max-height:85vh;overflow:auto}
+.dialog h3{margin:0 0 14px;font-size:15px}
+.dialog label{display:block;font:600 10px var(--mono);letter-spacing:.12em;color:var(--leise);text-transform:uppercase;margin:10px 0 4px}
+.dialog input[type=text],.dialog select{width:100%;background:var(--fl);border:1px solid var(--linie2);border-radius:5px;padding:7px 9px;outline:0}
+.dialog input[type=text]:focus,.dialog select:focus{border-color:var(--akzent)}
+.dialog .hk{display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--gedimmt)}
+.dialog .unten{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.dialog .spl{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px solid var(--linie)}
+.dialog .spl span{flex:1}
+.dialog .spl small{color:var(--leise);font:10.5px var(--mono)}
+.dialog .spl button{background:none;border:0;color:var(--leise);padding:0 4px}
+.dialog .spl button:hover{color:var(--text)}
+.meldung{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--fl2);border:1px solid var(--linie2);border-radius:8px;padding:9px 14px;z-index:60;display:flex;gap:12px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.5);max-width:80vw}
+.meldung.fehler{border-color:var(--rot)}
+.meldung button{background:none;border:0;color:var(--akzent);font-weight:600}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <nav class="rail">
+    <div class="kachel" title="Fertigungsatlas">FA</div>
+    <div class="platz"></div>
+    <button class="knopf" title="Inspektor ein/aus" id="ins-schalter">⇥</button>
+  </nav>
+  <header class="kopf">
+    <div class="marke">FERTIGUNGSATLAS<b>KATALOG</b></div>
+    <button class="k-neu" id="neu">＋ Neu ▾</button>
+    <span class="etikett">Sortieren</span><select class="sel" id="sortieren"></select>
+    <span class="etikett">Gruppieren</span><select class="sel" id="gruppieren"></select>
+    <span class="etikett">Layout</span><select class="sel" id="variante"></select>
+    <button class="k" id="layoutmenue" title="Spalten und Varianten">⋯</button>
+    <div class="rechts" id="stand"></div>
+  </header>
+  <aside class="seite" id="seite"></aside>
+  <main class="mitte">
+    <div class="leiste" id="typen"></div>
+    <div class="leiste" id="facetten" hidden></div>
+    <div class="massen" id="massen" hidden></div>
+    <div class="tafel" id="tafel"></div>
+    <div class="fuss" id="fuss"></div>
+  </main>
+  <aside class="ins" id="ins"></aside>
+</div>
+<script>
+"use strict";
+// Primär (Anker in der Seitenleiste oder „alle“) → Sekundär (Typ als Zeilen).
+// Was zu einem Anker gehört und was in den abgeleiteten Spalten steht, rechnet
+// der Server aus dem Modell (kürzeste Wege, flatgraph get_connected); die
+// Oberfläche zeigt nur an.
+const A = {
+  z: null, M: null, N: {}, layouts: {}, anker: null, typ: null, tab: null,
+  auswahl: new Set(), aktiv: null, umfeld: null, facetten: {}, suche: "",
+  lay: {}, variante: {}, offen: {}, zu: {}, bearb: null, zuordnen: null,
+};
+// Die Bäume der Seitenleiste: oben → darunter, die Beziehung kommt aus dem Modell.
+const BAEUME = [{titel: "Ort", oben: "Raum", unten: "Plant"},
+                {titel: "Prozesse", oben: "Prozess", unten: "Prozessschritt"}];
+const FARBEN = ["#f07c62", "#5aa9e6", "#4fbf8a", "#c792ea", "#e6b85a", "#5ad1c9", "#e66a9a", "#8fa1b3", "#b5d65a", "#d9905a"];
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const typVon = ref => ref.split("/")[0];
+const nameVon = ref => A.N[ref]?.name ?? ref;
+const typen = () => A.M ? Object.keys(A.M.typen) : [...new Set(A.z.knoten.map(k => k.typ))];
+const farbe = t => FARBEN[Math.max(0, typen().indexOf(t)) % FARBEN.length];
+const kuerzel = t => {
+  // Zwei Buchstaben je Typ, eindeutig: Prozess „PR“, Prozessschritt „PS“ (Buchstabe nach dem gemeinsamen Anfang)
+  if (!A.kuerzel) {
+    A.kuerzel = {}; const vergeben = new Set();
+    for (const x of typen()) {
+      let k = x.slice(0, 2).toUpperCase();
+      if (vergeben.has(k)) {
+        const p = Math.max(...Object.keys(A.kuerzel).map(u => { let i = 0; while (u[i] && u[i] === x[i]) i++; return i; }));
+        k = (x[0] + (x[p] || x[x.length - 1])).toUpperCase();
+      }
+      vergeben.add(k); A.kuerzel[x] = k;
+    }
+  }
+  return A.kuerzel[t] || t.slice(0, 2).toUpperCase();
+};
+const typbild = t => `<div class="typbild" style="background:${farbe(t)}22;color:${farbe(t)}">${esc(kuerzel(t))}</div>`;
+const felderVon = t => A.M?.typen[t]?.felder || [];
+const namefeld = t => A.M?.typen[t]?.namefeld;
+const feldTitel = (t, f) => (felderVon(t).find(x => x.name === f)?.titel) || f;
+const vergleich = (a, b) => String(a).localeCompare(String(b), "de", {numeric: true, sensitivity: "base"});
+const ls = {lies(k, d) { try { return JSON.parse(localStorage.getItem("atlas." + k)) ?? d; } catch { return d; } },
+            schreib(k, v) { try { localStorage.setItem("atlas." + k, JSON.stringify(v)); } catch {} }};
+
+async function api(name, daten) {
+  const r = await fetch("/api/" + name, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(daten || {})});
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.fehler || "Fehler");
+  if (d.zustand) setzeZustand(d.zustand);
+  return d;
+}
+function setzeZustand(z) {
+  A.z = z; A.M = z.modell; A.N = {};
+  for (const k of z.knoten) A.N[k.ref] = k;
+}
+function meldung(text, fehler, rueck) {
+  document.querySelectorAll(".meldung").forEach(e => e.remove());
+  const d = document.createElement("div");
+  d.className = "meldung" + (fehler ? " fehler" : "");
+  d.innerHTML = `<span>${esc(text)}</span>` + (rueck ? `<button>Rückgängig</button>` : "");
+  if (rueck) d.querySelector("button").onclick = () => { d.remove(); rueck(); };
+  document.body.appendChild(d);
+  setTimeout(() => d.remove(), rueck ? 8000 : 4500);
+}
+async function tu(name, daten, text) {
+  try { const d = await api(name, daten); if (text || d.hinweis) meldung(d.hinweis || text); await neuLaden(); return d; }
+  catch (e) { meldung(e.message, true); return null; }
+}
+
+// --- Laden ---------------------------------------------------------------
+async function start() {
+  const r = await (await fetch("/api/zustand")).json();
+  setzeZustand(r.zustand); A.layouts = r.layouts || {};
+  A.variante = ls.lies("variante", {});
+  const h = new URLSearchParams(location.hash.slice(1));
+  A.anker = h.get("anker") && A.N[h.get("anker")] ? h.get("anker") : null;
+  A.typ = h.get("typ") && typen().includes(h.get("typ")) ? h.get("typ") : (typen().includes("Equipment") ? "Equipment" : typen()[0]);
+  A.aktiv = h.get("objekt") && A.N[h.get("objekt")] ? h.get("objekt") : null;
+  if (ls.lies("ohneIns", false)) $("#app").classList.add("ohne-ins");
+  await neuLaden();
+}
+async function neuLaden() {
+  if (A.anker && !A.N[A.anker]) A.anker = null;
+  if (A.aktiv && !A.N[A.aktiv]) A.aktiv = null;
+  for (const r of [...A.auswahl]) if (!A.N[r]) A.auswahl.delete(r);
+  try {
+    A.tab = await api("tabelle", {anker: A.anker, typ: A.typ});
+    A.umfeld = A.aktiv ? await api("umfeld", {ref: A.aktiv}) : null;
+  } catch (e) { meldung(e.message, true); }
+  merkeHash(); zeichne();
+}
+function merkeHash() {
+  const h = new URLSearchParams();
+  if (A.anker) h.set("anker", A.anker);
+  h.set("typ", A.typ);
+  if (A.aktiv) h.set("objekt", A.aktiv);
+  history.replaceState(null, "", "#" + h.toString());
+}
+function zeichne() { seite(); kopf(); typLeiste(); facettenLeiste(); massenLeiste(); tafel(); inspektor(); }
+
+// --- Layout (Spalten, Sortierung, Gruppe je Typ) ---------------------------
+function spaltenAlle() {
+  // Eigene Felder des Modells, dann die abgeleiteten Spalten des Servers
+  const t = A.typ, nf = namefeld(t);
+  const eigene = felderVon(t).filter(f => f.name !== nf).map(f => ({key: "f:" + f.name, titel: f.titel || f.name, feld: f}));
+  const frei = new Set();
+  for (const r of A.tab?.zeilen || []) for (const k in (A.N[r]?.felder || {})) if (!eigene.some(e => e.key === "f:" + k)) frei.add(k);
+  return [...eigene, ...[...frei].sort().map(k => ({key: "f:" + k, titel: k, feld: {name: k}})),
+          ...(A.tab?.spalten || []).map(s => ({key: s.key, titel: s.titel, abg: s}))];
+}
+function standardLayout() {
+  const alle = spaltenAlle();
+  return {spalten: alle.filter(s => s.feld ? felderVon(A.typ).some(f => f.name === s.feld.name) : s.abg.standard).map(s => s.key),
+          sort: "name", absteigend: false, gruppe: ""};
+}
+function lay() {
+  if (!A.lay[A.typ]) {
+    const v = A.variante[A.typ] ?? A.layouts[A.typ]?.vorgabe;
+    const gespeichert = v && A.layouts[A.typ]?.varianten?.[v];
+    A.lay[A.typ] = gespeichert ? JSON.parse(JSON.stringify(gespeichert)) : standardLayout();
+    A.lay[A.typ].name = gespeichert ? v : "";
+  }
+  return A.lay[A.typ];
+}
+function geaendert() {
+  const L = lay(), basis = L.name ? A.layouts[A.typ]?.varianten?.[L.name] : standardLayout();
+  return !basis || ["spalten", "sort", "absteigend", "gruppe"].some(k => JSON.stringify(basis[k] ?? "") !== JSON.stringify(L[k] ?? ""));
+}
+function sichtbareSpalten() {
+  const alle = spaltenAlle();
+  return lay().spalten.map(k => alle.find(s => s.key === k)).filter(Boolean);
+}
+function wert(ref, sp) {
+  // Für Sortieren, Gruppieren, Suchen und CSV: Text oder Liste von Namen
+  if (sp.key === "name") return [nameVon(ref)];
+  if (sp.feld) { const v = A.N[ref]?.felder?.[sp.feld.name]; return v === undefined || v === "" ? [] : [String(v)]; }
+  return (A.tab?.werte?.[ref]?.[sp.key] || []).map(nameVon).sort(vergleich);
+}
+
+// --- Seitenleiste --------------------------------------------------------
+function kinderVon(oben, unten) {
+  // Beziehung zwischen den beiden Typen laut Modell; ohne Modell keine Bäume
+  const r = A.M?.regeln?.find(r => (r.von === unten && r.nach === oben) || (r.von === oben && r.nach === unten));
+  const kinder = {}, mitEltern = new Set();
+  if (!r) return {kinder, ohne: []};
+  for (const k of A.z.kanten) {
+    if (k.art !== r.art || typVon(k.von) !== r.von || typVon(k.nach) !== r.nach) continue;
+    const [o, u] = r.von === unten ? [k.nach, k.von] : [k.von, k.nach];
+    if (!A.N[o] || !A.N[u]) continue;
+    (kinder[o] ||= []).push(u); mitEltern.add(u);
+  }
+  const ohne = A.z.knoten.filter(k => k.typ === unten && !mitEltern.has(k.ref)).map(k => k.ref);
+  return {kinder, ohne};
+}
+function reihenfolge(refs) {
+  // Prozessschritte entlang „Nachfolger“ (Selbstbeziehung des Typs) ordnen, sonst nach Name
+  const menge = new Set(refs), ein = {}, nach = {};
+  for (const k of A.z.kanten) {
+    if (!menge.has(k.von) || !menge.has(k.nach) || typVon(k.von) !== typVon(k.nach) || k.von === k.nach) continue;
+    // Eine Schleife (Kanten-Attribut laut Modell) führt zurück und bestimmt die Reihenfolge nicht
+    if (Object.values(k.felder || {}).some(v => /loop|schleife/i.test(v))) continue;
+    (nach[k.von] ||= []).push(k.nach); ein[k.nach] = (ein[k.nach] || 0) + 1;
+  }
+  const fertig = [], rest = [...refs].sort((a, b) => vergleich(nameVon(a), nameVon(b)));
+  const warte = rest.filter(r => !ein[r]), gesehen = new Set();
+  while (warte.length || fertig.length < rest.length) {
+    const r = warte.length ? warte.shift() : rest.find(x => !gesehen.has(x));
+    if (gesehen.has(r)) continue;
+    gesehen.add(r); fertig.push(r);
+    for (const n of (nach[r] || []).sort((a, b) => vergleich(nameVon(a), nameVon(b)))) if (!gesehen.has(n) && --ein[n] <= 0) warte.push(n);
+  }
+  return fertig;
+}
+function eintrag(ref, text, zahl, klasse, pfeil) {
+  const an = A.anker === (ref || null) ? " an" : "";
+  return `<div class="eintrag ${klasse || ""}${an}" data-anker="${esc(ref ?? "")}" title="${esc(text)}">` +
+    (pfeil !== undefined ? `<span class="pfeil" data-auf="${esc(ref)}">${pfeil}</span>` : "") +
+    `<span class="nm">${esc(text)}</span>${zahl !== "" ? `<span class="zahl">${zahl}</span>` : ""}</div>`;
+}
+function seite() {
+  A.aufJetzt = {};
+  const s = A.suche.trim().toLowerCase();
+  let h = `<div class="suche"><span>⌕</span><input id="suchfeld" placeholder="Name oder Wert suchen …" value="${esc(A.suche)}"></div>`;
+  if (s) {
+    const treffer = A.z.knoten.filter(k => k.name.toLowerCase().includes(s)).sort((a, b) => vergleich(a.name, b.name)).slice(0, 40);
+    h += `<div class="abschn"><span>Im Bestand</span><span>${treffer.length}</span></div>`;
+    h += treffer.map(k => `<div class="eintrag" data-oeffne="${esc(k.ref)}" title="${esc(k.typ)}"><span class="nm">${esc(k.name)}</span><span class="zahl">${esc(kuerzel(k.typ))}</span></div>`).join("")
+      || `<div class="eintrag"><span class="nm" style="color:var(--leise)">nichts gefunden</span></div>`;
+  }
+  h += `<div class="abschn"><span>Bereich</span></div>` + eintrag("", "Alle Objekte", A.z.knoten.length);
+  if (A.anker && !BAEUME.some(b => [b.oben, b.unten].includes(typVon(A.anker))))
+    h += `<div class="eintrag an" data-anker="${esc(A.anker)}"><span class="nm">${esc(nameVon(A.anker))}</span><span class="zahl">${esc(kuerzel(typVon(A.anker)))}</span></div>`;
+  for (const b of BAEUME) {
+    if (!typen().includes(b.oben)) continue;
+    const {kinder, ohne} = kinderVon(b.oben, b.unten);
+    const oben = A.z.knoten.filter(k => k.typ === b.oben).map(k => k.ref).sort((x, y) => vergleich(nameVon(x), nameVon(y)));
+    h += `<div class="abschn"><span>${esc(b.titel)}</span><span>${oben.length}</span></div>`;
+    for (const o of oben) {
+      const ki = b.unten === "Prozessschritt" ? reihenfolge(kinder[o] || []) : (kinder[o] || []).sort((x, y) => vergleich(nameVon(x), nameVon(y)));
+      const auf = A.offen[o] ?? (A.anker === o || ki.includes(A.anker));
+      A.aufJetzt[o] = auf;
+      h += eintrag(o, nameVon(o), ki.length || "", "", ki.length ? (auf ? "▾" : "▸") : "");
+      if (auf) h += ki.map(u => eintrag(u, nameVon(u), "", "kind")).join("");
+    }
+    if (ohne.length) {
+      const auf = A.offen["ohne:" + b.unten] ?? ohne.includes(A.anker);
+      A.aufJetzt["ohne:" + b.unten] = auf;
+      h += `<div class="eintrag" data-auf="ohne:${esc(b.unten)}"><span class="pfeil">${auf ? "▾" : "▸"}</span><span class="nm" style="color:var(--leise)">ohne ${esc(b.oben)}</span><span class="zahl">${ohne.length}</span></div>`;
+      if (auf) h += ohne.map(u => eintrag(u, nameVon(u), "", "kind")).join("");
+    }
+    h += `<button class="dazu" data-neu="${esc(b.oben)}">＋ ${esc(b.oben)} anlegen</button>`;
+  }
+  const el = $("#seite"), fokus = document.activeElement?.id === "suchfeld", pos = $("#suchfeld")?.selectionStart;
+  el.innerHTML = h;
+  const f = $("#suchfeld");
+  f.oninput = () => { A.suche = f.value; seite(); tafel(); fuss(); };
+  if (fokus) { f.focus(); f.setSelectionRange(pos, pos); }
+  el.querySelectorAll("[data-auf]").forEach(e => e.onclick = ev => {
+    ev.stopPropagation(); A.offen[e.dataset.auf] = !A.aufJetzt[e.dataset.auf]; seite();
+  });
+  el.querySelectorAll("[data-anker]").forEach(e => e.onclick = () => setzeAnker(e.dataset.anker || null));
+  el.querySelectorAll("[data-oeffne]").forEach(e => e.onclick = () => oeffne(e.dataset.oeffne));
+  el.querySelectorAll("[data-neu]").forEach(e => e.onclick = () => neuDialog(e.dataset.neu));
+}
+function setzeAnker(ref) {
+  A.anker = ref; A.auswahl.clear(); A.facetten = {};
+  // Beim Wechsel auf einen Anker zeigt die Tabelle einen sinnvollen Typ: den
+  // bisherigen, wenn es ihn dort gibt — sonst den mit den meisten Treffern
+  neuLaden().then(async () => {
+    const z = A.tab?.zahlen || {};
+    if (!z[A.typ] && ref) {
+      const bester = typen().filter(t => z[t]).sort((a, b) => z[b] - z[a])[0];
+      if (bester) { A.typ = bester; await neuLaden(); }
+    }
+  });
+}
+async function oeffne(ref) {
+  A.aktiv = ref; A.zuordnen = null; A.bearb = null;
+  $("#app").classList.remove("ohne-ins"); ls.schreib("ohneIns", false);
+  try { A.umfeld = await api("umfeld", {ref}); } catch (e) { meldung(e.message, true); }
+  merkeHash(); tafel(); inspektor();
+}
+
+// --- Kopf ----------------------------------------------------------------
+function kopf() {
+  const alle = [{key: "name", titel: "Name"}, ...sichtbareSpalten()], L = lay();
+  $("#sortieren").innerHTML = alle.map(s => `<option value="${esc(s.key)}"${s.key === L.sort ? " selected" : ""}>${esc(s.titel)}</option>`).join("");
+  $("#gruppieren").innerHTML = `<option value="">Keine</option>` + sichtbareSpalten().map(s => `<option value="${esc(s.key)}"${s.key === L.gruppe ? " selected" : ""}>${esc(s.titel)}</option>`).join("");
+  const varianten = Object.keys(A.layouts[A.typ]?.varianten || {}).sort(vergleich), vorgabe = A.layouts[A.typ]?.vorgabe;
+  $("#variante").innerHTML = `<option value="">Standard${!L.name && geaendert() ? " *" : ""}</option>` +
+    varianten.map(v => `<option value="${esc(v)}"${v === L.name ? " selected" : ""}>${esc(v)}${v === vorgabe ? " (Vorgabe)" : ""}${v === L.name && geaendert() ? " *" : ""}</option>`).join("");
+  $("#stand").textContent = `${A.z.knoten.length} Objekte · ${A.z.kanten.length} Beziehungen`;
+}
+$("#sortieren").onchange = e => { lay().sort = e.target.value; lay().absteigend = false; kopf(); tafel(); };
+$("#gruppieren").onchange = e => { lay().gruppe = e.target.value; A.zu = {}; kopf(); tafel(); };
+$("#variante").onchange = e => {
+  const v = e.target.value; A.variante[A.typ] = v; ls.schreib("variante", A.variante);
+  delete A.lay[A.typ]; if (!v) { A.lay[A.typ] = standardLayout(); A.lay[A.typ].name = ""; }
+  zeichne();
+};
+$("#layoutmenue").onclick = e => {
+  const L = lay(), v = L.name;
+  menue(e.currentTarget, [
+    ["Spalten wählen …", spaltenDialog],
+    null,
+    ["Als neue Variante speichern …", () => varianteSpeichern(null)],
+    v && ["Variante „" + v + "“ überschreiben", () => varianteSpeichern(v)],
+    v && ["„" + v + "“ als Vorgabe für " + A.typ, () => varianteSpeichern(v, true)],
+    v && ["Variante „" + v + "“ löschen", async () => {
+      A.layouts = (await api("layout", {typ: A.typ, name: v, layout: null})).layouts;
+      A.variante[A.typ] = ""; ls.schreib("variante", A.variante); delete A.lay[A.typ]; zeichne();
+    }],
+    ["Auf Standard zurücksetzen", () => { A.lay[A.typ] = {...standardLayout(), name: L.name}; zeichne(); }],
+    null,
+    ["Tabelle als CSV", csv],
+    ["Alter Editor", () => window.open("/alt", "_blank")],
+  ]);
+};
+async function varianteSpeichern(name, vorgabe) {
+  if (!name) { name = prompt("Name der Variante (gilt für " + A.typ + ", für alle Nutzer dieses Bestands):"); if (!name) return; }
+  const L = lay();
+  try {
+    A.layouts = (await api("layout", {typ: A.typ, name, layout: L, vorgabe: !!vorgabe})).layouts;
+    L.name = name.trim(); A.variante[A.typ] = L.name; ls.schreib("variante", A.variante);
+    meldung(vorgabe ? `„${L.name}“ ist jetzt Vorgabe für ${A.typ}` : `Variante „${L.name}“ gespeichert`); kopf();
+  } catch (e) { meldung(e.message, true); }
+}
+$("#neu").onclick = e => menue(e.currentTarget, typen().map(t => [t, () => neuDialog(t)]), "Neues Objekt");
+$("#ins-schalter").onclick = () => { const an = $("#app").classList.toggle("ohne-ins"); ls.schreib("ohneIns", an); };
+
+function menue(bei, punkte, titel) {
+  document.querySelectorAll(".menue").forEach(m => m.remove());
+  const m = document.createElement("div"); m.className = "menue";
+  m.innerHTML = (titel ? `<div class="etikett">${esc(titel)}</div>` : "") +
+    punkte.filter(p => p !== false && p !== "" && p !== undefined).map((p, i) => p ? `<button data-i="${i}">${esc(p[0])}</button>` : "<hr>").join("");
+  const echt = punkte.filter(p => p !== false && p !== "" && p !== undefined);
+  m.querySelectorAll("button").forEach(b => b.onclick = () => { m.remove(); echt[+b.dataset.i][1](); });
+  document.body.appendChild(m);
+  const r = bei.getBoundingClientRect();
+  m.style.top = (r.bottom + 4) + "px";
+  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + "px";
+  setTimeout(() => addEventListener("click", function weg(ev) { if (!m.contains(ev.target)) { m.remove(); removeEventListener("click", weg); } }), 0);
+}
+
+// --- Typen und Facetten über der Tabelle ---------------------------------
+function typLeiste() {
+  const z = A.tab?.zahlen || {};
+  let h = `<span class="bereich">${A.anker ? `<b>${esc(nameVon(A.anker))}</b> <span style="color:var(--leise)">${esc(typVon(A.anker))}</span><a id="ankerweg" title="Bereich aufheben">×</a>` : "<b>Alle Objekte</b>"}</span>`;
+  h += typen().filter(t => z[t] || t === A.typ).map(t =>
+    `<span class="chip${t === A.typ ? " an" : ""}" data-typ="${esc(t)}"><span class="punkt" style="background:${farbe(t)}"></span>${esc(t)} <i>${z[t] || 0}</i></span>`).join("");
+  const el = $("#typen"); el.innerHTML = h;
+  el.querySelectorAll("[data-typ]").forEach(c => c.onclick = () => { A.typ = c.dataset.typ; A.auswahl.clear(); A.facetten = {}; neuLaden(); });
+  const weg = $("#ankerweg"); if (weg) weg.onclick = () => setzeAnker(null);
+}
+function auswahlFelder() { return felderVon(A.typ).filter(f => f.optionen); }
+function passt(ref, ohne, sp) {
+  // Suche und Facetten; `ohne` lässt eine Facette weg (für ihre eigenen Zahlen)
+  for (const [f, werte] of Object.entries(A.facetten)) {
+    if (f === ohne || !werte.size) continue;
+    const v = A.N[ref]?.felder?.[f];
+    if (!werte.has(v === undefined || v === "" ? "" : String(v))) return false;
+  }
+  const s = A.suche.trim().toLowerCase();
+  if (s) {
+    if (![{key: "name"}, ...sp].some(x => wert(ref, x).some(w => w.toLowerCase().includes(s)))) return false;
+  }
+  return true;
+}
+function facettenLeiste() {
+  const el = $("#facetten"), felder = auswahlFelder(), zeilen = A.tab?.zeilen || [], sp = sichtbareSpalten();
+  if (!felder.length || !zeilen.length) { el.hidden = true; return; }
+  let h = "";
+  for (const f of felder) {
+    const zahl = {};
+    for (const r of zeilen) if (passt(r, f.name, sp)) { const v = A.N[r]?.felder?.[f.name]; const k = v === undefined || v === "" ? "" : String(v); zahl[k] = (zahl[k] || 0) + 1; }
+    const werte = Object.keys(zahl).sort((a, b) => a === "" ? 1 : b === "" ? -1 : vergleich(a, b));
+    if (!werte.length) continue;
+    const an = A.facetten[f.name] || new Set();
+    h += `<span class="etikett" style="margin-left:6px">${esc(f.titel || f.name)}</span>` + werte.map(w =>
+      `<span class="chip${an.has(w) ? " an" : ""}" data-f="${esc(f.name)}" data-w="${esc(w)}">${w === "" ? "leer" : esc(w)} <i>${zahl[w]}</i></span>`).join("");
+  }
+  el.hidden = false; el.innerHTML = h;
+  el.querySelectorAll("[data-f]").forEach(c => c.onclick = () => {
+    const s = (A.facetten[c.dataset.f] ||= new Set()); s.has(c.dataset.w) ? s.delete(c.dataset.w) : s.add(c.dataset.w);
+    facettenLeiste(); tafel(); massenLeiste(); fuss();
+  });
+}
+
+// --- Tabelle -------------------------------------------------------------
+function sichtbareZeilen() {
+  const L = lay(), sp = L.sort === "name" ? {key: "name"} : spaltenAlle().find(s => s.key === L.sort) || {key: "name"};
+  const vis = sichtbareSpalten(), z = (A.tab?.zeilen || []).filter(r => A.N[r] && passt(r, null, vis));
+  z.sort((a, b) => {
+    const wa = wert(a, sp).join(", "), wb = wert(b, sp).join(", ");
+    if (!wa !== !wb) return wa ? -1 : 1;          // leere Werte immer unten
+    return (L.absteigend ? -1 : 1) * (vergleich(wa, wb) || vergleich(nameVon(a), nameVon(b)));
+  });
+  return z;
+}
+function zelle(ref, sp) {
+  if (sp.feld) {
+    const v = A.N[ref]?.felder?.[sp.feld.name];
+    if (v === undefined || v === "") return `<td>${A.N[ref]?.fehlt?.includes(sp.feld.name) ? '<span class="fehlt">fehlt</span>' : '<span class="leer">–</span>'}</td>`;
+    const mono = /ID$|Value|Range|Unit/.test(sp.feld.name);
+    return `<td class="${mono ? "mono" : ""}" title="${esc(v)}">${esc(v)}</td>`;
+  }
+  const refs = (A.tab?.werte?.[ref]?.[sp.key] || []).slice().sort((a, b) => vergleich(nameVon(a), nameVon(b)));
+  if (!refs.length) return `<td><span class="leer">–</span></td>`;
+  return `<td title="${esc(refs.map(nameVon).join(", "))}">${refs.map(r => `<span class="lk" data-oeffne="${esc(r)}">${esc(nameVon(r))}</span>`).join(", ")}</td>`;
+}
+function tafel() {
+  const el = $("#tafel"), L = lay(), sp = sichtbareSpalten(), zeilen = sichtbareZeilen();
+  if (!A.tab) { el.innerHTML = ""; return; }
+  if (!zeilen.length) {
+    el.innerHTML = `<div class="leerhinweis">${A.tab.zeilen.length ? "Keine Treffer für Suche oder Filter." : `Hier gibt es kein ${esc(A.typ)}.`}<br><br>` +
+      `<button class="k" id="leer-neu">＋ ${esc(A.typ)} anlegen</button></div>`;
+    $("#leer-neu").onclick = () => neuDialog(A.typ); fuss(); return;
+  }
+  const alleGewaehlt = zeilen.every(r => A.auswahl.has(r));
+  let h = `<table><thead><tr><th class="cb"><input type="checkbox" id="alle"${alleGewaehlt ? " checked" : ""}></th><th></th>` +
+    [{key: "name", titel: "Name"}, ...sp].map(s => `<th data-sort="${esc(s.key)}" class="${L.sort === s.key ? "sortiert" : ""}" title="${esc(s.abg?.weg || "")}">${esc(s.titel)}${L.sort === s.key ? (L.absteigend ? " ▴" : " ▾") : ""}</th>`).join("") +
+    `</tr></thead><tbody>`;
+  const zeile = r => `<tr class="z${A.auswahl.has(r) ? " wahl" : ""}${A.aktiv === r ? " aktiv" : ""}" data-ref="${esc(r)}">` +
+    `<td class="cb"><input type="checkbox" data-cb="${esc(r)}"${A.auswahl.has(r) ? " checked" : ""}></td>` +
+    `<td class="bild">${typbild(typVon(r))}</td><td class="nm" title="${esc(nameVon(r))}">${esc(nameVon(r))}</td>` + sp.map(s => zelle(r, s)).join("") + `</tr>`;
+  const gsp = L.gruppe && sp.find(s => s.key === L.gruppe);
+  if (gsp) {
+    // Ein Objekt mit mehreren Werten steht in jeder seiner Gruppen
+    const gruppen = {};
+    for (const r of zeilen) { const w = wert(r, gsp); for (const g of (w.length ? w : [""])) (gruppen[g] ||= []).push(r); }
+    for (const g of Object.keys(gruppen).sort((a, b) => a === "" ? 1 : b === "" ? -1 : vergleich(a, b))) {
+      const zu = A.zu[g];
+      h += `<tr class="gruppe" data-gruppe="${esc(g)}"><td colspan="${sp.length + 3}">${zu ? "▸" : "▾"} ${esc(gsp.titel)}: <b>${g === "" ? "(keine)" : esc(g)}</b> · ${gruppen[g].length}</td></tr>`;
+      if (!zu) h += gruppen[g].map(zeile).join("");
+    }
+  } else h += zeilen.map(zeile).join("");
+  el.innerHTML = h + "</tbody></table>";
+  el.querySelectorAll("th[data-sort]").forEach(th => th.onclick = () => {
+    if (L.sort === th.dataset.sort) L.absteigend = !L.absteigend; else { L.sort = th.dataset.sort; L.absteigend = false; }
+    kopf(); tafel();
+  });
+  $("#alle").onclick = e => { zeilen.forEach(r => e.target.checked ? A.auswahl.add(r) : A.auswahl.delete(r)); tafel(); massenLeiste(); };
+  el.querySelectorAll("[data-gruppe]").forEach(g => g.onclick = () => { A.zu[g.dataset.gruppe] = !A.zu[g.dataset.gruppe]; tafel(); });
+  el.querySelectorAll("tr.z").forEach(tr => tr.onclick = ev => {
+    const r = tr.dataset.ref;
+    if (ev.target.dataset.cb) { ev.target.checked ? A.auswahl.add(r) : A.auswahl.delete(r); tr.classList.toggle("wahl", ev.target.checked); massenLeiste(); return; }
+    if (ev.target.dataset.oeffne) return oeffne(ev.target.dataset.oeffne);
+    if (ev.shiftKey || ev.ctrlKey || ev.metaKey) { A.auswahl.has(r) ? A.auswahl.delete(r) : A.auswahl.add(r); tafel(); massenLeiste(); return; }
+    oeffne(r);
+  });
+  fuss();
+}
+function fuss() {
+  const n = sichtbareZeilen().length, alle = A.tab?.zeilen?.length || 0;
+  $("#fuss").innerHTML = `<span>${n}${n !== alle ? " von " + alle : ""} ${esc(A.typ)}</span>` + (A.anker ? `<span>im Bereich ${esc(nameVon(A.anker))}</span>` : "");
+}
+function csv() {
+  const sp = [{key: "name", titel: "Name"}, ...sichtbareSpalten()];
+  const q = s => /[;"\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  const text = [sp.map(s => q(s.titel)).join(";"), ...sichtbareZeilen().map(r => sp.map(s => q(wert(r, s).join(", "))).join(";"))].join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + text], {type: "text/csv;charset=utf-8"}));
+  a.download = `${A.typ}${A.anker ? "_" + nameVon(A.anker) : ""}.csv`.replace(/[^\wäöüÄÖÜß.\- ]+/g, "_");
+  a.click();
+}
+
+// --- Spalten wählen ------------------------------------------------------
+function spaltenDialog() {
+  const L = lay(), alle = spaltenAlle();
+  let reihe = [...L.spalten.filter(k => alle.some(s => s.key === k)), ...alle.map(s => s.key).filter(k => !L.spalten.includes(k))];
+  const an = new Set(L.spalten);
+  const s = dialog(`<h3>Spalten für ${esc(A.typ)}</h3><div id="spl"></div>
+    <div class="unten"><button class="k" data-x>Abbrechen</button><button class="k-neu" data-ok>Übernehmen</button></div>`);
+  const male = () => {
+    s.querySelector("#spl").innerHTML = reihe.map((k, i) => {
+      const sp = alle.find(x => x.key === k);
+      return `<div class="spl"><input type="checkbox" data-k="${esc(k)}"${an.has(k) ? " checked" : ""}><span>${esc(sp.titel)}</span>` +
+        `<small>${sp.abg ? esc(sp.abg.weg) : "Feld"}</small><button data-hoch="${i}" title="nach oben">↑</button><button data-runter="${i}" title="nach unten">↓</button></div>`;
+    }).join("");
+    s.querySelectorAll("[data-k]").forEach(c => c.onchange = () => c.checked ? an.add(c.dataset.k) : an.delete(c.dataset.k));
+    s.querySelectorAll("[data-hoch]").forEach(b => b.onclick = () => { const i = +b.dataset.hoch; if (i) { [reihe[i - 1], reihe[i]] = [reihe[i], reihe[i - 1]]; male(); } });
+    s.querySelectorAll("[data-runter]").forEach(b => b.onclick = () => { const i = +b.dataset.runter; if (i < reihe.length - 1) { [reihe[i + 1], reihe[i]] = [reihe[i], reihe[i + 1]]; male(); } });
+  };
+  male();
+  s.querySelector("[data-ok]").onclick = () => {
+    L.spalten = reihe.filter(k => an.has(k));
+    if (L.gruppe && !L.spalten.includes(L.gruppe)) L.gruppe = "";
+    if (L.sort !== "name" && !L.spalten.includes(L.sort)) L.sort = "name";
+    s.remove(); zeichne();
+  };
+}
+function dialog(html) {
+  const s = document.createElement("div"); s.className = "schleier";
+  s.innerHTML = `<div class="dialog">${html}</div>`;
+  s.onclick = e => { if (e.target === s) s.remove(); };
+  s.querySelectorAll("[data-x]").forEach(b => b.onclick = () => s.remove());
+  s.addEventListener("keydown", e => { if (e.key === "Escape") s.remove(); });
+  document.body.appendChild(s);
+  return s;
+}
+
+// --- Anlegen -------------------------------------------------------------
+function regelnZwischen(a, b) {
+  // [{art, richtung}] aus Sicht von a; richtung „aus“ = a → b
+  return (A.M?.regeln || []).flatMap(r => [
+    ...(r.von === a && r.nach === b ? [{art: r.art, richtung: "aus"}] : []),
+    ...(r.von === b && r.nach === a && a !== b ? [{art: r.art, richtung: "ein"}] : [])]);
+}
+function neuDialog(typ) {
+  const anker = A.anker;
+  const s = dialog(`<h3>Neues Objekt</h3>
+    <label>Typ</label><select id="n-typ">${typen().map(t => `<option${t === typ ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>
+    <label>Name</label><input type="text" id="n-name" autocomplete="off">
+    <div id="n-bez"></div>
+    <div class="unten"><button class="k" data-x>Abbrechen</button><button class="k-neu" data-ok>Anlegen</button></div>`);
+  const bez = () => {
+    const t = s.querySelector("#n-typ").value, moegl = anker ? regelnZwischen(t, typVon(anker)) : [];
+    s.querySelector("#n-bez").innerHTML = moegl.length ? `<div class="hk"><input type="checkbox" id="n-mit" checked>
+      <span>verknüpfen mit <b>${esc(nameVon(anker))}</b></span></div>` +
+      (moegl.length > 1 ? `<select id="n-art" style="margin-top:6px">${moegl.map((m, i) => `<option value="${i}">${esc(t)} ${m.richtung === "aus" ? esc(m.art) + " " + esc(typVon(anker)) : "← " + esc(m.art)}</option>`).join("")}</select>`
+        : `<div class="hk" style="margin-top:4px;font:11px var(--mono)">${esc(t)} ${moegl[0].richtung === "aus" ? "→" : "←"} ${esc(moegl[0].art)} ${moegl[0].richtung === "aus" ? "→" : "←"} ${esc(typVon(anker))}</div>`)
+      + kantenFelderHtml(moegl[0].art) : "";
+    const artSel = s.querySelector("#n-art");
+    if (artSel) artSel.onchange = () => { s.querySelector("#n-kf")?.remove(); artSel.insertAdjacentHTML("afterend", kantenFelderHtml(moegl[+artSel.value].art)); };
+    return moegl;
+  };
+  let moegl = bez();
+  s.querySelector("#n-typ").onchange = () => { moegl = bez(); };
+  const ok = async () => {
+    const t = s.querySelector("#n-typ").value, name = s.querySelector("#n-name").value.trim();
+    if (!name) return s.querySelector("#n-name").focus();
+    const verkn = [];
+    if (moegl.length && s.querySelector("#n-mit")?.checked) {
+      const m = moegl[+(s.querySelector("#n-art")?.value || 0)];
+      verkn.push({ziel: anker, art: m.art, richtung: m.richtung, felder: kantenFelderWerte(s)});
+    }
+    try {
+      const d = await api("anlegen", {typ: t, name, verknuepfen: verkn});
+      s.remove(); if (d.hinweis) meldung(d.hinweis);
+      A.aktiv = d.ref; if (t !== A.typ && !(A.tab?.zahlen?.[t])) A.typ = t;
+      await neuLaden();
+    } catch (e) { meldung(e.message, true); }
+  };
+  s.querySelector("[data-ok]").onclick = ok;
+  s.querySelector("#n-name").onkeydown = e => { if (e.key === "Enter") ok(); };
+  s.querySelector("#n-name").focus();
+}
+function kantenFelderHtml(art) {
+  // Pflichtattribute einer Beziehung (Typ des Prozessschritt-Übergangs) gleich mit abfragen
+  const kf = (A.M?.kantenfelder?.[art] || []).filter(f => f.pflicht);
+  return kf.length ? `<div id="n-kf">` + kf.map(f => `<label>${esc(f.titel || f.name)}</label><select data-kf="${esc(f.name)}">${(f.optionen || []).map(o => `<option>${esc(o)}</option>`).join("")}</select>`).join("") + `</div>` : "";
+}
+function kantenFelderWerte(wurzel) {
+  const w = {}; wurzel.querySelectorAll("[data-kf]").forEach(s => w[s.dataset.kf] = s.value); return w;
+}
+
+// --- Massenbearbeitung -----------------------------------------------------
+function massenLeiste() {
+  const el = $("#massen"), n = A.auswahl.size;
+  if (!n) { el.hidden = true; return; }
+  el.hidden = false;
+  const sichtbar = sichtbareZeilen().length;
+  el.innerHTML = `<b>${n} ausgewählt</b><button class="k" id="m-alle">Alle auswählen (${sichtbar})</button>` +
+    `<button class="k" id="m-zu">Zuordnen zu …</button><button class="k" id="m-feld">Feld setzen …</button>` +
+    `<button class="k rot" id="m-weg">Löschen</button><button class="k" id="m-x" title="Auswahl aufheben">×</button>`;
+  $("#m-alle").onclick = () => { sichtbareZeilen().forEach(r => A.auswahl.add(r)); tafel(); massenLeiste(); };
+  $("#m-x").onclick = () => { A.auswahl.clear(); tafel(); massenLeiste(); };
+  $("#m-weg").onclick = async () => {
+    const refs = [...A.auswahl];
+    if (!confirm(`${refs.length} Objekte löschen? (lässt sich rückgängig machen)`)) return;
+    const d = await tu("mehrere_loeschen", {refs});
+    if (d) { A.auswahl.clear(); massenLeiste(); meldung(`${refs.length} gelöscht`, false, () => tu("mehrere_zurueck", {refs}, "Wiederhergestellt")); }
+  };
+  $("#m-feld").onclick = () => {
+    const felder = felderVon(A.typ).filter(f => f.name !== namefeld(A.typ));
+    const s = dialog(`<h3>Feld setzen für ${n} ${esc(A.typ)}</h3><label>Feld</label>
+      <select id="mf-f">${felder.map(f => `<option value="${esc(f.name)}">${esc(f.titel || f.name)}</option>`).join("")}</select>
+      <label>Wert</label><div id="mf-w"></div>
+      <div class="unten"><button class="k" data-x>Abbrechen</button><button class="k-neu" data-ok>Setzen</button></div>`);
+    const male = () => { const f = felder.find(x => x.name === s.querySelector("#mf-f").value); s.querySelector("#mf-w").innerHTML = eingabe(f, "", "mf-v", true); };
+    s.querySelector("#mf-f").onchange = male; male();
+    s.querySelector("[data-ok]").onclick = async () => {
+      const f = s.querySelector("#mf-f").value, v = s.querySelector("#mf-v").value;
+      if (await tu("mehrere_aendern", {refs: [...A.auswahl], felder: {[f]: v}})) s.remove();
+    };
+  };
+  $("#m-zu").onclick = () => {
+    // Ziel: Objekte der Typen, mit denen das Modell eine direkte Beziehung kennt
+    const zieltypen = typen().filter(t => regelnZwischen(A.typ, t).length);
+    const s = dialog(`<h3>${n} ${esc(A.typ)} zuordnen</h3><label>Zu</label>
+      <input type="text" id="mz-z" list="mz-l" placeholder="Name …" autocomplete="off"><datalist id="mz-l">${
+        A.z.knoten.filter(k => zieltypen.includes(k.typ)).sort((a, b) => vergleich(a.name, b.name)).map(k => `<option value="${esc(k.name)}">${esc(k.typ)}</option>`).join("")}</datalist>
+      <div id="mz-art"></div>
+      <div class="unten"><button class="k" data-x>Abbrechen</button><button class="k-neu" data-ok>Zuordnen</button></div>`);
+    const ziel = () => A.z.knoten.find(k => zieltypen.includes(k.typ) && k.name === s.querySelector("#mz-z").value.trim());
+    let moegl = [];
+    s.querySelector("#mz-z").oninput = () => {
+      const z = ziel(); moegl = z ? regelnZwischen(A.typ, z.typ) : [];
+      s.querySelector("#mz-art").innerHTML = !z ? "" : (moegl.length > 1
+        ? `<label>Beziehung</label><select id="mz-a">${moegl.map((m, i) => `<option value="${i}">${esc(A.typ)} ${m.richtung === "aus" ? esc(m.art) + " " + esc(z.typ) : "← " + esc(m.art) + " ← " + esc(z.typ)}</option>`).join("")}</select>`
+        : `<div class="hk" style="font:11px var(--mono)">${esc(A.typ)} ${moegl[0].richtung === "aus" ? "→" : "←"} ${esc(moegl[0].art)} ${moegl[0].richtung === "aus" ? "→" : "←"} ${esc(z.typ)}</div>`) + kantenFelderHtml(moegl[0]?.art);
+      const a = s.querySelector("#mz-a"); if (a) a.onchange = () => { s.querySelector("#n-kf")?.remove(); a.insertAdjacentHTML("afterend", kantenFelderHtml(moegl[+a.value].art)); };
+    };
+    s.querySelector("[data-ok]").onclick = async () => {
+      const z = ziel(); if (!z) return meldung("Bitte ein vorhandenes Objekt wählen.", true);
+      const m = moegl[+(s.querySelector("#mz-a")?.value || 0)];
+      if (await tu("mehrere_aendern", {refs: [...A.auswahl], verknuepfen: [{ziel: z.ref, art: m.art, richtung: m.richtung, felder: kantenFelderWerte(s)}]})) s.remove();
+    };
+    s.querySelector("#mz-z").focus();
+  };
+}
+
+// --- Inspektor -----------------------------------------------------------
+function eingabe(f, v, id, mitLeer) {
+  if (f?.optionen && !f.freitext)
+    return `<select id="${id}">${mitLeer ? `<option value="">(leer)</option>` : `<option value=""></option>`}${f.optionen.map(o => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  const dl = f?.optionen ? `<datalist id="${id}-l">${f.optionen.map(o => `<option value="${esc(o)}">`).join("")}</datalist>` : "";
+  return `<input type="text" id="${id}" value="${esc(v)}"${dl ? ` list="${id}-l"` : ""} autocomplete="off">${dl}`;
+}
+function inspektor() {
+  const el = $("#ins"), r = A.aktiv, k = A.N[r];
+  if (!k) { el.innerHTML = `<div class="nix">Wähle ein Objekt aus, um Details, Zusammenhang und Beziehungen zu sehen.</div>`; return; }
+  const t = k.typ, nf = namefeld(t), fl = felderVon(t).filter(f => f.name !== nf);
+  const frei = Object.keys(k.felder).filter(x => !fl.some(f => f.name === x));
+  let h = `<div class="ins-kopf">${typbild(t)}<div style="min-width:0"><h2 id="i-name" title="Klicken zum Umbenennen">${esc(k.name)}</h2><div class="typ">${esc(t)}</div></div></div>`;
+  h += `<div class="aktionen"><button class="k" id="i-bereich">Als Bereich →</button><button class="k" id="i-weg">Löschen</button></div>`;
+  // Kontext: die Kette (Raum, Plant, Prozess, Schritt), soweit abgeleitet
+  const sp = A.umfeld?.spalten || [], we = A.umfeld?.werte || {};
+  const kette = sp.filter(s => s.pfad.length > 1 && s.standard && we[s.key]?.length);
+  if (kette.length) h += `<div class="abschn"><span>Zusammenhang</span></div><div class="kette">` + kette.map(s =>
+    `<div class="glied"><span class="l" title="${esc(s.weg)}">${esc(s.titel)}</span><span class="w">${we[s.key].map(x => `<span data-oeffne="${esc(x)}">${esc(nameVon(x))}</span>`).join(", ")}</span></div>`).join("") + `</div>`;
+  // Eigenschaften
+  h += `<div class="abschn"><span>Eigenschaften</span></div><div class="karte">` +
+    [...fl, ...frei.map(x => ({name: x, titel: x}))].map(f => {
+      const v = k.felder[f.name] ?? "", wird = A.bearb === f.name;
+      const w = wird ? eingabe(f, v, "i-feld") : `<span class="w${v === "" ? (k.fehlt.includes(f.name) ? " fehlt" : " leer") : ""}" data-feld="${esc(f.name)}" title="${esc(v)}">${v === "" ? (k.fehlt.includes(f.name) ? "fehlt" : "–") : esc(v)}</span>`;
+      return `<div class="zeile"><span class="l">${esc(f.titel || f.name)}${f.pflicht ? ' <span class="stern">*</span>' : ""}</span>${w}</div>`;
+    }).join("") + `<div class="zeile"><span class="l" style="color:var(--leise)">eigenes Feld</span><span class="w leer" id="i-eigen">＋</span></div></div>`;
+  // Beziehungen: jede direkte Beziehung des Modells, auch leere — dort wird zugeordnet
+  h += `<div class="abschn"><span>Beziehungen</span></div>`;
+  for (const s of sp.filter(s => s.pfad.length === 1)) {
+    const st = s.pfad[0], ziele = (we[s.key] || []).slice().sort((a, b) => vergleich(nameVon(a), nameVon(b)));
+    h += `<div class="bez"><div class="titel"><span>${esc(st.typ)}</span><em>${st.richtung === "aus" ? "→ " : "← "}${esc(st.art)}</em></div><div class="marken">` +
+      ziele.map(z => `<span class="marke2"><span data-oeffne="${esc(z)}">${esc(nameVon(z))}</span><button data-loesen="${esc(s.key)}|${esc(z)}" title="Beziehung entfernen">×</button></span>`).join("") +
+      `<button class="plus" data-zuordnen="${esc(s.key)}">＋ ${esc(st.typ)}</button></div>` +
+      (A.zuordnen === s.key ? `<div class="zuordnen"><input id="i-zu" list="i-zu-l" placeholder="${esc(st.typ)} suchen oder neu …" autocomplete="off"><datalist id="i-zu-l">${
+        A.z.knoten.filter(x => x.typ === st.typ && x.ref !== r && !ziele.includes(x.ref)).sort((a, b) => vergleich(a.name, b.name)).map(x => `<option value="${esc(x.name)}">`).join("")}</datalist>` +
+        `<button class="k" id="i-zu-ok">OK</button></div>` + kantenFelderHtml(st.art).replace('id="n-kf"', 'id="i-kf"') : "") + `</div>`;
+  }
+  const weitere = sp.filter(s => s.pfad.length > 1 && !s.standard && we[s.key]?.length);
+  if (weitere.length) h += `<div class="abschn"><span>Weiter entfernt</span></div><div class="kette">` + weitere.map(s =>
+    `<div class="glied"><span class="l" title="${esc(s.weg)}">${esc(s.titel)}</span><span class="w">${we[s.key].map(x => `<span data-oeffne="${esc(x)}">${esc(nameVon(x))}</span>`).join(", ")}</span></div>`).join("") + `</div>`;
+  h += `<div class="abschn"><span>Notiz</span></div><textarea class="notiz" id="i-notiz" placeholder="Notiz …">${esc(k.notiz)}</textarea>`;
+  el.innerHTML = h;
+
+  el.querySelectorAll("[data-oeffne]").forEach(x => x.onclick = () => oeffne(x.dataset.oeffne));
+  $("#i-bereich").onclick = () => setzeAnker(r);
+  $("#i-weg").onclick = async () => {
+    if (!confirm(`„${k.name}“ löschen? (lässt sich rückgängig machen)`)) return;
+    if (await tu("loeschen", {ref: r})) meldung(`„${k.name}“ gelöscht`, false, async () => { await tu("zurueck", {ref: r}); oeffne(r); });
+  };
+  $("#i-name").onclick = () => {
+    const h2 = $("#i-name"); h2.innerHTML = `<input type="text" value="${esc(k.name)}" style="width:100%;background:var(--bg);border:1px solid var(--akzent);border-radius:4px;padding:3px 6px;font:600 15px var(--sans);outline:0">`;
+    const i = h2.querySelector("input"); i.focus(); i.select(); h2.onclick = null;
+    const fertig = async ok => { if (ok && i.value.trim() && i.value.trim() !== k.name) await tu("aendern", {ref: r, name: i.value.trim()}); else inspektor(); };
+    i.onkeydown = e => { if (e.key === "Enter") fertig(true); if (e.key === "Escape") fertig(false); };
+    i.onblur = () => fertig(true);
+  };
+  el.querySelectorAll("[data-feld]").forEach(x => x.onclick = () => { A.bearb = x.dataset.feld; inspektor(); });
+  const fe = $("#i-feld");
+  if (fe) {
+    fe.focus(); if (fe.select) fe.select();
+    let erledigt = false;
+    const speichern = async ok => {
+      if (erledigt) return; erledigt = true;
+      const f = A.bearb; A.bearb = null;
+      if (ok && fe.value !== (k.felder[f] ?? "")) await tu("aendern", {ref: r, felder: {[f]: fe.value}}); else inspektor();
+    };
+    fe.onkeydown = e => { if (e.key === "Enter") speichern(true); if (e.key === "Escape") speichern(false); };
+    fe.onblur = () => speichern(true);
+    if (fe.tagName === "SELECT") fe.onchange = () => speichern(true);
+  }
+  $("#i-eigen").onclick = async () => {
+    const name = prompt("Name des eigenen Feldes:"); if (!name?.trim()) return;
+    A.bearb = name.trim(); k.felder[A.bearb] ??= ""; inspektor();
+  };
+  el.querySelectorAll("[data-zuordnen]").forEach(b => b.onclick = () => { A.zuordnen = A.zuordnen === b.dataset.zuordnen ? null : b.dataset.zuordnen; inspektor(); $("#i-zu")?.focus(); });
+  el.querySelectorAll("[data-loesen]").forEach(b => b.onclick = async () => {
+    const [key, z] = b.dataset.loesen.split("|"), st = sp.find(s => s.key === key).pfad[0];
+    const [von, nach] = st.richtung === "aus" ? [r, z] : [z, r];
+    const kante = A.z.kanten.find(e => e.von === von && e.nach === nach && e.art === st.art);
+    if (kante && await tu("kante_weg", {id: kante.id})) {
+      A.umfeld = await api("umfeld", {ref: r}); inspektor();
+      meldung("Beziehung entfernt", false, () => tu("kante", {ref: von, ziel: nach, art: st.art, richtung: "aus", felder: kante.felder}));
+    }
+  });
+  const zu = $("#i-zu");
+  if (zu) {
+    const ok = async () => {
+      const st = sp.find(s => s.key === A.zuordnen).pfad[0], name = zu.value.trim(); if (!name) return;
+      const felder = kantenFelderWerte(el), vorh = A.z.knoten.find(x => x.typ === st.typ && x.name.toLowerCase() === name.toLowerCase());
+      // Neu angelegt wird nur, was es im Typ noch nicht gibt — der Server prüft das ebenfalls
+      const d = vorh ? await tu("kante", {ref: r, ziel: vorh.ref, art: st.art, richtung: st.richtung, felder})
+                     : await tu("anlegen", {typ: st.typ, name, verknuepfen: [{ziel: r, art: st.art, richtung: st.richtung === "aus" ? "ein" : "aus", felder}]},
+                                `${st.typ} „${name}“ angelegt`);
+      if (d) { A.zuordnen = null; A.umfeld = await api("umfeld", {ref: r}); inspektor(); }
+    };
+    $("#i-zu-ok").onclick = ok;
+    zu.onkeydown = e => { if (e.key === "Enter") ok(); if (e.key === "Escape") { A.zuordnen = null; inspektor(); } };
+  }
+  const no = $("#i-notiz");
+  no.onblur = () => { if (no.value !== k.notiz) tu("aendern", {ref: r, notiz: no.value}); };
+}
+
+// --- Tasten ----------------------------------------------------------------
+addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); $("#suchfeld")?.focus(); return; }
+  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName) || document.querySelector(".schleier")) return;
+  if (e.key === "Escape") { if (A.auswahl.size) { A.auswahl.clear(); tafel(); massenLeiste(); } else { A.aktiv = null; merkeHash(); tafel(); inspektor(); } }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "j" || e.key === "k") {
+    const z = sichtbareZeilen(); if (!z.length) return;
+    const i = z.indexOf(A.aktiv), n = e.key === "ArrowDown" || e.key === "j" ? Math.min(z.length - 1, i + 1) : Math.max(0, i - 1);
+    e.preventDefault(); oeffne(z[i < 0 ? 0 : n]).then(() => document.querySelector("tr.aktiv")?.scrollIntoView({block: "nearest"}));
+  }
+});
+start();
+</script>
+</body>
+</html>

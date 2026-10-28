@@ -1,88 +1,78 @@
-# Anwendung: Fertigungsgraph erfassen und erkunden
+# Anwendung: Fertigungsatlas
 
-Kurzanleitung mit typischen Fragen. Alle Beispiele laufen auf dem Beispielbestand:
+Objekte der Fertigung (Plant, Raum, Equipment, Prozess, Prozessschritt,
+Parameter, Material, Dokument, Software, Medium) anlegen, zuordnen, pflegen und
+als Tabelle nachschlagen. Alle Beispiele laufen auf dem Beispielbestand:
 
     python editor/beispiel.py --bestand editor/bestand_beispiel
     python editor/editor.py --bestand editor/bestand_beispiel   # http://127.0.0.1:8765/
 
-Funktionen im Einzelnen: `README.md`. Erlaubte Beziehungen: `modell.json` (22 Typpaare).
+## Das Prinzip: Primär → Sekundär → Tabelle
 
-## Grundidee
+```
+ Seitenleiste            Typ-Leiste über der Tabelle        rechts
+ PRIMÄR: worum geht es   SEKUNDÄR: was soll ich sehen       DETAIL
+ ─────────────────────   ────────────────────────────────   ─────────
+ Ort      Raum ▸ Plant   Equipment 5 · Prozessschritt 7 …   Inspektor
+ Prozesse Prozess ▸ Schritt
+ oder ein beliebiges Objekt („Als Bereich →“) oder „Alle Objekte“
+```
 
-Alles ist ein **Objekt** (Plant, Raum, Equipment, Software, Medium, Prozess,
-Prozessschritt, Material, Dokument, Parameter) mit **Verknüpfungen**. Du arbeitest in
-**Spalten**: jede Spalte ist eine Abfrage mit Filtern (Facetten). Eine Folgespalte
-(„Weiter →“) geht von den Treffern einer Spalte zu verbundenen Objekten.
+1. **Primär** wählen: links einen Raum, eine Plant, einen Prozess, einen Schritt –
+   oder „Alle Objekte“. Jedes andere Objekt wird Primär über **Als Bereich →** im
+   Inspektor.
+2. **Sekundär** wählen: über der Tabelle steht je Typ, wie viele Objekte zum
+   Bereich gehören. Klick = diese Objekte als Zeilen.
+3. Die **Tabelle** zeigt eigene Eigenschaften und **abgeleitete Spalten** (Plant,
+   Raum, Prozess, Dokumente …). Rechts der **Inspektor** des gewählten Objekts.
 
-## Erfassen
+Was „gehört zu“ heißt, ergibt sich aus dem Datenmodell, niemand muss es
+pflegen: es gilt der kürzeste Weg über die erlaubten Beziehungen. Equipments
+eines Raums sind die Equipments der Plants in diesem Raum; am Prozess beteiligt
+ist ein Equipment, das einen seiner Schritte ausführt.
 
-1. **Anlegen:** Strg K, `Equipment: Trockner TR-02`, Enter. Oder ＋ in einer Spalte –
-   Filter, die genau einen Wert festlegen, gelten dann schon für das neue Objekt.
-2. **Verknüpfen:** im Inspektor „Typ: Name“ eintippen, z. B. `Plant: Montage`.
-   Art und Richtung ergänzt der Editor aus dem Modell; gibt es zwischen den Typen
-   keine Beziehung, sagt er das.
-3. **Vieles auf einmal:** Menü ⋯ → „Liste einfügen“ (eine Zeile je Objekt, Einrücken =
-   hängt darunter) oder Massenbearbeitung für alle Treffer einer Spalte.
-4. **Lücken** zeigt das rote „!“; Filter „Datenqualität“ listet sie.
+## Typische Fragen
 
-## Erkunden
+| Frage | Primär | Sekundär | in der Tabelle |
+|---|---|---|---|
+| Liste aller Equipments der Linie 1 | Ort › Siebdruckraum › *Sensorfertigung Linie 1* | Equipment | – |
+| Welche Equipments sind am Prozess beteiligt? | Prozesse › *Elektrodenfertigung* | Equipment | – |
+| Welche Schritte hat der Prozess, in welcher Reihenfolge? | Prozesse › *Elektrodenfertigung* (aufklappen) | Prozessschritt | Reihenfolge steht links im Baum |
+| CPPs im Prozess und wer sie regelt | Prozesse › *Elektrodenfertigung* | Parameter | Facette Klasse = CPP, Spalte Equipment |
+| Equipments im Montageraum | Ort › *Montageraum* | Equipment | – |
+| Materialien im Prozess | Prozesse › *Materialvorbereitung Reagenz* | Material | Spalten Input / Output am Schritt |
+| Equipment ohne Dokument | Alle Objekte | Equipment | Gruppieren nach Dokument → „(keine)“ |
+| Was hängt an diesem CPP? | – | – | Zeile anklicken: Inspektor zeigt Zusammenhang und Beziehungen |
+| Was betrifft ein Ausfall von Gerät X? | X öffnen → **Als Bereich →** | Prozessschritt oder Prozess | – |
 
-- **Typ-Facette:** welche Objektarten sind in der Spalte.
-- **Zusammenhang:** „erreichbar von Objekt X“, standardmässig *nach Regelwerk*
-  (nur Wege, die das Modell vorsieht). Mehrere Zusammenhänge verknüpfen sich mit UND.
-- **Weiter →:** Folgespalte aus Auswahl oder allen Treffern.
-- **Fragen** (oben, oder Strg K mit einem Satz): fertige Spaltenketten.
-- Ansichten: Tabelle, Liste, Baum, Graph, Diagramm, Fluss (Prozessschritte entlang
-  „führt zu Nachfolger“). Gruppieren pro Spalte.
+## Pflegen
 
-## Use Cases
+- **Anlegen:** ＋ Neu ▾ oder „＋ Raum anlegen“ / „＋ Prozess anlegen“ in der
+  Seitenleiste. Ist ein Bereich gewählt, schlägt der Dialog die Verknüpfung
+  gleich vor (neues Equipment in Plant X: „ist Teil von“).
+- **Eigenschaften:** im Inspektor auf den Wert klicken. Pflichtfelder tragen *
+  und zeigen „fehlt“, auch in der Tabelle.
+- **Zuordnen:** im Inspektor unter *Beziehungen* stehen alle Beziehungen, die
+  das Modell für diesen Typ kennt, auch leere. „＋ Plant“ → Namen tippen →
+  Enter. Gibt es den Namen noch nicht, wird das Objekt angelegt. Pflichtattribute
+  einer Beziehung (Typ eines Schrittübergangs) werden dabei abgefragt. × löst eine
+  Beziehung (mit Rückgängig).
+- **Mehrere auf einmal:** Häkchen setzen (oder Umschalt-Klick), dann *Zuordnen
+  zu …*, *Feld setzen …* oder *Löschen* (mit Rückgängig).
 
-### 1. „Alle Equipments im Raum X von Plant Y“
-Spalte, Typ = Equipment. Zusammenhang → Raum *Montageraum*, zweiter Zusammenhang →
-Plant *Montage*. Equipments liegen nur über ihre Plant im Raum; der Weg ist
-Equipment → Plant → Raum, das Regelwerk findet ihn selbst.
-Oder als Satz in Strg K.
+## Tabellenlayout (wie Layout-Varianten in SAP)
 
-### 2. Prozessvalidierer: „CPPs im Prozess X – wer kontrolliert sie?“
-Frage „CPPs eines Prozesses – und wer sie kontrolliert“, Prozess *Elektrodenfertigung*
-wählen. Ergebnis: Parameter-Spalte, daneben Folgespalte mit den Equipments, die sie
-überwachen/regeln. Klick auf einen Parameter füllt die Equipment-Spalte live.
+Pro Typ gibt es ein **Standard**-Layout aus dem Modell: alle Eigenschaften,
+die direkten Beziehungen und der Ort- und Prozess-Kontext. Über **⋯ → Spalten
+wählen** Spalten ein- und ausblenden und ordnen, dazu **Sortieren** und
+**Gruppieren**. **Als neue Variante speichern** legt die Einstellung beim
+Bestand ab (`layouts.json`), damit alle Nutzer sie sehen. Eine Variante kann
+**Vorgabe** für ihren Typ werden. Ein „*“ im Layout-Feld heißt: geändert, nicht
+gespeichert. **CSV** exportiert die Tabelle, wie sie zu sehen ist.
 
-### 3. „Wo ist dieser CPP, was hängt an ihm?“
-Parameter (z. B. *Temperatur Trocknung Ag*) öffnen. Inspektor: **Wo** zeigt die Kette
-Prozess → Schritt, **Umfeld** je Typ, was bis 3 Schritte entfernt liegt (Equipment,
-Material, Dokument), **Verknüpfungen** die direkten Nachbarn. „Erkunden →“ macht daraus
-eine Spalte.
+## Tasten
 
-### 4. „Welche Materialien gehen in Prozess Y?“
-Frage „Materialien in einem Prozess“. Oder: Typ = Material, Zusammenhang → Prozess Y.
-Für „in Plant Z verwendet“: zweiten Zusammenhang → Plant Z ergänzen.
+Strg K: Suche (filtert die Tabelle und findet Objekte im ganzen Bestand) ·
+↑ ↓ oder j k: nächste Zeile · Esc: Auswahl aufheben, dann Inspektor leeren.
 
-### 5. Qualifizierer: „Equipment ohne Dokument“
-Typ = Equipment; Facette „verknüpft mit Typ“ → Dokument → **ohne**. Im Beispiel
-bleiben 10 Equipments übrig = Qualifizierungs-Lücken. Mit Menü ⋯ → CSV als Liste
-exportieren, oder Gruppe nach Plant, um zu sehen, wo die meisten fehlen.
-
-### 6. Prozessablauf ansehen
-Typ = Prozessschritt, Zusammenhang → Prozess *Siebdruck*, Ansicht **Fluss**:
-Schritte von links nach rechts, Gates/IPC, Wartezeiten und Schleifen sichtbar, Punkte
-am Schritt zeigen Parameter, Material, Equipment.
-
-### 7. „Was ist betroffen, wenn Equipment E ausfällt?“
-Equipment öffnen → Erkunden →; Folgespalte Typ Prozessschritt, dann Folgespalte
-Prozess. Zeigt die Schritte, die E nutzt, und die Prozesse darüber. Für Parameter und
-Materialien eine weitere Folgespalte aus derselben Quelle anlegen.
-
-### 8. Überblick und Qualität
-Gruppe nach Typ, Ansicht Diagramm (Anzahl je Typ; Klick auf Balken filtert).
-Filter „Gegen das Regelwerk“ zeigt Altdaten mit Verknüpfungen, die das Modell nicht
-kennt (⚠). Die Arbeitsfeld-Aufstellung lässt sich als **Ansicht** speichern und
-wieder aufrufen.
-
-## Tipps
-
-- Mengenlogik: Facette „Menge aus anderer Spalte“ – in / nicht in den Treffern einer
-  früheren Spalte (Schnitt, Differenz).
-- Freie Wege (statt Regelwerk) im Zusammenhang auf „frei“ stellen, wenn du Richtung,
-  Art und Tiefe selbst bestimmen willst.
-- Notizen im Inspektor verlinken mit `[[Name]]`; Umbenennen zieht die Verweise nach.
+Der frühere Editor mit Spalten, Fragen und Fluss liegt unter `/alt`.

@@ -1,7 +1,24 @@
 {
   "hinweis": "Einstellungen für die Wege 'nach Regelwerk'. Das Regelwerk selbst (welche Beziehung zwischen welchen Typen) steht in modell.json (Edge_*-Definitionen).",
-  "nicht_durchlaufen": ["Dokument", "Medium", "Software"],
+  "nicht_durchlaufen": [
+    "Dokument",
+    "Medium",
+    "Software"
+  ],
   "nicht_durchlaufen_hinweis": "Diese Typen verbinden beliebig viele Dinge (ein Dokument gehört zu Prozess UND Equipment). Sie sind Ziel, aber kein Zwischenschritt eines Weges.",
-  "nur_einzeln": ["führt zu Nachfolger (0:n)"],
-  "nur_einzeln_hinweis": "Reihenfolge-Beziehungen werden nicht mit weiteren Schritten verkettet: der Nachfolger eines Schrittes gehört deshalb nicht zum Prozess seines Vorgängers."
+  "nur_einzeln": [
+    "führt zu Nachfolger (0:n)"
+  ],
+  "nur_einzeln_hinweis": "Reihenfolge-Beziehungen werden nicht mit weiteren Schritten verkettet: der Nachfolger eines Schrittes gehört deshalb nicht zum Prozess seines Vorgängers.",
+  "grob": [
+    "Plant führt aus Prozess"
+  ],
+  "grob_hinweis": "Grobe Wege gelten nur, wenn es keinen gleich kurzen feinen gibt: am Prozess beteiligt ist ein Equipment, das einen seiner Schritte ausführt — nicht jedes Equipment der Plant, die den Prozess ausführt.",
+  "kontext": [
+    "Raum",
+    "Plant",
+    "Prozess",
+    "Prozessschritt"
+  ],
+  "kontext_hinweis": "Diese Typen erscheinen in der Tabelle ab Werk als abgeleitete Spalte, auch wenn sie zwei Schritte entfernt sind (Raum eines Equipments über die Plant)."
 }

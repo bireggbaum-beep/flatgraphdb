@@ -7,6 +7,20 @@ Objekte anlegen, verknüpfen und erkunden. Nur Standardbibliothek.
 
 Der Bestand liegt in `editor/bestand/` (nicht im Git). Dunkles Design.
 
+**Startseite ist der Fertigungsatlas** (`atlas.html`): links Primär (Ort: Raum ›
+Plant, Prozesse: Prozess › Schritt, oder ein beliebiges Objekt), oben Sekundär
+(welcher Typ als Zeilen), in der Mitte die Tabelle mit eigenen und abgeleiteten
+Spalten, rechts der Inspektor zum Pflegen und Zuordnen. Tabellenlayouts sind
+Varianten je Typ und liegen beim Bestand (`layouts.json`). Bedienung und
+Beispiele: `ANWENDUNG.md`. Der frühere Editor (Spalten, Fragen, Fluss) liegt
+unter `/alt` und wird entfernt, sobald der Atlas trägt.
+
+Was zu einem Objekt gehört und was in den abgeleiteten Spalten steht, rechnet
+der Server aus dem Modell (`Editor.bereich`, `spalten`, `tabelle`): je Zieltyp
+der kürzeste Weg über die erlaubten Beziehungen, jeder Schritt ein flatgraph-
+`get_connected`. Gleich kurze Wege mit verschiedener Beziehung (Material als
+Input und als Output) werden getrennte Spalten.
+
 **Datenmodell:** `editor/modell.json` (JSON-Schema mit `*Node`-Typen und
 `Edge_*`-Definitionen) gibt Typen, Felder, Auswahlwerte, deutsche Bezeichnungen
 (`title`) und **die erlaubten Beziehungen zwischen den Typen** vor. Referenz ist
@@ -35,14 +49,17 @@ beim Verknüpfen verlangt. Wer ohne diese Prüfung arbeiten will:
 - `editor/regeln.json` ist **nur Einstellung**, keine Paare: `nicht_durchlaufen`
   (Dokument, Medium, Software) sind Ziele, aber keine Zwischenschritte;
   `nur_einzeln` („führt zu Nachfolger“) wird nicht mit weiteren Schritten
-  verkettet.
+  verkettet; `grob` („Plant führt aus Prozess“) gilt nur, wenn es keinen gleich
+  kurzen feinen Weg gibt — am Prozess beteiligt ist ein Equipment, das einen
+  seiner Schritte ausführt; `kontext` (Raum, Plant, Prozess, Prozessschritt)
+  erscheint in der Tabelle ab Werk als Spalte, auch zwei Schritte entfernt.
 - `python editor/beispiel.py --bestand editor/bestand_beispiel` baut einen
   Beispielbestand: Fertigung eines Teststreifens über Chemlabor, Siebdruck
   (Ag/Carbon), Dispensieren, Trocknungen, Montage auf anderer Plant und QC
   (130 Objekte, 221 Verknüpfungen, mit absichtlichen Lücken: Equipment ohne
   Dokument, Parameter ohne Equipment, Mikroskop ohne Kategorie).
 
-## Arbeitsfeld aus Spalten
+## Alter Editor (`/alt`): Arbeitsfeld aus Spalten
 
 Mehrere **Spalten** nebeneinander. Jede ist eine eigene Abfrage mit eigener
 Ansicht (**Tabelle, Liste, Baum, Graph**) und eigenen **Facetten**
@@ -100,7 +117,7 @@ den Facetten rechnen die anderen Filter der Spalte mit.
 - Baum: Hierarchie innerhalb der Treffer einer Spalte, nach einer Beziehungsart;
   ziehen = verschieben, Strg/Alt = zusätzlich einhängen.
 
-## Inspektor (rechts)
+## Inspektor des alten Editors
 
 Titel zum Umbenennen anklicken; Eigenschaften nach Modell, darunter „+ eigenes Feld“
 (beliebiger Name und Wert, ohne Dropdown und Pflichtprüfung; bereits benutzte
@@ -112,7 +129,7 @@ Abschnitte lassen sich einklappen; Verknüpfungen nach Art und Richtung gruppier
 vorgeschlagen, was zwischen den beiden Typen schon benutzt wurde; „Erwähnt in“;
 Nachbarschaftsgraph. **Erkunden →** startet eine Spalte von diesem Objekt aus.
 
-## Tasten
+## Tasten (alter Editor)
 
 Strg K oder `/`: suchen, öffnen — oder `Typ: Name` + Enter zum Anlegen ·
 ↑ ↓ (oder j k): Zeile in der aktiven Spalte · Esc: Inspektor schließen.
