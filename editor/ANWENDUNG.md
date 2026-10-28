@@ -28,7 +28,8 @@ als Tabelle nachschlagen. Alle Beispiele laufen auf dem Beispielbestand:
 
 Was „gehört zu“ heißt, ergibt sich aus dem Datenmodell, niemand muss es
 pflegen: es gilt der kürzeste Weg über die erlaubten Beziehungen. Equipments
-eines Raums sind die Equipments der Plants in diesem Raum; am Prozess beteiligt
+eines Raums sind die, die dort stehen (der Raum hängt wie in SAP am Equipment);
+die Räume einer Plant ergeben sich über ihre Equipments; am Prozess beteiligt
 ist ein Equipment, das einen seiner Schritte ausführt.
 
 ## Typische Fragen
@@ -59,6 +60,28 @@ ist ein Equipment, das einen seiner Schritte ausführt.
   Beziehung (mit Rückgängig).
 - **Mehrere auf einmal:** Häkchen setzen (oder Umschalt-Klick), dann *Zuordnen
   zu …*, *Feld setzen …* oder *Löschen* (mit Rückgängig).
+- **IDs** (aus SAP) sind je Typ eindeutig. Eine schon vergebene ID wird
+  abgelehnt, mit dem Objekt, das sie schon hat.
+
+## Import aus SAP, Sheets, Excel
+
+1. In Sheets oder Excel die Zeilen **mit Kopfzeile** markieren und kopieren.
+2. Im Atlas **Strg V** (ausserhalb eines Eingabefelds) oder ＋ Neu ▾ → *Tabelle
+   einfügen*. Typ wählen (Equipment, Raum, …).
+3. Jede Spalte zuordnen: **ID** (Schlüssel, Pflicht), Name, ein Feld, oder eine
+   **Beziehung** („Raum“ → *steht in Raum*, „Funktionsplatz“ → *ist Teil von
+   Plant*). Spalten, die wie ein Feld oder ein Typ heissen, sind vorgeschlagen;
+   eine einmal gewählte Zuordnung merkt sich der Atlas je Spaltenname.
+4. **Prüfen** zeigt, was passiert: neu, geändert (mit den Feldern), unverändert,
+   welche Räume oder Plants mit angelegt werden, und Fehler mit Zeilennummer.
+5. **Übernehmen** – alles oder nichts. Solange es Fehler gibt (doppelte ID in der
+   Tabelle, Wert, den das Modell nicht kennt), wird nichts übernommen.
+
+Regeln: Gibt es die ID schon, wird das Objekt geändert, sonst angelegt. Eine
+**leere Zelle ändert nichts**. Eine Beziehungsspalte **ersetzt** die bisherige
+Zuordnung (ein Gerät, das in SAP umgezogen ist, steht danach nur im neuen
+Raum). Ein Ziel wird über seine ID oder seinen Namen gefunden; mehrere Ziele in
+einer Zelle mit „;“ trennen.
 
 ## Tabellenlayout (wie Layout-Varianten in SAP)
 

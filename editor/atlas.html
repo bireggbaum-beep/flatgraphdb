@@ -148,6 +148,21 @@ textarea.notiz:focus{border-color:var(--akzent)}
 .schleier{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:40;display:grid;place-items:center}
 .dialog{background:var(--panel);border:1px solid var(--linie2);border-radius:10px;padding:18px;width:min(440px,calc(100vw - 32px));max-height:85vh;overflow:auto}
 .dialog h3{margin:0 0 14px;font-size:15px}
+.dialog.breit{width:min(1000px,calc(100vw - 32px))}
+.dialog textarea{width:100%;min-height:150px;background:var(--fl);border:1px solid var(--linie2);border-radius:6px;padding:8px;font:12px var(--mono);outline:0;resize:vertical}
+.dialog textarea:focus{border-color:var(--akzent)}
+.imp{width:100%;border-collapse:collapse;margin-top:6px}
+.imp td,.imp th{position:static;padding:5px 8px;border-bottom:1px solid var(--linie);max-width:none;cursor:default}
+.imp th{background:none}
+.imp td.bsp{font:11.5px var(--mono);color:var(--gedimmt);max-width:280px;overflow:hidden;text-overflow:ellipsis}
+.imp select{width:100%;background:var(--fl);border:1px solid var(--linie2);border-radius:5px;padding:4px 6px}
+.imp select.leer{color:var(--leise)}
+.ergebnis{margin-top:14px;padding:10px 12px;border:1px solid var(--linie2);border-radius:7px;background:var(--fl)}
+.ergebnis .zahlen{display:flex;gap:16px;font:12px var(--mono);flex-wrap:wrap}
+.ergebnis .zahlen b{font-size:15px;color:var(--text)}
+.ergebnis .fehlerliste{color:var(--rot);font-size:12px;margin-top:8px;max-height:140px;overflow:auto}
+.ergebnis .liste{font:11.5px var(--mono);color:var(--gedimmt);margin-top:8px;max-height:160px;overflow:auto}
+.st-neu{color:var(--gruen)} .st-geändert{color:var(--akzent)} .st-gleich{color:var(--leise)}
 .dialog label{display:block;font:600 10px var(--mono);letter-spacing:.12em;color:var(--leise);text-transform:uppercase;margin:10px 0 4px}
 .dialog input[type=text],.dialog select{width:100%;background:var(--fl);border:1px solid var(--linie2);border-radius:5px;padding:7px 9px;outline:0}
 .dialog input[type=text]:focus,.dialog select:focus{border-color:var(--akzent)}
@@ -198,9 +213,10 @@ textarea.notiz:focus{border-color:var(--akzent)}
 const A = {
   z: null, M: null, N: {}, layouts: {}, anker: null, typ: null, tab: null,
   auswahl: new Set(), aktiv: null, umfeld: null, facetten: {}, suche: "",
-  lay: {}, variante: {}, offen: {}, zu: {}, bearb: null, zuordnen: null,
+  lay: {}, variante: {}, offen: {}, zu: {}, bearb: null, zuordnen: null, baeume: [], importe: {},
 };
-// Die Bäume der Seitenleiste: oben → darunter, die Beziehung kommt aus dem Modell.
+// Die Bäume der Seitenleiste: oben → darunter; was darunter gehört, rechnet der
+// Server aus dem Modell (Raum ▸ Plant über die Equipments).
 const BAEUME = [{titel: "Ort", oben: "Raum", unten: "Plant"},
                 {titel: "Prozesse", oben: "Prozess", unten: "Prozessschritt"}];
 const FARBEN = ["#f07c62", "#5aa9e6", "#4fbf8a", "#c792ea", "#e6b85a", "#5ad1c9", "#e66a9a", "#8fa1b3", "#b5d65a", "#d9905a"];
@@ -262,7 +278,7 @@ async function tu(name, daten, text) {
 // --- Laden ---------------------------------------------------------------
 async function start() {
   const r = await (await fetch("/api/zustand")).json();
-  setzeZustand(r.zustand); A.layouts = r.layouts || {};
+  setzeZustand(r.zustand); A.layouts = r.layouts || {}; A.importe = r.importe || {};
   A.variante = ls.lies("variante", {});
   const h = new URLSearchParams(location.hash.slice(1));
   A.anker = h.get("anker") && A.N[h.get("anker")] ? h.get("anker") : null;
@@ -277,6 +293,9 @@ async function neuLaden() {
   for (const r of [...A.auswahl]) if (!A.N[r]) A.auswahl.delete(r);
   try {
     A.tab = await api("tabelle", {anker: A.anker, typ: A.typ});
+    const bs = BAEUME.filter(b => typen().includes(b.oben) && typen().includes(b.unten));
+    const res = (await api("baum", {baeume: bs})).baeume;
+    A.baeume = BAEUME.map(b => res[bs.indexOf(b)] || null);
     A.umfeld = A.aktiv ? await api("umfeld", {ref: A.aktiv}) : null;
   } catch (e) { meldung(e.message, true); }
   merkeHash(); zeichne();
@@ -330,20 +349,6 @@ function wert(ref, sp) {
 }
 
 // --- Seitenleiste --------------------------------------------------------
-function kinderVon(oben, unten) {
-  // Beziehung zwischen den beiden Typen laut Modell; ohne Modell keine Bäume
-  const r = A.M?.regeln?.find(r => (r.von === unten && r.nach === oben) || (r.von === oben && r.nach === unten));
-  const kinder = {}, mitEltern = new Set();
-  if (!r) return {kinder, ohne: []};
-  for (const k of A.z.kanten) {
-    if (k.art !== r.art || typVon(k.von) !== r.von || typVon(k.nach) !== r.nach) continue;
-    const [o, u] = r.von === unten ? [k.nach, k.von] : [k.von, k.nach];
-    if (!A.N[o] || !A.N[u]) continue;
-    (kinder[o] ||= []).push(u); mitEltern.add(u);
-  }
-  const ohne = A.z.knoten.filter(k => k.typ === unten && !mitEltern.has(k.ref)).map(k => k.ref);
-  return {kinder, ohne};
-}
 function reihenfolge(refs) {
   // Prozessschritte entlang „Nachfolger“ (Selbstbeziehung des Typs) ordnen, sonst nach Name
   const menge = new Set(refs), ein = {}, nach = {};
@@ -382,9 +387,9 @@ function seite() {
   h += `<div class="abschn"><span>Bereich</span></div>` + eintrag("", "Alle Objekte", A.z.knoten.length);
   if (A.anker && !BAEUME.some(b => [b.oben, b.unten].includes(typVon(A.anker))))
     h += `<div class="eintrag an" data-anker="${esc(A.anker)}"><span class="nm">${esc(nameVon(A.anker))}</span><span class="zahl">${esc(kuerzel(typVon(A.anker)))}</span></div>`;
-  for (const b of BAEUME) {
-    if (!typen().includes(b.oben)) continue;
-    const {kinder, ohne} = kinderVon(b.oben, b.unten);
+  BAEUME.forEach((b, bi) => {
+    if (!A.baeume[bi]) return;
+    const {kinder, ohne} = A.baeume[bi];
     const oben = A.z.knoten.filter(k => k.typ === b.oben).map(k => k.ref).sort((x, y) => vergleich(nameVon(x), nameVon(y)));
     h += `<div class="abschn"><span>${esc(b.titel)}</span><span>${oben.length}</span></div>`;
     for (const o of oben) {
@@ -401,7 +406,7 @@ function seite() {
       if (auf) h += ohne.map(u => eintrag(u, nameVon(u), "", "kind")).join("");
     }
     h += `<button class="dazu" data-neu="${esc(b.oben)}">＋ ${esc(b.oben)} anlegen</button>`;
-  }
+  });
   const el = $("#seite"), fokus = document.activeElement?.id === "suchfeld", pos = $("#suchfeld")?.selectionStart;
   el.innerHTML = h;
   const f = $("#suchfeld");
@@ -477,7 +482,14 @@ async function varianteSpeichern(name, vorgabe) {
     meldung(vorgabe ? `„${L.name}“ ist jetzt Vorgabe für ${A.typ}` : `Variante „${L.name}“ gespeichert`); kopf();
   } catch (e) { meldung(e.message, true); }
 }
-$("#neu").onclick = e => menue(e.currentTarget, typen().map(t => [t, () => neuDialog(t)]), "Neues Objekt");
+$("#neu").onclick = e => menue(e.currentTarget, [["Tabelle einfügen (Import) …", () => importDialog("")], null,
+  ...typen().map(t => [t, () => neuDialog(t)])], "Neu");
+// Strg V ausserhalb eines Eingabefelds: eine kopierte Tabelle öffnet den Import
+document.addEventListener("paste", e => {
+  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName) || document.querySelector(".schleier")) return;
+  const text = e.clipboardData?.getData("text/plain") || "";
+  if (text.includes("\t") && text.includes("\n")) { e.preventDefault(); importDialog(text); }
+});
 $("#ins-schalter").onclick = () => { const an = $("#app").classList.toggle("ohne-ins"); ls.schreib("ohneIns", an); };
 
 function menue(bei, punkte, titel) {
@@ -641,9 +653,9 @@ function spaltenDialog() {
     s.remove(); zeichne();
   };
 }
-function dialog(html) {
+function dialog(html, breit) {
   const s = document.createElement("div"); s.className = "schleier";
-  s.innerHTML = `<div class="dialog">${html}</div>`;
+  s.innerHTML = `<div class="dialog${breit ? " breit" : ""}">${html}</div>`;
   s.onclick = e => { if (e.target === s) s.remove(); };
   s.querySelectorAll("[data-x]").forEach(b => b.onclick = () => s.remove());
   s.addEventListener("keydown", e => { if (e.key === "Escape") s.remove(); });
@@ -704,6 +716,91 @@ function kantenFelderHtml(art) {
 }
 function kantenFelderWerte(wurzel) {
   const w = {}; wurzel.querySelectorAll("[data-kf]").forEach(s => w[s.dataset.kf] = s.value); return w;
+}
+
+// --- Import: Tabelle aus Sheets/Excel einfügen -------------------------------
+function importZiele(typ) {
+  // Was eine Spalte sein kann: Name, Felder des Modells, eine direkte Beziehung.
+  // Beziehungen mit Pflichtattribut (Typ eines Schrittübergangs) gibt es hier nicht.
+  const nf = namefeld(typ);
+  return [{w: "", t: "— übergehen —"}, {w: "name", t: "Name"},
+    ...felderVon(typ).filter(f => f.name !== nf).map(f => ({w: "feld:" + f.name, t: (f.titel || f.name) + (f.name === A.M?.typen[typ]?.idfeld ? " (Schlüssel)" : "")})),
+    ...typen().flatMap(z => regelnZwischen(typ, z).filter(m => !(A.M?.kantenfelder?.[m.art] || []).some(f => f.pflicht))
+      .map(m => ({w: `bez:${m.art}|${m.richtung}|${z}`, t: `→ ${z} (${m.richtung === "aus" ? "" : "← "}${m.art})`})))];
+}
+function importVorschlag(typ, kopf) {
+  // Gemerkte Zuordnung zuerst, sonst nach Spaltenname: Feld, Titel, Typname
+  const ziele = importZiele(typ), gemerkt = A.importe[typ] || {}, n = s => String(s).trim().toLowerCase();
+  const idf = A.M?.typen[typ]?.idfeld;
+  return kopf.map(k => {
+    if (gemerkt[k] !== undefined && ziele.some(z => z.w === gemerkt[k])) return gemerkt[k];
+    const x = n(k);
+    if (["name", "bezeichnung", n(namefeld(typ) || "")].includes(x)) return "name";
+    // In SAP-Exporten heisst die Nummerspalte wie der Typ („Equipment“)
+    if (idf && ["id", n(idf), n(typ), n(typ) + "-nr", n(typ) + "nummer"].includes(x)) return "feld:" + idf;
+    const f = felderVon(typ).find(f => n(f.name) === x || n(f.titel || "") === x);
+    if (f && f.name !== namefeld(typ)) return "feld:" + f.name;
+    const bez = ziele.filter(z => z.w.startsWith("bez:") && n(z.w.split("|")[2]) === x);
+    return bez.length === 1 ? bez[0].w : "";
+  });
+}
+function importDialog(text) {
+  let typ = A.typ, kopf = [], beispiele = [], anzahl = 0, ziele = [], geprueft = null;
+  const s = dialog(`<h3>Tabelle einfügen</h3>
+    <div style="display:flex;gap:10px;align-items:center"><label style="margin:0">Typ</label>
+      <select id="im-typ" style="width:auto">${typen().map(t => `<option${t === typ ? " selected" : ""}>${esc(t)}</option>`).join("")}</select>
+      <span style="color:var(--leise);font-size:12px">Erste Zeile = Spaltennamen. Aus Google Sheets oder Excel kopieren und hier einfügen.</span></div>
+    <div id="im-feld" style="margin-top:10px"><textarea id="im-text" placeholder="Hier einfügen (Strg V) …"></textarea></div>
+    <div id="im-spalten"></div><div id="im-erg"></div>
+    <div class="unten"><button class="k" data-x>Abbrechen</button><button class="k" id="im-pruefen" disabled>Prüfen</button><button class="k-neu" id="im-ok" disabled>Übernehmen</button></div>`, true);
+  const ta = s.querySelector("#im-text");
+  const leer = () => { geprueft = null; s.querySelector("#im-erg").innerHTML = ""; s.querySelector("#im-ok").disabled = true; };
+  const spaltenMalen = () => {
+    const opt = importZiele(typ);
+    s.querySelector("#im-spalten").innerHTML = !kopf.length ? "" :
+      `<label>${anzahl} Zeilen · Spalten zuordnen</label><table class="imp"><thead><tr><th>Spalte</th><th>Beispiele</th><th style="width:300px">wird zu</th></tr></thead><tbody>` +
+      kopf.map((k, i) => `<tr><td>${esc(k)}</td><td class="bsp" title="${esc(beispiele.map(b => b[i] ?? "").join(" · "))}">${esc(beispiele.map(b => b[i] ?? "").filter(Boolean).join(" · "))}</td>
+        <td><select data-sp="${i}" class="${ziele[i] ? "" : "leer"}">${opt.map(o => `<option value="${esc(o.w)}"${o.w === ziele[i] ? " selected" : ""}>${esc(o.t)}</option>`).join("")}</select></td></tr>`).join("") + `</tbody></table>`;
+    s.querySelectorAll("[data-sp]").forEach(x => x.onchange = () => { ziele[+x.dataset.sp] = x.value; x.className = x.value ? "" : "leer"; leer(); });
+    s.querySelector("#im-pruefen").disabled = !kopf.length;
+  };
+  const lesen = async () => {
+    // Verlässt der Cursor das Feld, kommt „change“ erneut: gleicher Text heisst nichts tun,
+    // sonst ginge die gerade gewählte Zuordnung verloren
+    if (ta.value === text && kopf.length) return;
+    text = ta.value; leer();
+    if (!text.trim()) { kopf = []; spaltenMalen(); return; }
+    try {
+      const d = await api("tabelle_lesen", {text}), bisher = Object.fromEntries(kopf.map((k, i) => [k, ziele[i]]));
+      kopf = d.kopf; beispiele = d.beispiele; anzahl = d.anzahl;
+      ziele = importVorschlag(typ, kopf).map((v, i) => bisher[kopf[i]] ?? v);
+    }
+    catch (e) { meldung(e.message, true); }
+    spaltenMalen();
+  };
+  const pruefen = async ok => {
+    try {
+      const d = (await api("importieren", {typ, text, ziele, probe: !ok})).import;
+      const z = d.neue_ziele || {};
+      s.querySelector("#im-erg").innerHTML = `<div class="ergebnis"><div class="zahlen"><span><b class="st-neu">${d.neu}</b> neu</span><span><b class="st-geändert">${d.geaendert}</b> geändert</span><span><b>${d.gleich}</b> unverändert</span>${d.fehler.length ? `<span><b style="color:var(--rot)">${d.fehler.length}</b> Fehler</span>` : ""}</div>` +
+        (Object.keys(z).length ? `<div style="margin-top:8px;font-size:12px">Wird mit angelegt: ${Object.entries(z).map(([t, n]) => `<b>${esc(t)}</b> ${n.map(esc).join(", ")}`).join(" · ")}</div>` : "") +
+        (d.fehler.length ? `<div class="fehlerliste">${d.fehler.map(f => `Zeile ${f.zeile}: ${esc(f.text)}`).join("<br>")}</div><div style="margin-top:6px;font-size:12px;color:var(--leise)">Es wird nichts übernommen, solange es Fehler gibt.</div>` : "") +
+        (d.zeilen.length && !d.fehler.length ? `<div class="liste">${d.zeilen.filter(x => x.status !== "gleich").slice(0, 200).map(x => `<span class="st-${x.status}">${x.status.padEnd(9)}</span> ${esc(x.name)}${x.aenderungen.length && x.status !== "neu" ? ` <span style="color:var(--leise)">(${x.aenderungen.map(a => esc(feldTitel(typ, a))).join(", ")})</span>` : ""}`).join("<br>")}</div>` : "") + `</div>`;
+      geprueft = d;
+      s.querySelector("#im-ok").disabled = !!d.fehler.length || !(d.neu + d.geaendert);
+      if (ok && d.uebernommen) {
+        A.importe[typ] = Object.fromEntries(kopf.map((k, i) => [k, ziele[i]]).filter(([k]) => k));
+        s.remove(); meldung(`Import: ${d.neu} neu, ${d.geaendert} geändert`);
+        A.typ = typ; A.anker = null; A.auswahl.clear(); A.facetten = {}; await neuLaden();
+      }
+    } catch (e) { s.querySelector("#im-erg").innerHTML = `<div class="ergebnis"><div class="fehlerliste" style="margin:0">${esc(e.message)}</div></div>`; }
+  };
+  ta.addEventListener("paste", () => setTimeout(lesen, 0));
+  ta.addEventListener("change", lesen);
+  s.querySelector("#im-typ").onchange = e => { typ = e.target.value; ziele = importVorschlag(typ, kopf); leer(); spaltenMalen(); };
+  s.querySelector("#im-pruefen").onclick = () => pruefen(false);
+  s.querySelector("#im-ok").onclick = () => pruefen(true);
+  if (text) { ta.value = text; lesen(); } else ta.focus();
 }
 
 // --- Massenbearbeitung -----------------------------------------------------

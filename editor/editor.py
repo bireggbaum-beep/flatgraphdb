@@ -10,6 +10,8 @@ ohne (`--modell keins`) entstehen sie beim ersten Gebrauch.
 Die Logik steckt in `Editor` (ohne HTTP), damit sie sich testen lässt.
 """
 import argparse
+import csv
+import io
 import json
 import os
 import re
@@ -48,6 +50,16 @@ def _kennung(name):
         text = text.replace(a, b)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "_", text).strip("_")[:40] or "objekt"
+
+
+def _schreibe_json(pfad, daten):
+    """Über eine Arbeitsdatei daneben, fsync, os.replace — nie an Ort und Stelle."""
+    arbeit = pfad + ".arbeit"
+    with open(arbeit, "w", encoding="utf-8") as f:
+        json.dump(daten, f, ensure_ascii=False, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(arbeit, pfad)
 
 
 def _teile_typ(zeile, standardtyp):
@@ -89,7 +101,9 @@ class Modell:
                                "freitext": bool(spez.get("x-freitext")),   # Auswahl, aber auch freier Text erlaubt
                                "hinweis": spez.get("description", "")})
             namefeld = next((f["name"] for f in felder if f["name"].endswith("Name")), "name")
-            self.typen[typ] = {"namefeld": namefeld, "felder": felder}
+            # Die ID (aus SAP) ist je Typ eindeutig; doppelte sind ein Fehler
+            idfeld = next((f["name"] for f in felder if f["name"].endswith("ID")), None)
+            self.typen[typ] = {"namefeld": namefeld, "idfeld": idfeld, "felder": felder}
         # „Steht in“ (Plant) und „steht in“ (Equipment) sind eine Art: die
         # kleingeschriebene gewinnt.
         gesehen, paare = {}, []
@@ -177,6 +191,10 @@ class Modell:
                 "hubs": self.hubs, "einzeln": self.einzeln}
 
 
+class _Probe(Exception):
+    """Bricht die Transaktion eines Probelaufs ab: alles wird zurückgerollt."""
+
+
 class Editor:
     def __init__(self, pfad, modell=None, strikt=True):
         self.db = FlatGraphDB(pfad, audit=True)
@@ -192,6 +210,7 @@ class Editor:
         # Tabellenlayouts liegen beim Bestand, damit alle dieselben sehen;
         # flatgraph liest im Wurzelverzeichnis nur seine eigenen Ordner.
         self._layoutdatei = os.path.join(pfad, "layouts.json")
+        self._importdatei = os.path.join(pfad, "importe.json")
 
     def _art_b(self, art):
         """Art-Name für den Bestand; mit Modell nur, was das Modell kennt."""
@@ -217,6 +236,27 @@ class Editor:
 
     def _namefeld(self, typ):
         return self.modell.typen[typ]["namefeld"] if self.modell and typ in self.modell.typen else "name"
+
+    def _idfeld(self, typ):
+        return self.modell.typen[typ].get("idfeld") if self.modell and typ in self.modell.typen else None
+
+    def _mit_id(self, typ, wert, ausser=None):
+        """Das Objekt des Typs mit dieser ID (ausser `ausser`) oder None."""
+        idf, wert = self._idfeld(typ), str(wert).strip()
+        for kid, d in self.db.list_nodes(typ, readonly=True).items():
+            if f"{typ}/{kid}" != ausser and str(d.get(idf, "")).strip() == wert:
+                return f"{typ}/{kid}"
+        return None
+
+    def _pruefe_id(self, typ, felder, ausser=None):
+        idf = self._idfeld(typ)
+        wert = str((felder or {}).get(idf, "") if idf else "").strip()
+        if wert:
+            doppelt = self._mit_id(typ, wert, ausser)
+            if doppelt:
+                nf = self._namefeld(typ)
+                raise Fehler(f"Die ID „{wert}“ hat schon {typ} „{self.db.get_node(doppelt, readonly=True).get(nf)}“. "
+                             f"Doppelte IDs sind nicht erlaubt.")
 
     def _pruefe_werte(self, typ, felder):
         """Auswahlfelder nehmen nur Werte aus dem Modell; leer = nicht gesetzt."""
@@ -355,6 +395,24 @@ class Editor:
                 ergebnis[typ] = sorted(refs)
         return ergebnis
 
+    def baum(self, oben, unten):
+        """Für die Seitenleiste: je Objekt des oberen Typs die des unteren, die
+        zu ihm gehören (Raum ▸ Plant über die Equipments). `ohne`: untere ohne
+        oberes."""
+        oben, unten = _anzeige(self._typ_b(oben)), _anzeige(self._typ_b(unten))
+        wege = self.kurze_wege(oben, 3).get(unten, [])
+        kinder, mit = {}, set()
+        for kid in self.db.list_nodes(self._typ_b(oben), readonly=True):
+            ref = f"{self._typ_b(oben)}/{kid}"
+            k = set()
+            for p in wege:
+                k |= self._gehen(ref, p)
+            kinder[ref] = sorted(k)
+            mit |= k
+        ohne = sorted(f"{self._typ_b(unten)}/{k}" for k in self.db.list_nodes(self._typ_b(unten), readonly=True)
+                      if f"{self._typ_b(unten)}/{k}" not in mit)
+        return {"kinder": kinder, "ohne": ohne}
+
     def spalten(self, typ, max_hops=2):
         """Abgeleitete Spalten eines Typs aus dem Modell: je Zieltyp der kürzeste
         Weg; mehrere gleich kurze (Material als Input und als Output) werden je
@@ -423,13 +481,159 @@ class Editor:
             eintrag["varianten"][name] = {k: layout.get(k) for k in ("spalten", "sort", "absteigend", "gruppe")}
             if vorgabe:
                 eintrag["vorgabe"] = name
-        arbeit = self._layoutdatei + ".arbeit"
-        with open(arbeit, "w", encoding="utf-8") as f:
-            json.dump(alle, f, ensure_ascii=False, indent=1)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(arbeit, self._layoutdatei)
+        _schreibe_json(self._layoutdatei, alle)
         return alle
+
+    # --- Import aus Sheets/Excel (Kopieren und Einfügen) --------------------
+
+    def importe(self):
+        try:
+            with open(self._importdatei, encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+
+    @staticmethod
+    def _tabelle_lesen(text):
+        """Eingefügter Text -> Zeilen. Aus Sheets und Excel kommt Tabulator,
+        aus einer CSV-Datei Semikolon oder Komma. Leere Zeilen fallen weg."""
+        text = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        kopf = text.split("\n", 1)[0]
+        trenner = "\t" if "\t" in kopf else ";" if ";" in kopf else ","
+        return [z for z in csv.reader(io.StringIO(text), delimiter=trenner) if any(x.strip() for x in z)]
+
+    def importieren(self, typ, text, ziele, probe=True):
+        """Eine eingefügte Tabelle übernehmen: erste Zeile Spaltennamen, je Spalte
+        ein Ziel aus `ziele` — "" (übergehen), "name", "feld:<Feld>" oder
+        "bez:<Art>|<aus/ein>|<Typ>". Schlüssel ist die ID: vorhanden -> ändern,
+        sonst anlegen. Leere Zellen ändern nichts; eine Beziehungsspalte ersetzt
+        die bisherigen Ziele dieser Beziehung (SAP ist die Quelle). Fehlende Räume
+        und Plants werden mit angelegt.
+
+        Alles oder nichts: mit `probe` oder bei einem Fehler wird zurückgerollt.
+        Rückgabe: Zahlen, Fehler je Zeile und die Zeilen mit ihrem Ergebnis."""
+        typ = self._typ_b(typ)
+        zeilen = self._tabelle_lesen(text)
+        if len(zeilen) < 2:
+            raise Fehler("Bitte die Tabelle mit Kopfzeile einfügen (mindestens eine Datenzeile).")
+        kopf, daten = zeilen[0], zeilen[1:]
+        ziele = list(ziele) + [""] * (len(kopf) - len(ziele))
+        nf, idf = self._namefeld(typ), self._idfeld(typ)
+        schluessel = f"feld:{idf}" if idf else "name"     # mit ID im Modell ist sie der Schlüssel, nicht der Name
+        if schluessel not in ziele:
+            raise Fehler("Ordne eine Spalte der ID zu" + (f" ({idf})." if idf else " oder dem Namen."))
+        ergebnis = {"neu": 0, "geaendert": 0, "gleich": 0, "neue_ziele": {}, "fehler": [], "zeilen": [],
+                    "uebernommen": False}
+        try:
+            with self.db.transaction():
+                self._import_lauf(typ, kopf, daten, ziele, schluessel, nf, idf, ergebnis)
+                if probe or ergebnis["fehler"]:
+                    raise _Probe
+                ergebnis["uebernommen"] = True
+        except _Probe:
+            pass
+        if ergebnis["uebernommen"]:
+            alle = self.importe()
+            alle[typ] = {**alle.get(typ, {}), **{k: z for k, z in zip(kopf, ziele) if k}}
+            _schreibe_json(self._importdatei, alle)
+        return ergebnis
+
+    def _import_lauf(self, typ, kopf, daten, ziele, schluessel, nf, idf, erg):
+        spalte = {z: i for i, z in enumerate(ziele) if z}
+        zelle = lambda z, ziel: (z[spalte[ziel]] if spalte.get(ziel, 99999) < len(z) else "").strip()
+        # Doppelte Schlüssel im eingefügten Block: der ganze Import ist abgelehnt
+        gesehen = {}
+        for nr, z in enumerate(daten, start=2):
+            k = zelle(z, schluessel)
+            if k:
+                gesehen.setdefault(k if schluessel != "name" else k.casefold(), []).append(nr)
+        for k, nrn in gesehen.items():
+            if len(nrn) > 1:
+                erg["fehler"].append({"zeile": nrn[0], "text": f"„{k}“ steht mehrfach in der Tabelle (Zeilen {', '.join(map(str, nrn))})."})
+        if erg["fehler"]:
+            return
+        # Vorhandene Objekte je Typ nach ID und Name, einmal statt je Zeile
+        index = {}
+
+        def finde(t, wert, nur_id=False):
+            if t not in index:
+                i_f, n_f = self._idfeld(t), self._namefeld(t)
+                ids, namen = {}, {}
+                for kid, d in self.db.list_nodes(t, readonly=True).items():
+                    if i_f and str(d.get(i_f, "")).strip():
+                        ids[str(d[i_f]).strip()] = f"{t}/{kid}"
+                    namen.setdefault(str(d.get(n_f, "")).strip().casefold(), f"{t}/{kid}")
+                index[t] = (ids, namen)
+            ids, namen = index[t]
+            return ids.get(wert) if nur_id else ids.get(wert) or namen.get(wert.casefold())
+
+        def merke(t, ref, wert, als_id):
+            finde(t, "")
+            index[t][0 if als_id else 1][wert if als_id else wert.casefold()] = ref
+
+        felder_spalten = [z for z in spalte if z.startswith("feld:")]
+        bez_spalten = [z for z in spalte if z.startswith("bez:")]
+        for nr, z in enumerate(daten, start=2):
+            k = zelle(z, schluessel)
+            if not k:
+                erg["fehler"].append({"zeile": nr, "text": "Die ID fehlt." if schluessel != "name" else "Der Name fehlt."})
+                continue
+            felder = {f[5:]: zelle(z, f) for f in felder_spalten if zelle(z, f)}
+            felder.pop(nf, None)
+            name = zelle(z, "name") if "name" in spalte else ""
+            try:
+                ref = finde(typ, k, nur_id=schluessel != "name")
+                aenderungen = []
+                if ref:
+                    alt = self.db.get_node(ref, readonly=True)
+                    neu_f = {f: v for f, v in felder.items() if str(alt.get(f, "")) != v}
+                    aenderungen = [f for f in neu_f]
+                    if name and name != alt.get(nf):
+                        aenderungen.insert(0, nf)
+                    if neu_f or (name and name != alt.get(nf)):
+                        self.knoten_aendern(ref, name=name if name and name != alt.get(nf) else None, felder=neu_f)
+                    status = "geändert" if aenderungen else "gleich"
+                else:
+                    ref = self._erzeuge(typ, name or k, felder)
+                    merke(typ, ref, k, schluessel != "name")
+                    status = "neu"
+                for b in bez_spalten:
+                    wert = zelle(z, b)
+                    if not wert:
+                        continue
+                    art, richt, zt = b[4:].split("|")
+                    zt = self._typ_b(zt)
+                    soll = set()
+                    for w in (x.strip() for x in wert.split(";")):
+                        if not w:
+                            continue
+                        ziel = finde(zt, w)
+                        if not ziel:
+                            ziel = self._erzeuge(zt, w, None)
+                            merke(zt, ziel, w, False)
+                            erg["neue_ziele"].setdefault(zt, []).append(w)
+                        soll.add(ziel)
+                    rel = self._art_b(art)
+                    ist = {}
+                    for eid, e in self.db.get_connected_edges(ref, "out" if richt == "aus" else "in", rel):
+                        gegen = e["target"] if richt == "aus" else e["source"]
+                        if gegen.startswith(zt + "/"):
+                            ist[gegen] = eid
+                    for gegen, eid in ist.items():
+                        if gegen not in soll:
+                            self.db.delete_edge(eid)
+                    for ziel in soll - set(ist):
+                        self.verknuepfe(ref, ziel, art, richt)
+                    if set(ist) != soll:
+                        aenderungen.append(art)
+                        if status == "gleich":
+                            status = "geändert"
+            except Fehler as f:
+                erg["fehler"].append({"zeile": nr, "text": str(f)})
+                continue
+            erg[{"neu": "neu", "geändert": "geaendert", "gleich": "gleich"}[status]] += 1
+            if len(erg["zeilen"]) < 500:
+                erg["zeilen"].append({"zeile": nr, "ref": ref, "name": name or k, "status": status, "aenderungen": aenderungen})
 
     def _regel_reichweite(self, quellen, tiefe, typen):
         """Reichweite entlang der Metapfade: jeder Schritt ist ein flatgraph-
@@ -522,9 +726,19 @@ class Editor:
         if not name:
             raise Fehler("Name fehlt.")
         typ = self._typ_b(typ)
+        idf = self._idfeld(typ)
+        neue_id = str((felder or {}).get(idf, "") if idf else "").strip()
         vorhanden = self._finde(typ, name)
-        if vorhanden:
+        alte_id = str((self.db.get_node(vorhanden, readonly=True) or {}).get(idf, "")).strip() if vorhanden and idf else ""
+        # Gleicher Name heisst dasselbe Objekt — ausser beide tragen verschiedene
+        # IDs: in SAP darf es zwei „Waage“ geben
+        if vorhanden and not (neue_id and alte_id and neue_id != alte_id):
             return vorhanden, False
+        return self._erzeuge(typ, name, felder), True
+
+    def _erzeuge(self, typ, name, felder):
+        self._pruefe_werte(typ, felder)
+        self._pruefe_id(typ, felder)
         basis = _kennung(name)
         kid, i = basis, 1
         while self.db.get_node(f"{typ}/{kid}", readonly=True) is not None:
@@ -532,12 +746,11 @@ class Editor:
             kid = f"{basis}_{i}"
         nf = self._namefeld(typ)
         daten = {nf: name}
-        self._pruefe_werte(typ, felder)
         for k, v in (felder or {}).items():
             if k and k != nf and not k.startswith("_"):
                 daten[k] = v
         self.db.create_node(typ, kid, daten)
-        return f"{typ}/{kid}", True
+        return f"{typ}/{kid}"
 
     def anlegen_im_kontext(self, typ, name, felder=None, verknuepfen=None):
         """Anlegen mit Werten und Verknüpfungen aus dem aktiven Filter (der
@@ -600,6 +813,7 @@ class Editor:
                 raise Fehler("Name darf nicht leer sein.")
             daten[nf] = name.strip()
         self._pruefe_werte(typ, felder)
+        self._pruefe_id(typ, felder, ausser=ref)
         for k, v in (felder or {}).items():
             k = k.strip()
             if k and k != nf and not k.startswith("_"):
@@ -821,6 +1035,16 @@ def _aktionen(ed):
     def tabelle(d):
         return {**ed.tabelle(d.get("anker"), d["typ"]), "_nur": True}
 
+    def baum(d):
+        return {"baeume": [ed.baum(b["oben"], b["unten"]) for b in d["baeume"]], "_nur": True}
+
+    def tabelle_lesen(d):
+        zeilen = ed._tabelle_lesen(d["text"])
+        return {"kopf": zeilen[0] if zeilen else [], "beispiele": zeilen[1:4], "anzahl": max(0, len(zeilen) - 1), "_nur": True}
+
+    def importieren(d):
+        return {"import": ed.importieren(d["typ"], d["text"], d["ziele"], bool(d.get("probe", True)))}
+
     def umfeld(d):
         return {**ed.umfeld(d["ref"]), "_nur": True}
 
@@ -860,7 +1084,8 @@ def _aktionen(ed):
             "kante_weg": kante_weg, "kante_felder": kante_felder,
             "mehrere_aendern": mehrere_aendern, "mehrere_loeschen": mehrere_loeschen,
             "mehrere_zurueck": mehrere_zurueck, "reichweite": reichweite, "metapfade": metapfade,
-            "einhaengen": einhaengen, "tabelle": tabelle, "umfeld": umfeld, "layout": layout}
+            "einhaengen": einhaengen, "tabelle": tabelle, "umfeld": umfeld, "layout": layout,
+            "importieren": importieren, "baum": baum, "tabelle_lesen": tabelle_lesen}
 
 
 def bedienen(ed, port):
@@ -879,7 +1104,7 @@ def bedienen(ed, port):
 
         def do_GET(self):
             if self.path == "/api/zustand":
-                return self._senden(200, {"zustand": ed.zustand(), "layouts": ed.layouts()})
+                return self._senden(200, {"zustand": ed.zustand(), "layouts": ed.layouts(), "importe": ed.importe()})
             seiten = {"/": "atlas.html", "/index.html": "atlas.html", "/alt": "index.html"}
             if self.path in seiten:
                 with open(os.path.join(HIER, seiten[self.path]), "rb") as f:

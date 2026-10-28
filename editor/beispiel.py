@@ -34,7 +34,7 @@ def bauen(ed):
         # steht nur zur Lesbarkeit da und wird geprüft
         ed.verknuepfe(O[a], O[b], art, "aus", felder=attr or None)
 
-    # ---- Plants (Plant steht in Raum; Plant führt aus Prozess) ------------
+    # ---- Plants (Plant führt aus Prozess; ihre Räume ergeben sich über die Equipments) ----
     for k, n, i, t in [("pl1", "Sensorfertigung Linie 1", "PL-101", "Fertigungslinie"),
                        ("plm", "Montage und Konfektion", "PL-102", "Fertigungslinie"),
                        ("plc", "Chemlabor Materialvorbereitung", "PL-201", "Funktionsbereich (zB. Labor, QC)"),
@@ -46,9 +46,6 @@ def bauen(ed):
                         ("rcl", "Reagenzlager Chemlabor", "R-302", "ISO 9"), ("rql", "QC-Messlabor", "R-401", "ISO 9"),
                         ("rqk", "QC-Klimaraum", "R-402", "ISO 9")]:
         o(k, "Raum", n, RoomID=i, RoomClass=kl)
-    for pl, raeume in [("pl1", ("rsd", "rdp", "rtr")), ("plm", ("rmo", "rko")), ("plc", ("rca", "rcl")), ("plq", ("rql", "rqk"))]:
-        for r in raeume:
-            v(pl, "steht in", r)
 
     # ---- Medien ----------------------------------------------------------
     for k, n, i, t, c in [("druckluft", "Druckluft", "M-01", "Process Gases & Compressed Air", "Indirect Impact"),
@@ -58,7 +55,7 @@ def bauen(ed):
                           ("hvac8", "Reinraumluft ISO 8", "M-05", "HVAC / Cleanroom Air", "Indirect Impact")]:
         o(k, "Medium", n, MediumID=i, MediumType=t, MediumGXP="GXP", MediumProductContact=c)
 
-    # ---- Equipment (ist Teil von Plant) ----------------------------------
+    # ---- Equipment (ist Teil von Plant, steht in Raum — wie in SAP) -------
     eq = [("sd01", "Siebdruckanlage SD-01", "EQ-101", "Kat 3", "pl1", "rsd"), ("oi01", "Optische Inline-Inspektion OI-01", "EQ-102", "Kat 3", "pl1", "rsd"),
           ("tr01", "Durchlauftrockner TR-01", "EQ-103", "Kat 3", "pl1", "rtr"), ("tr02", "Vakuumtrockner TR-02", "EQ-104", "Kat 3", "pl1", "rtr"),
           ("dp01", "Dispensierroboter DP-01", "EQ-105", "Kat 3", "pl1", "rdp"),
@@ -68,9 +65,10 @@ def bauen(ed):
           ("vk01", "Viskosimeter VK-01", "EQ-303", "Kat 2", "plc", "rca"), ("ks01", "Kühlschrank Reagenz KS-01", "EQ-304", "Kat 2", "plc", "rcl"),
           ("ps01", "Potentiostat PS-01", "EQ-401", "Kat 3", "plq", "rql"), ("ms01", "Mikroskop MS-01", "EQ-402", "Kat 2", "plq", "rql"),
           ("kl01", "Klimaschrank Stabilität KL-01", "EQ-403", "Kat 3", "plq", "rqk")]
-    for k, n, i, kat, pl, _raum in eq:
+    for k, n, i, kat, pl, raum in eq:
         o(k, "Equipment", n, EquipmentID=i, EquipmentGXP="GXP", EquipmentCategory=kat)
-        v(k, "ist Teil von", pl)      # ein Equipment liegt über seine Plant im Raum (Plant steht in Raum)
+        v(k, "ist Teil von", pl)
+        v(k, "steht in", raum)
     for e_, m_ in [("sd01", "druckluft"), ("dp01", "druckluft"), ("tr02", "stickstoff"), ("rw01", "reinstw"), ("ma01", "druckluft"), ("sn01", "druckluft")]:
         v(e_, "verwendet", m_)
 

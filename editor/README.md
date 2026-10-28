@@ -11,7 +11,10 @@ Der Bestand liegt in `editor/bestand/` (nicht im Git). Dunkles Design.
 Plant, Prozesse: Prozess › Schritt, oder ein beliebiges Objekt), oben Sekundär
 (welcher Typ als Zeilen), in der Mitte die Tabelle mit eigenen und abgeleiteten
 Spalten, rechts der Inspektor zum Pflegen und Zuordnen. Tabellenlayouts sind
-Varianten je Typ und liegen beim Bestand (`layouts.json`). Bedienung und
+Varianten je Typ und liegen beim Bestand (`layouts.json`). **Import:** eine
+Tabelle aus Sheets oder Excel einfügen (＋ Neu ▾ oder Strg V auf der Seite),
+Spalten zuordnen, prüfen, übernehmen — Schlüssel ist die ID, alles oder nichts
+(`Editor.importieren`); die Zuordnung je Spaltenname merkt sich `importe.json`. Bedienung und
 Beispiele: `ANWENDUNG.md`. Der frühere Editor (Spalten, Fragen, Fluss) liegt
 unter `/alt` und wird entfernt, sobald der Atlas trägt.
 
@@ -25,10 +28,14 @@ Input und als Output) werden getrennte Spalten.
 `Edge_*`-Definitionen) gibt Typen, Felder, Auswahlwerte, deutsche Bezeichnungen
 (`title`) und **die erlaubten Beziehungen zwischen den Typen** vor. Referenz ist
 `editor/datenmodell.pdf`; `tests/test_editor.py` vergleicht die 22 Typpaare und
-die Attribute wörtlich damit. Fehlende Pflichtfelder erscheinen als Lücke (rotes
+die Attribute wörtlich damit. **Eine bewusste Abweichung** (28.10.2026): der Raum
+hängt am Equipment („Equipment steht in Raum“ statt „Plant steht in Raum“), wie
+in SAP; die Räume einer Plant ergeben sich über ihre Equipments. Fehlende Pflichtfelder erscheinen als Lücke (rotes
 „!“, Filter „Datenqualität“), erzwungen werden sie beim Anlegen nicht.
 Auswahlfelder nehmen nur Werte aus dem Modell; „Einheit“ eines Parameters ist
-Auswahl **oder** freier Text.
+Auswahl **oder** freier Text. Die **ID** (Feld `…ID`, aus SAP) ist je Typ
+eindeutig: eine schon vergebene ID wird beim Anlegen, Ändern und Import
+abgelehnt. Gleicher Name mit anderer ID ist ein anderes Objekt (zwei „Waage“).
 
 **Streng:** Eine Verknüpfung gibt es nur, wenn das Modell das Typpaar kennt.
 Zwischen zwei Typen mit genau einer Beziehung ergänzt der Editor Art **und**
@@ -42,8 +49,7 @@ beim Verknüpfen verlangt. Wer ohne diese Prüfung arbeiten will:
 
 - Das Regelwerk **ist das Modell**: jede `Edge_*`-Definition ist ein Paar
   „Typ –Beziehung→ Typ“ (Equipment *ist Teil von* Plant, Parameter *gehört zu*
-  Prozessschritt, …). Ein Equipment liegt demnach nur über seine Plant in einem
-  Raum, nicht direkt. Es steuert die strenge Prüfung, die Wege „nach Regelwerk“
+  Prozessschritt, …). Es steuert die strenge Prüfung, die Wege „nach Regelwerk“
   und die Warnung ⚠ am Verknüpfungs-Chip bei Altdaten (Filter „Gegen das
   Regelwerk“, Menü ⋯ → Regelwerk anzeigen).
 - `editor/regeln.json` ist **nur Einstellung**, keine Paare: `nicht_durchlaufen`
@@ -56,7 +62,7 @@ beim Verknüpfen verlangt. Wer ohne diese Prüfung arbeiten will:
 - `python editor/beispiel.py --bestand editor/bestand_beispiel` baut einen
   Beispielbestand: Fertigung eines Teststreifens über Chemlabor, Siebdruck
   (Ag/Carbon), Dispensieren, Trocknungen, Montage auf anderer Plant und QC
-  (130 Objekte, 221 Verknüpfungen, mit absichtlichen Lücken: Equipment ohne
+  (130 Objekte, 227 Verknüpfungen, mit absichtlichen Lücken: Equipment ohne
   Dokument, Parameter ohne Equipment, Mikroskop ohne Kategorie).
 
 ## Alter Editor (`/alt`): Arbeitsfeld aus Spalten

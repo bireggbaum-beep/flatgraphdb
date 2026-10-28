@@ -178,8 +178,7 @@ try:
 except Fehler as f:
     check("Modell: unbekannte Beziehungsart wird abgelehnt, mit den erlaubten Arten",
           "im Modell nicht" in str(f) and "steht in" in str(f), str(f))
-pl_m, _ = e.knoten_anlegen("Plant", "Linie M")
-e.kante_anlegen(pl_m, r1, "Steht in")
+e.kante_anlegen(eq, r1, "Steht in")
 check("Modell: „Steht in“ wird als „steht in“ gespeichert und angezeigt",
       [(k["art"]) for k in e.zustand()["kanten"]] == ["steht in"])
 
@@ -210,9 +209,9 @@ check("Kanten-Attribut ändern: gleiche Enden, neuer Wert, genau eine Kante",
       len(k2) == 1 and (k2[0]["von"], k2[0]["nach"]) == (s1, s2)
       and k2[0]["felder"] == {"ProcessstepType": "Gate / In-Process Control (IPC)"})
 
-pl2, _ = e.knoten_anlegen("Plant", "Zweite")
+pl2, _ = e.knoten_anlegen("Equipment", "Zweites Gerät")
 e.einhaengen(r1, pl2, "steht in")
-check("Einhängen: die Richtung folgt dem Regelwerk (Plant steht in Raum, auch wenn der Raum der Eltern ist)",
+check("Einhängen: die Richtung folgt dem Regelwerk (Equipment steht in Raum, auch wenn der Raum der Eltern ist)",
       any((k["von"], k["nach"], k["art"]) == (pl2, r1, "steht in") for k in e.zustand()["kanten"]))
 try:
     e.einhaengen(s2, s1, NACH)
@@ -226,11 +225,11 @@ except Fehler as f:
     check("Einhängen: Art ohne Regel für diese Typen wird abgelehnt, mit Hinweis auf das Erlaubte",
           "steht in" in str(f), str(f))
 
-neu, _, hin = e.massen("Plant: Linie 2\n  Equipment: Pumpe\n  Raum: Halle", "Plant")
+neu, _, hin = e.massen("Plant: Linie 2\n  Equipment: Pumpe\n    Raum: Halle", "Plant")
 nm = {k["name"]: k["ref"] for k in e.zustand()["knoten"]}
-check("Massen mit Regelwerk: Art und Richtung ergeben sich aus den Typen (Pumpe ist Teil von Linie 2, Linie 2 steht in Halle)",
+check("Massen mit Regelwerk: Art und Richtung ergeben sich aus den Typen (Pumpe ist Teil von Linie 2, Pumpe steht in Halle)",
       not hin and {(k["von"], k["nach"], k["art"]) for k in e.zustand()["kanten"] if k["von"] in (nm["Pumpe"], nm["Linie 2"])}
-      == {(nm["Pumpe"], nm["Linie 2"], "ist Teil von"), (nm["Linie 2"], nm["Halle"], "steht in")}, str(hin))
+      == {(nm["Pumpe"], nm["Linie 2"], "ist Teil von"), (nm["Pumpe"], nm["Halle"], "steht in")}, str(hin))
 _, _, hin = e.massen("Plant: Linie 3\n  Dokument: Plan", "Plant")
 check("Massen: eine Zeile ohne passende Beziehung wird gemeldet, das Objekt aber angelegt",
       len(hin) == 0 and any(k["name"] == "Plan" for k in e.zustand()["knoten"]))
@@ -398,12 +397,12 @@ mm = Modell("editor/modell.json")
 fehler = mm.lade_wegregeln("editor/regeln.json")
 check("Regelwerk: die 22 Beziehungspaare und 12 Arten kommen aus dem Datenmodell",
       len(mm.regeln) == 22 and len(mm.arten) == 12, f"{len(mm.regeln)} Paare, {len(mm.arten)} Arten")
-check("Regelwerk: „steht in“ gibt es nur zwischen Plant und Raum — ein Equipment liegt über seine Plant im Raum",
-      {(r["von"], r["nach"]) for r in mm.regeln if r["art"] == "steht in"} == {("Plant", "Raum")})
+check("Regelwerk: „steht in“ gibt es nur zwischen Equipment und Raum — eine Plant liegt über ihre Equipments im Raum",
+      {(r["von"], r["nach"]) for r in mm.regeln if r["art"] == "steht in"} == {("Equipment", "Raum")})
 check("Regelwerk: Einstellungen für die Wege passen zum Modell", fehler == [], str(fehler))
 check("Regelwerk: zwischen zwei Typen gibt es die erlaubten Arten mit Richtung",
-      mm.zwischen("Raum", "Plant") == [("steht in", "ein")] and mm.zwischen("Plant", "Raum") == [("steht in", "aus")]
-      and mm.zwischen("Material", "Equipment") == [] and mm.zwischen("Equipment", "Raum") == [])
+      mm.zwischen("Raum", "Equipment") == [("steht in", "ein")] and mm.zwischen("Equipment", "Raum") == [("steht in", "aus")]
+      and mm.zwischen("Material", "Equipment") == [] and mm.zwischen("Plant", "Raum") == [])
 # Abgleich mit der Referenz (editor/datenmodell.pdf, Tabelle „OBJEKT TYPES“ und „OBJEKT TYP ATTRIBUTES“)
 PDF_PAARE = {("Plant", "steht in", "Raum"), ("Plant", "führt aus", "Prozess"), ("Equipment", "ist Teil von", "Plant"),
              ("Equipment", "führt aus", "Prozessschritt"), ("Prozessschritt", "ist Teil von", "Prozess"),
@@ -414,8 +413,10 @@ PDF_PAARE = {("Plant", "steht in", "Raum"), ("Plant", "führt aus", "Prozess"), 
              ("Software", "unterstützt", "Plant"), ("Software", "unterstützt", "Prozess"), ("Software", "unterstützt", "Prozessschritt"),
              ("Software", "steuert", "Equipment"), ("Prozessschritt", "verwendet", "Medium"),
              ("Prozessschritt", "definiert", "Parameter"), ("Equipment", "überwacht/regelt", "Parameter")}
-check("Referenz-PDF: die 22 Beziehungspaare stimmen mit dem Datenmodell überein",
-      {(r["von"], r["art"], r["nach"]) for r in mm.regeln} == PDF_PAARE,
+# Bewusste Abweichung (Entscheidung 28.10.2026): in SAP hat jedes Equipment einen Raum
+ABWEICHUNG = ({("Plant", "steht in", "Raum")}, {("Equipment", "steht in", "Raum")})
+check("Referenz-PDF: die 22 Beziehungspaare stimmen bis auf die eine beschlossene Abweichung (Raum am Equipment) überein",
+      {(r["von"], r["art"], r["nach"]) for r in mm.regeln} == (PDF_PAARE - ABWEICHUNG[0]) | ABWEICHUNG[1],
       str({(r["von"], r["art"], r["nach"]) for r in mm.regeln} ^ PDF_PAARE))
 PDF_ATTR = {  # Typ: {Eigenschaft: (Beschriftung, Auswahlwerte oder None)}
     "Equipment": {"EquipmentName": ("Name", None), "EquipmentID": ("ID", None), "EquipmentGXP": ("GXP-Relevanz", ["GXP", "NGXP"]),
@@ -473,14 +474,14 @@ except Fehler as f:
     check("Strikt: Equipment und Material haben keine Beziehung -> abgelehnt, mit Erklärung",
           "keine Beziehung" in str(f), str(f))
 try:
-    e.kante_anlegen(O["rca"], O["plc"], "steht in")
-    check("Strikt: die falsche Richtung (Raum steht in Plant) wird abgelehnt", False)
+    e.kante_anlegen(O["rca"], O["w01"], "steht in")
+    check("Strikt: die falsche Richtung (Raum steht in Equipment) wird abgelehnt", False)
 except Fehler as f:
-    check("Strikt: die falsche Richtung (Raum steht in Plant) wird abgelehnt, mit dem Erlaubten",
-          "Plant steht in Raum" in str(f), str(f))
+    check("Strikt: die falsche Richtung (Raum steht in Equipment) wird abgelehnt, mit dem Erlaubten",
+          "Equipment steht in Raum" in str(f), str(f))
 n_vor = len(e.zustand()["kanten"])
-e.verknuepfe(O["rca"], O["plc"])      # Art und Richtung ergeben sich aus den Typen
-check("Verknüpfen ohne Art: Raum und Plant ergibt „Plant steht in Raum“ (schon vorhanden, kein Duplikat)",
+e.verknuepfe(O["rca"], O["w01"])      # Art und Richtung ergeben sich aus den Typen
+check("Verknüpfen ohne Art: Raum und Equipment ergibt „Equipment steht in Raum“ (schon vorhanden, kein Duplikat)",
       len(e.zustand()["kanten"]) == n_vor)
 eq_neu, _ = e.knoten_anlegen("Equipment", "Neues Gerät")
 e.verknuepfe(eq_neu, O["plq"])
@@ -541,8 +542,10 @@ check("Regelwerk: Schritte, die zum Prozess gehören — nur die eigenen, nicht 
        if O["p_elek"] in v} == {O["s_ag"], O["s_vak"]})
 # --- Atlas: Primär → Sekundär, abgeleitete Spalten, Layouts ---
 b_mo = e.bereich(O["rmo"])
-check("Bereich: Equipments im Raum sind die der Plants in diesem Raum (Equipment → Plant → Raum)",
-      set(b_mo.get("Equipment", [])) == {O["ma01"], O["sn01"], O["vp01"]}, str(sorted(namen[x] for x in b_mo.get("Equipment", []))))
+check("Bereich: Equipments im Raum sind die, die dort stehen (wie in SAP, nicht alle der Plant)",
+      set(b_mo.get("Equipment", [])) == {O["ma01"], O["sn01"]}, str(sorted(namen[x] for x in b_mo.get("Equipment", []))))
+check("Bereich: die Räume einer Plant ergeben sich über ihre Equipments",
+      set(e.bereich(O["plm"])["Raum"]) == {O["rmo"], O["rko"]})
 check("Bereich: Prozessschritte am Prozess sind genau seine Schritte",
       set(e.bereich(O["p_mont"])["Prozessschritt"]) == {O["s_lam"], O["s_schn"], O["s_kon"]})
 check("Bereich: ein Prozess hat genau einen Weg zu Equipment — über die Schritte, nicht grob über die Plant",
@@ -557,8 +560,10 @@ check("Bereich: am Prozess beteiligt ist, wer einen seiner Schritte ausführt",
 check("Bereich: ohne Anker alle Objekte je Typ",
       sum(len(v) for v in e.bereich(None).values()) == len(e.zustand()["knoten"]) > 100)
 sp_eq = {s["titel"]: s for s in e.spalten("Equipment")}
-check("Spalten: der Raum eines Equipments kommt über die Plant und ist ab Werk sichtbar",
-      [x["typ"] for x in sp_eq["Raum"]["pfad"]] == ["Plant", "Raum"] and sp_eq["Raum"]["standard"])
+sp_pl = {s["titel"]: s for s in e.spalten("Plant")}
+check("Spalten: der Raum einer Plant kommt über ihre Equipments und ist ab Werk sichtbar",
+      [x["typ"] for x in sp_pl["Raum"]["pfad"]] == ["Equipment", "Raum"] and sp_pl["Raum"]["standard"]
+      and [x["typ"] for x in sp_eq["Raum"]["pfad"]] == ["Raum"])
 check("Spalten: Material als Input und als Output sind zwei Spalten, keine vermischte",
       {"Material (benötigt Input)", "Material (erzeugt Output)"} <= set(sp_eq) and "Material" not in sp_eq, str(sorted(sp_eq)))
 check("Spalten: Vorgänger und Nachfolger eines Schritts sind getrennte Spalten",
@@ -578,6 +583,70 @@ check("Layout: eine Variante liegt beim Bestand und ist Vorgabe für den Typ",
 e.layout_speichern("Equipment", "Qualifizierung", None)
 check("Layout: löschen entfernt Variante und Vorgabe, keine Arbeitsdatei bleibt liegen",
       e.layouts()["Equipment"] == {"varianten": {}, "vorgabe": None} and not os.path.exists(e._layoutdatei + ".arbeit"))
+# --- IDs aus SAP: je Typ eindeutig ---
+try:
+    e.knoten_anlegen("Equipment", "Andere Anlage", {"EquipmentID": "EQ-101"})
+    check("ID: eine schon vergebene ID wird beim Anlegen abgelehnt", False)
+except Fehler as f:
+    check("ID: eine schon vergebene ID wird beim Anlegen abgelehnt, mit dem Objekt, das sie hat",
+          "EQ-101" in str(f) and "Siebdruckanlage SD-01" in str(f), str(f))
+try:
+    e.knoten_aendern(O["oi01"], felder={"EquipmentID": " EQ-101 "})
+    check("ID: eine schon vergebene ID wird beim Ändern abgelehnt", False)
+except Fehler:
+    check("ID: eine schon vergebene ID wird beim Ändern abgelehnt (Leerzeichen zählen nicht)", True)
+e.knoten_aendern(O["sd01"], felder={"EquipmentID": "EQ-101", "EquipmentCategory": "Kat 3"})
+check("ID: die eigene ID beim Ändern stehen zu lassen ist kein Fehler", e.db.get_node(O["sd01"])["EquipmentID"] == "EQ-101")
+zweite, neu_w = e.knoten_anlegen("Equipment", "Analysenwaage W-01", {"EquipmentID": "EQ-399"})
+check("ID: gleicher Name mit anderer ID ist ein anderes Objekt (zwei Waagen in SAP)", neu_w and zweite != O["w01"])
+check("ID: gleicher Name ohne ID bleibt dasselbe Objekt", e.knoten_anlegen("Raum", "Montageraum") == (O["rmo"], False))
+try:
+    e.mehrere_aendern([O["ms01"], O["kl01"]], felder={"EquipmentID": "EQ-900"})
+    check("ID: dieselbe ID für mehrere Objekte wird abgelehnt", False)
+except Fehler:
+    check("ID: dieselbe ID für mehrere Objekte wird abgelehnt", True)
+
+# --- Import per Einfügen aus Sheets/Excel ---
+ZIELE = ["name", "feld:EquipmentID", "bez:steht in|aus|Raum", "bez:ist Teil von|aus|Plant", "feld:EquipmentCategory"]
+TEXT = ("Bezeichnung\tEquipment\tRaum\tFunktionsplatz\tKategorie\n"
+        "Siebdruckanlage SD-01 (neu)\tEQ-101\tSiebdruckraum\tSensorfertigung Linie 1\tKat 2\n"
+        "Plasmareiniger\tEQ-501\tR-501 Neuraum\tSensorfertigung Linie 1\tKat 1\n"
+        "Optische Inline-Inspektion OI-01\tEQ-102\tTrockenraum\t\t\n")
+vorher = len(e.zustand()["knoten"])
+pr = e.importieren("Equipment", TEXT, ZIELE, probe=True)
+check("Import: der Probelauf zählt neu und geändert und nennt neue Räume",
+      (pr["neu"], pr["geaendert"], pr["fehler"], pr["neue_ziele"]) == (1, 2, [], {"Raum": ["R-501 Neuraum"]}), str(pr))
+check("Import: der Probelauf ändert nichts", len(e.zustand()["knoten"]) == vorher
+      and e.db.get_node(O["sd01"])["EquipmentName"] == "Siebdruckanlage SD-01" and not pr["uebernommen"])
+ue = e.importieren("Equipment", TEXT, ZIELE, probe=False)
+plasma = next(x["ref"] for x in ue["zeilen"] if x["name"] == "Plasmareiniger")
+check("Import: vorhandene ID wird geändert (Name, Kategorie), neue angelegt",
+      ue["uebernommen"] and e.db.get_node(O["sd01"])["EquipmentName"] == "Siebdruckanlage SD-01 (neu)"
+      and e.db.get_node(O["sd01"])["EquipmentCategory"] == "Kat 2" and e.db.get_node(plasma)["EquipmentID"] == "EQ-501")
+check("Import: der neue Raum ist angelegt, das neue Gerät steht darin und gehört zur Plant",
+      [namen.get(x, e.db.get_node(x)["RoomName"]) for x in e.db.get_connected(plasma, "out", target_collection="Raum")] == ["R-501 Neuraum"]
+      and e.db.get_connected(plasma, "out", target_collection="Plant") == [O["pl1"]])
+check("Import: eine Beziehungsspalte ersetzt den bisherigen Raum (umgezogen, nicht in zwei Räumen)",
+      e.db.get_connected(O["oi01"], "out", target_collection="Raum") == [O["rtr"]])
+check("Import: eine leere Zelle ändert nichts (Plant bleibt)", e.db.get_connected(O["oi01"], "out", target_collection="Plant") == [O["pl1"]])
+check("Import: die Zuordnung der Spalten ist für den Typ gemerkt",
+      e.importe()["Equipment"]["Funktionsplatz"] == "bez:ist Teil von|aus|Plant")
+nochmal = e.importieren("Equipment", TEXT, ZIELE, probe=True)
+check("Import: derselbe Import noch einmal ändert nichts", (nochmal["neu"], nochmal["geaendert"], nochmal["gleich"]) == (0, 0, 3), str(nochmal))
+vorher = len(e.zustand()["knoten"])
+dop = e.importieren("Equipment", "Name;ID\nA;EQ-700\nB;EQ-700\n", ["name", "feld:EquipmentID"], probe=False)
+check("Import: doppelte ID im Block -> abgelehnt mit Zeilen, nichts angelegt (auch CSV mit Semikolon)",
+      not dop["uebernommen"] and "Zeilen 2, 3" in dop["fehler"][0]["text"] and len(e.zustand()["knoten"]) == vorher, str(dop["fehler"]))
+schlecht = e.importieren("Equipment", "Name\tID\tKat\nGut\tEQ-701\tKat 1\nSchlecht\tEQ-702\tKat 9\n",
+                         ["name", "feld:EquipmentID", "feld:EquipmentCategory"], probe=False)
+check("Import: ein ungültiger Wert -> Fehler mit Zeilennummer, auch die gute Zeile wird nicht übernommen",
+      not schlecht["uebernommen"] and schlecht["fehler"][0]["zeile"] == 3 and len(e.zustand()["knoten"]) == vorher, str(schlecht["fehler"]))
+try:
+    e.importieren("Equipment", "Name\tKat\nX\tKat 1\n", ["name", "feld:EquipmentCategory"])
+    check("Import: ohne ID-Spalte geht es nicht", False)
+except Fehler as f:
+    check("Import: ohne ID-Spalte geht es nicht", "EquipmentID" in str(f), str(f))
+
 sa, _ = e.knoten_anlegen("Prozessschritt", "Testschritt A")
 sb, _ = e.knoten_anlegen("Prozessschritt", "Testschritt B")
 e.verknuepfe(sa, sb, "führt zu Nachfolger (0:n)", "ein", {"ProcessstepType": "Standard-Fertigungsschritt"})

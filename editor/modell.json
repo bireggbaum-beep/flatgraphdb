@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Medizintechnik Fertigungsgraph Metamodell",
-  "description": "Striktes JSON-Schema mit expliziten Beziehungspaaren (fromType -> relation -> toType). Referenz: datenmodell.pdf (22 Paare).",
+  "description": "Striktes JSON-Schema mit expliziten Beziehungspaaren (fromType -> relation -> toType). Referenz: datenmodell.pdf (22 Paare); Abweichung: Raum am Equipment statt an der Plant (Edge_Equipment_StehtIn_Raum).",
   "type": "object",
   "required": [
     "nodes",
@@ -51,7 +51,7 @@
       "items": {
         "oneOf": [
           {
-            "$ref": "#/$defs/Edge_Plant_StehtIn_Raum"
+            "$ref": "#/$defs/Edge_Equipment_StehtIn_Raum"
           },
           {
             "$ref": "#/$defs/Edge_Plant_FuehrtAus_Prozess"
@@ -649,7 +649,8 @@
         }
       }
     },
-    "Edge_Plant_StehtIn_Raum": {
+    "Edge_Equipment_StehtIn_Raum": {
+      "description": "Bewusste Abweichung von datenmodell.pdf (dort: Plant steht in Raum). In SAP hat jedes Equipment einen Raum; die Räume einer Plant ergeben sich über ihre Equipments. Entscheidung 28.10.2026.",
       "type": "object",
       "required": [
         "from",
@@ -663,7 +664,7 @@
           "type": "string"
         },
         "fromType": {
-          "const": "Plant"
+          "const": "Equipment"
         },
         "relation": {
           "const": "Steht in"
