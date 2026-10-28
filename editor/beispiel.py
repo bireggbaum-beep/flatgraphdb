@@ -137,7 +137,7 @@ def bauen(ed):
     for i, (k, n, t) in enumerate(mat, 1):
         o(k, "Material", n, MaterialID=f"MAT-{i:03d}", MaterialType=t)
     ein = [("s_waege", ["m_enz", "m_med", "m_puf"]), ("s_ansatz", ["m_enz", "m_med", "m_puf"]), ("s_ag", ["m_ag", "m_pet"]), ("s_carb", ["m_carb", "m_foag"]),
-           ("s_disp", ["m_reag", "m_focarb"]), ("s_lam", ["m_foreag", "m_abd", "m_kleb"]), ("s_schn", ["m_bahn"]), ("s_kon", ["m_strip", "m_dose", "m_gebr"])]
+           ("s_disp", ["m_reag", "m_focarb"]), ("s_lam", ["m_foreag", "m_abd", "m_kleb"]), ("s_schn", ["m_bahn"]), ("s_kon", ["m_strip", "m_dose", "m_gebr"]), ("s_frei", ["m_pack"])]
     aus = [("s_ansatz", ["m_reag"]), ("s_ag", ["m_foag"]), ("s_carb", ["m_focarb"]), ("s_vak", ["m_foreag"]), ("s_lam", ["m_bahn"]),
            ("s_schn", ["m_strip"]), ("s_kon", ["m_pack"]), ("s_frei", ["m_dev"])]
     for s_, ms in ein:
@@ -210,12 +210,114 @@ def bauen(ed):
         for ziel in bez:
             v(k, "gehört zu", ziel)
 
+    o2_analysator(O, o, v)
+
     # ---- Absichtliche Lücken (für die Qualitätsfilter) -------------------
     # keine IQ/OQ für: Vakuumtrockner, Schneidstation, Verpackung, Waage, Dissolver,
     # Viskosimeter, Kühlschrank, Mikroskop, Klimaschrank, Inline-Inspektion;
     # Parameter ohne Equipment: Raumfeuchte, Standzeit
     ed.knoten_aendern(O["ms01"], felder={"EquipmentCategory": ""})
     return O
+
+
+def o2_analysator(O, o, v):
+    """Zweites Produkt: Blutgasanalysator aus drei Komponenten. Der O2-Sensor
+    entsteht an der O2-Linie aus einem Zukauf-Gehäuse (BG Oberteil) und einer
+    Sensorlösung aus dem Chemlab; die Lösung kommt aus einem Pool, aus dem auch
+    die Enzymlösung für den Glukose-Sensor entsteht. Nach der Herstellung zwei
+    Pfade: eine Probe wird an einem eigenen Platz kalibriert, das Los wartet im
+    Lager; montiert wird erst mit Kalibrierwerten (Gate). Ein neues Material gibt
+    es nur, wo die Materialnummer wechselt — „kalibriert“ ist kein eigenes."""
+    for k, n, i, t in [("pl_o2", "O2-Linie manuell", "PL-301", "Fertigungslinie"),
+                       ("pl_kal", "Kalibrierplatz O2", "PL-302", "Einzelplatz"),
+                       ("pl_glu", "Sensorlinie Glukose", "PL-303", "Fertigungslinie"),
+                       ("pl_end", "Endmontage Analysator", "PL-304", "Fertigungslinie")]:
+        o(k, "Plant", n, PlantID=i, PlantType=t, PlantGXP="GXP")
+    for k, n, i, kl in [("r_bge", "06.00.025 BGE Produktion B6", "R-501", "ISO 8"), ("r_kal", "Kalibrierlabor", "R-502", "ISO 9"),
+                        ("r_end", "Endmontageraum", "R-503", "ISO 8")]:
+        o(k, "Raum", n, RoomID=i, RoomClass=kl)
+    for k, n, i, kat, pl, raum in [("e_las", "DMC Laser LB-01", "EQ-501", "Kat 2", "pl_o2", "r_bge"),
+                                   ("e_ion", "Stabionisator ST-01", "EQ-502", "Kat 1", "pl_o2", "r_bge"),
+                                   ("e_cdu", "Dispensiereinheit CDU-01", "EQ-503", "Kat 3", "pl_o2", "r_bge"),
+                                   ("e_vis", "Vision-System VS-01", "EQ-504", "Kat 3", "pl_o2", "r_bge"),
+                                   ("e_kal", "Kalibrierstand KS-O2", "EQ-505", "Kat 3", "pl_kal", "r_kal"),
+                                   ("e_gd", "Dispenser Glukose GD-01", "EQ-506", "Kat 3", "pl_glu", "r_bge"),
+                                   ("e_mp", "Montagearbeitsplatz MP-01", "EQ-507", "Kat 2", "pl_end", "r_end"),
+                                   ("e_fp", "Funktionsprüfstand FP-01", "EQ-508", "Kat 3", "pl_end", "r_end")]:
+        o(k, "Equipment", n, EquipmentID=i, EquipmentGXP="GXP", EquipmentCategory=kat)
+        v(k, "ist Teil von", pl)
+        v(k, "steht in", raum)
+    for k, n, i, pl in [("p_pool", "Basislösung (Pool) ansetzen", "PR-210", "plc"), ("p_lo2", "Sensorlösung O2 herstellen", "PR-211", "plc"),
+                        ("p_lglu", "Enzymlösung Glukose herstellen", "PR-212", "plc"), ("p_o2", "O2-Sensor Herstellung", "PR-220", "pl_o2"),
+                        ("p_kal", "O2-Kalibrierung", "PR-221", "pl_kal"), ("p_glu", "Glukose-Sensor Herstellung", "PR-230", "pl_glu"),
+                        ("p_end", "Endmontage Analysator", "PR-240", "pl_end")]:
+        o(k, "Prozess", n, ProcessID=i)
+        v(pl, "führt aus", k)
+    W = "Work in Progress (WIP) / Intermediate Product"
+    for k, n, i, t in [("o_enz", "Oxidase-Rohstoff", "MAT-101", "Raw Material"), ("o_salz", "Puffersalz", "MAT-102", "Raw Material"),
+                       ("o_poly", "Polymer-Matrix", "MAT-103", "Raw Material"), ("o_lumi", "Luminophor O2", "MAT-104", "Raw Material"),
+                       ("o_pool", "Basislösung Pool", "MAT-110", W), ("o_lo2", "Sensorlösung O2", "MAT-111", W),
+                       ("o_lglu", "Enzymlösung Glukose", "MAT-112", W),
+                       ("o_bg", "BG Oberteil (Gehäuse)", "MAT-120", "Component / Purchased Part"),
+                       ("o_dicht", "Dichtung O2-Sensor", "MAT-121", "Component / Purchased Part"),
+                       ("o_traeg", "Sensorträger Glukose", "MAT-122", "Component / Purchased Part"),
+                       ("o_elek", "Elektronikmodul", "MAT-123", "Component / Purchased Part"),
+                       ("o_geh", "Gerätegehäuse", "MAT-124", "Component / Purchased Part"),
+                       ("o_schr", "Schraubenset", "MAT-125", "Component / Purchased Part"),
+                       ("o_o2", "O2-Sensor", "MAT-130", "Sub-Assembly"), ("o_glu", "Glukose-Sensor", "MAT-131", "Sub-Assembly"),
+                       ("o_bga", "Blutgasanalysator BG-1", "MAT-140", "Finished Medical Device")]:
+        o(k, "Material", n, MaterialID=i, MaterialType=t)
+    # (kurz, Name, Prozess, Equipment, Inputs, Outputs)
+    st = [("x_pw", "Einwaage Pool", "p_pool", "w01", ["o_enz", "o_salz"], []),
+          ("x_pm", "Pool mischen", "p_pool", "rw01", [], ["o_pool"]),
+          ("x_lo2", "Sensorlösung O2 ansetzen", "p_lo2", "rw01", ["o_pool", "o_poly", "o_lumi"], ["o_lo2"]),
+          ("x_lglu", "Enzymlösung Glukose ansetzen", "p_lglu", "rw01", ["o_pool"], ["o_lglu"]),
+          ("x_las", "DMC Code auf BG Oberteil lasern", "p_o2", "e_las", ["o_bg"], []),
+          ("x_ent", "BG Oberteil entladen", "p_o2", "e_ion", [], []),
+          ("x_spot", "O2-Spot dispensieren", "p_o2", "e_cdu", ["o_lo2"], []),
+          ("x_tro", "Trocknung bei RT", "p_o2", None, [], []),
+          ("x_aoi", "Optische Kontrolle", "p_o2", "e_vis", [], []),
+          ("x_dicht", "Dichtung montieren", "p_o2", None, ["o_dicht"], ["o_o2"]),
+          ("x_lag", "Lagerung O2-Los", "p_o2", None, [], []),
+          ("x_kal", "Probe kalibrieren", "p_kal", "e_kal", ["o_o2"], []),
+          ("x_gd", "Enzym dispensieren Glukose-Sensor", "p_glu", "e_gd", ["o_lglu", "o_traeg"], ["o_glu"]),
+          ("x_mon", "Module einsetzen", "p_end", "e_mp", ["o_o2", "o_glu", "o_elek", "o_geh", "o_schr"], []),
+          ("x_fp", "Funktionsprüfung", "p_end", "e_fp", [], []),
+          ("x_fre", "Freigabe Analysator", "p_end", None, [], ["o_bga"])]
+    for i, (k, n, p, e_, ins, outs) in enumerate(st, 101):
+        o(k, "Prozessschritt", n, ProcessstepID=f"PS-{i:03d}")
+        v(k, "ist Teil von", p)
+        if e_:
+            v(e_, "führt aus", k)
+        for m_ in ins:
+            v(k, "benötigt Input", m_)
+        for m_ in outs:
+            v(k, "erzeugt Output", m_)
+    for a, b, t in [("x_pw", "x_pm", STD), ("x_pm", "x_lo2", WARTE), ("x_pm", "x_lglu", WARTE), ("x_lo2", "x_spot", WARTE),
+                    ("x_las", "x_ent", STD), ("x_ent", "x_spot", STD), ("x_spot", "x_tro", STD), ("x_tro", "x_aoi", WARTE),
+                    ("x_aoi", "x_dicht", GATE), ("x_dicht", "x_kal", STD), ("x_dicht", "x_lag", STD),
+                    ("x_kal", "x_mon", GATE), ("x_lag", "x_mon", WARTE), ("x_lglu", "x_gd", WARTE), ("x_gd", "x_mon", WARTE),
+                    ("x_mon", "x_fp", STD), ("x_fp", "x_fre", GATE)]:
+        v(a, "führt zu Nachfolger (0:n)", b, ProcessstepType=t)
+    for i, (k, n, s_, kl, soll, ber, ein_, reg, ue) in enumerate([
+            ("y_vol", "Dosiervolumen O2-Spot", "x_spot", "CPP", 4.5, "4.35–4.65", "l", "Closed Loop", "e_cdu"),
+            ("y_las", "Laserleistung", "x_las", "PP", 18.5, "18–19", "%", "Closed Loop", "e_las"),
+            ("y_tro", "Trocknungszeit RT", "x_tro", "CPP", 45, "40–50", "min", "Logged", None),
+            ("y_kal", "Kalibriersteigung O2", "x_kal", "CPP", 1.0, "0.95–1.05", "%", "Logged", "e_kal"),
+            ("y_fp", "Funktionsprüfung Messabweichung", "x_fp", "CPP", 0, "±2", "%", "Logged", "e_fp")], 101):
+        o(k, "Parameter", n, ParameterID=f"PAR-{i:03d}", ParameterClass=kl, ParameterTargetValue=soll,
+          ParameterAcceptanceRange=ber, ParameterUnit=ein_, ParameterControlType=reg)
+        v(s_, "definiert", k)
+        if ue:
+            v(ue, "überwacht/regelt", k)
+    for i, (k, n, t, bez) in enumerate([("d_iqcdu", "IQ/OQ Dispensiereinheit CDU", "Validation Documentation", ["e_cdu"]),
+                                        ("d_iqkal", "IQ/OQ Kalibrierstand", "Validation Documentation", ["e_kal"]),
+                                        ("d_iqfp", "IQ/OQ Funktionsprüfstand", "Validation Documentation", ["e_fp"]),
+                                        ("d_aao2", "Arbeitsanweisung O2-Sensor", "Work Instruction", ["p_o2"]),
+                                        ("d_spbga", "Spezifikation Blutgasanalysator", "Specification", ["p_end", "x_fre"])], 101):
+        o(k, "Dokument", n, DocumentID=f"DOC-{i:03d}", DocumentDMS="SAP P1U", DocumentType=t)
+        for ziel in bez:
+            v(k, "gehört zu", ziel)
 
 
 def main():

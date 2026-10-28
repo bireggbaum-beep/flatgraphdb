@@ -65,6 +65,11 @@ button{cursor:pointer}
 .chip i{font-style:normal;opacity:.65}
 .chip .punkt{width:7px;height:7px;border-radius:50%}
 .bereich{font:12px var(--mono);color:var(--gedimmt);margin-right:6px}
+.seg{display:inline-flex}
+.seg .k{border-radius:0;padding:3px 10px;font-size:12px}
+.seg .k:first-child{border-radius:5px 0 0 5px}
+.seg .k:last-child{border-radius:0 5px 5px 0;margin-left:-1px}
+.luecke{color:var(--rot);font:700 11px var(--mono);margin-left:6px}
 .bereich b{color:var(--text);font-weight:600}
 .bereich a{color:var(--akzent);cursor:pointer;margin-left:6px}
 .massen{display:flex;align-items:center;gap:6px;padding:7px 12px;background:var(--wahl);border-bottom:1px solid var(--linie);flex-wrap:wrap}
@@ -214,10 +219,12 @@ const A = {
   z: null, M: null, N: {}, layouts: {}, anker: null, typ: null, tab: null,
   auswahl: new Set(), aktiv: null, umfeld: null, facetten: {}, suche: "",
   lay: {}, variante: {}, offen: {}, zu: {}, bearb: null, zuordnen: null, baeume: [], importe: {},
+  fluss: null,   // bei einem Material als Bereich: „herkunft“ oder „verwendung“
 };
 // Die Bäume der Seitenleiste: oben → darunter; was darunter gehört, rechnet der
 // Server aus dem Modell (Raum ▸ Plant über die Equipments).
-const BAEUME = [{titel: "Ort", oben: "Raum", unten: "Plant"},
+const BAEUME = [{titel: "Produkte", oben: "Material", unten: "Material", art: "produkte"},
+                {titel: "Ort", oben: "Raum", unten: "Plant"},
                 {titel: "Prozesse", oben: "Prozess", unten: "Prozessschritt"}];
 const FARBEN = ["#f07c62", "#5aa9e6", "#4fbf8a", "#c792ea", "#e6b85a", "#5ad1c9", "#e66a9a", "#8fa1b3", "#b5d65a", "#d9905a"];
 
@@ -284,6 +291,7 @@ async function start() {
   A.anker = h.get("anker") && A.N[h.get("anker")] ? h.get("anker") : null;
   A.typ = h.get("typ") && typen().includes(h.get("typ")) ? h.get("typ") : (typen().includes("Equipment") ? "Equipment" : typen()[0]);
   A.aktiv = h.get("objekt") && A.N[h.get("objekt")] ? h.get("objekt") : null;
+  A.fluss = ["herkunft", "verwendung"].includes(h.get("fluss")) ? h.get("fluss") : null;
   if (ls.lies("ohneIns", false)) $("#app").classList.add("ohne-ins");
   await neuLaden();
 }
@@ -292,7 +300,9 @@ async function neuLaden() {
   if (A.aktiv && !A.N[A.aktiv]) A.aktiv = null;
   for (const r of [...A.auswahl]) if (!A.N[r]) A.auswahl.delete(r);
   try {
-    A.tab = await api("tabelle", {anker: A.anker, typ: A.typ});
+    if (!(A.anker && typVon(A.anker) === "Material")) A.fluss = null;
+    else if (!A.fluss) A.fluss = "herkunft";
+    A.tab = await api("tabelle", {anker: A.anker, typ: A.typ, fluss: A.fluss});
     const bs = BAEUME.filter(b => typen().includes(b.oben) && typen().includes(b.unten));
     const res = (await api("baum", {baeume: bs})).baeume;
     A.baeume = BAEUME.map(b => res[bs.indexOf(b)] || null);
@@ -303,6 +313,7 @@ async function neuLaden() {
 function merkeHash() {
   const h = new URLSearchParams();
   if (A.anker) h.set("anker", A.anker);
+  if (A.fluss) h.set("fluss", A.fluss);
   h.set("typ", A.typ);
   if (A.aktiv) h.set("objekt", A.aktiv);
   history.replaceState(null, "", "#" + h.toString());
@@ -390,7 +401,7 @@ function seite() {
   BAEUME.forEach((b, bi) => {
     if (!A.baeume[bi]) return;
     const {kinder, ohne} = A.baeume[bi];
-    const oben = A.z.knoten.filter(k => k.typ === b.oben).map(k => k.ref).sort((x, y) => vergleich(nameVon(x), nameVon(y)));
+    const oben = (b.art ? Object.keys(kinder) : A.z.knoten.filter(k => k.typ === b.oben).map(k => k.ref)).sort((x, y) => vergleich(nameVon(x), nameVon(y)));
     h += `<div class="abschn"><span>${esc(b.titel)}</span><span>${oben.length}</span></div>`;
     for (const o of oben) {
       const ki = b.unten === "Prozessschritt" ? reihenfolge(kinder[o] || []) : (kinder[o] || []).sort((x, y) => vergleich(nameVon(x), nameVon(y)));
@@ -405,7 +416,8 @@ function seite() {
       h += `<div class="eintrag" data-auf="ohne:${esc(b.unten)}"><span class="pfeil">${auf ? "▾" : "▸"}</span><span class="nm" style="color:var(--leise)">ohne ${esc(b.oben)}</span><span class="zahl">${ohne.length}</span></div>`;
       if (auf) h += ohne.map(u => eintrag(u, nameVon(u), "", "kind")).join("");
     }
-    h += `<button class="dazu" data-neu="${esc(b.oben)}">＋ ${esc(b.oben)} anlegen</button>`;
+    if (!b.art) h += `<button class="dazu" data-neu="${esc(b.oben)}">＋ ${esc(b.oben)} anlegen</button>`;
+    else if (!oben.length) h += `<div class="eintrag" style="color:var(--leise);white-space:normal;font-size:12px">Material vom Typ Endprodukt, das nirgends mehr eingeht</div>`;
   });
   const el = $("#seite"), fokus = document.activeElement?.id === "suchfeld", pos = $("#suchfeld")?.selectionStart;
   el.innerHTML = h;
@@ -416,11 +428,12 @@ function seite() {
     ev.stopPropagation(); A.offen[e.dataset.auf] = !A.aufJetzt[e.dataset.auf]; seite();
   });
   el.querySelectorAll("[data-anker]").forEach(e => e.onclick = () => setzeAnker(e.dataset.anker || null));
-  el.querySelectorAll("[data-oeffne]").forEach(e => e.onclick = () => oeffne(e.dataset.oeffne));
+  // Ein gewählter Treffer beendet die Suche — sonst filterte sie still die Tabelle weiter
+  el.querySelectorAll("[data-oeffne]").forEach(e => e.onclick = () => { A.suche = ""; seite(); tafel(); fuss(); oeffne(e.dataset.oeffne); });
   el.querySelectorAll("[data-neu]").forEach(e => e.onclick = () => neuDialog(e.dataset.neu));
 }
 function setzeAnker(ref) {
-  A.anker = ref; A.auswahl.clear(); A.facetten = {};
+  A.anker = ref; A.auswahl.clear(); A.facetten = {}; A.fluss = null;
   // Beim Wechsel auf einen Anker zeigt die Tabelle einen sinnvollen Typ: den
   // bisherigen, wenn es ihn dort gibt — sonst den mit den meisten Treffern
   neuLaden().then(async () => {
@@ -510,9 +523,13 @@ function menue(bei, punkte, titel) {
 function typLeiste() {
   const z = A.tab?.zahlen || {};
   let h = `<span class="bereich">${A.anker ? `<b>${esc(nameVon(A.anker))}</b> <span style="color:var(--leise)">${esc(typVon(A.anker))}</span><a id="ankerweg" title="Bereich aufheben">×</a>` : "<b>Alle Objekte</b>"}</span>`;
+  if (A.fluss) h += `<span class="seg" style="margin-right:8px">${[["herkunft", "Herkunft", "Woraus es entsteht: Materialien, Schritte, Equipments … stromaufwärts"],
+      ["verwendung", "Verwendung", "Wohin es geht: Zwischenprodukte, Komponenten, Endprodukte stromabwärts"]].map(([w, l, tt]) =>
+      `<button class="k${A.fluss === w ? " an" : ""}" data-fluss="${w}" title="${tt}">${l}</button>`).join("")}</span>`;
   h += typen().filter(t => z[t] || t === A.typ).map(t =>
     `<span class="chip${t === A.typ ? " an" : ""}" data-typ="${esc(t)}"><span class="punkt" style="background:${farbe(t)}"></span>${esc(t)} <i>${z[t] || 0}</i></span>`).join("");
   const el = $("#typen"); el.innerHTML = h;
+  el.querySelectorAll("[data-fluss]").forEach(b => b.onclick = () => { A.fluss = b.dataset.fluss; A.auswahl.clear(); neuLaden(); });
   el.querySelectorAll("[data-typ]").forEach(c => c.onclick = () => { A.typ = c.dataset.typ; A.auswahl.clear(); A.facetten = {}; neuLaden(); });
   const weg = $("#ankerweg"); if (weg) weg.onclick = () => setzeAnker(null);
 }
@@ -570,6 +587,7 @@ function zelle(ref, sp) {
   }
   const refs = (A.tab?.werte?.[ref]?.[sp.key] || []).slice().sort((a, b) => vergleich(nameVon(a), nameVon(b)));
   if (!refs.length) return `<td><span class="leer">–</span></td>`;
+  if (sp.abg?.text) return `<td class="mono">${esc(refs.join(", "))}</td>`;
   return `<td title="${esc(refs.map(nameVon).join(", "))}">${refs.map(r => `<span class="lk" data-oeffne="${esc(r)}">${esc(nameVon(r))}</span>`).join(", ")}</td>`;
 }
 function tafel() {
@@ -586,7 +604,7 @@ function tafel() {
     `</tr></thead><tbody>`;
   const zeile = r => `<tr class="z${A.auswahl.has(r) ? " wahl" : ""}${A.aktiv === r ? " aktiv" : ""}" data-ref="${esc(r)}">` +
     `<td class="cb"><input type="checkbox" data-cb="${esc(r)}"${A.auswahl.has(r) ? " checked" : ""}></td>` +
-    `<td class="bild">${typbild(typVon(r))}</td><td class="nm" title="${esc(nameVon(r))}">${esc(nameVon(r))}</td>` + sp.map(s => zelle(r, s)).join("") + `</tr>`;
+    `<td class="bild">${typbild(typVon(r))}</td><td class="nm" title="${esc([nameVon(r), ...(A.N[r]?.luecken || [])].join(" – "))}">${esc(nameVon(r))}${A.N[r]?.luecken?.length ? '<span class="luecke">!</span>' : ""}</td>` + sp.map(s => zelle(r, s)).join("") + `</tr>`;
   const gsp = L.gruppe && sp.find(s => s.key === L.gruppe);
   if (gsp) {
     // Ein Objekt mit mehreren Werten steht in jeder seiner Gruppen
@@ -875,9 +893,10 @@ function inspektor() {
   h += `<div class="aktionen"><button class="k" id="i-bereich">Als Bereich →</button><button class="k" id="i-weg">Löschen</button></div>`;
   // Kontext: die Kette (Raum, Plant, Prozess, Schritt), soweit abgeleitet
   const sp = A.umfeld?.spalten || [], we = A.umfeld?.werte || {};
-  const kette = sp.filter(s => s.pfad.length > 1 && s.standard && we[s.key]?.length);
+  if (k.luecken?.length) h += `<div class="karte" style="border-color:var(--rot);padding:8px 12px;color:var(--rot);font-size:12px">${k.luecken.map(esc).join("<br>")}</div>`;
+  const kette = sp.filter(s => (s.pfad.length > 1 || !s.pfad.length) && s.standard && we[s.key]?.length);
   if (kette.length) h += `<div class="abschn"><span>Zusammenhang</span></div><div class="kette">` + kette.map(s =>
-    `<div class="glied"><span class="l" title="${esc(s.weg)}">${esc(s.titel)}</span><span class="w">${we[s.key].map(x => `<span data-oeffne="${esc(x)}">${esc(nameVon(x))}</span>`).join(", ")}</span></div>`).join("") + `</div>`;
+    `<div class="glied"><span class="l" title="${esc(s.weg)}">${esc(s.titel)}</span><span class="w">${s.text ? esc(we[s.key].join(", ")) : we[s.key].map(x => `<span data-oeffne="${esc(x)}">${esc(nameVon(x))}</span>`).join(", ")}</span></div>`).join("") + `</div>`;
   // Eigenschaften
   h += `<div class="abschn"><span>Eigenschaften</span></div><div class="karte">` +
     [...fl, ...frei.map(x => ({name: x, titel: x}))].map(f => {

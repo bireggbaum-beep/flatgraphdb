@@ -462,7 +462,7 @@ erwartet = sorted(namen[O[k]] for k in ("a_rak", "a_nass", "a_tag", "a_zag", "a_
 mit_dok = {k["nach"] for k in z["kanten"] if k["art"] == "gehört zu" and typ[k["von"]] == "Dokument"}
 ohne = sorted(namen[x] for x in typ if typ[x] == "Equipment" and x not in mit_dok)
 check("Beispiel: Equipment ohne Dokument sind genau die absichtlichen Lücken",
-      ohne == sorted(namen[O[k]] for k in ("oi01", "tr02", "sn01", "vp01", "w01", "rw01", "vk01", "ks01", "ms01", "kl01")), str(ohne))
+      ohne == sorted(namen[O[k]] for k in ("oi01", "tr02", "sn01", "vp01", "w01", "rw01", "vk01", "ks01", "ms01", "kl01", "e_las", "e_ion", "e_vis", "e_gd", "e_mp")), str(ohne))
 check("Beispiel: eine Pflichtfeld-Lücke (Mikroskop ohne Kategorie)",
       [k["name"] for k in z["knoten"] if "EquipmentCategory" in k["fehlt"]] == [namen[O["ms01"]]])
 
@@ -583,6 +583,40 @@ check("Layout: eine Variante liegt beim Bestand und ist Vorgabe für den Typ",
 e.layout_speichern("Equipment", "Qualifizierung", None)
 check("Layout: löschen entfernt Variante und Vorgabe, keine Arbeitsdatei bleibt liegen",
       e.layouts()["Equipment"] == {"varianten": {}, "vorgabe": None} and not os.path.exists(e._layoutdatei + ".arbeit"))
+# --- Materialfluss: Produkte, Herkunft, Verwendung ---
+check("Produkte: Endprodukte sind die Produkttypen, die nirgends mehr eingehen (die Dose geht in die Freigabe)",
+      set(e.produkte()) == {O["o_bga"], O["m_dev"]}, str([namen[x] for x in e.produkte()]))
+check("Produkte: Komponenten des Analysators sind die fünf Materialien der Endmontage",
+      set(e.produktbaum()["kinder"][O["o_bga"]]) == {O[k] for k in ("o_o2", "o_glu", "o_elek", "o_geh", "o_schr")})
+hk = e.fluss(O["o_bga"])
+check("Herkunft: Stufen entlang der Materialien (O2-Sensor 1, Sensorlösung 2, Pool 3, Rohstoff 4)",
+      [hk.get(O[k]) for k in ("o_o2", "o_lo2", "o_pool", "o_enz", "o_bg")] == [1, 2, 3, 4, 2], str([hk.get(O[k]) for k in ("o_o2", "o_lo2", "o_pool", "o_enz", "o_bg")]))
+check("Herkunft: über die Vorgänger gehören Kalibrierung, Lagerung und Funktionsprüfung zur Kette",
+      {O["x_kal"], O["x_lag"], O["x_fp"]} <= set(hk))
+ht = e.fluss(O["m_dev"])
+check("Herkunft: erzeugt ein Vorgänger ein Material, liegt es eine Stufe tiefer (lose Streifen unter der Dose, nicht daneben)",
+      (ht[O["m_pack"]], ht[O["m_strip"]]) == (1, 2), str((ht.get(O["m_pack"]), ht.get(O["m_strip"]))))
+check("Herkunft: eine Schleife im Ablauf führt nicht zurück (IPC gehört nicht zur Herkunft der Ag-Folie)",
+      O["s_ipc"] not in e.fluss(O["m_foag"]))
+vw = e.fluss_bereich(O["o_pool"], "verwendung")
+check("Verwendung: der Pool geht in beide Lösungen, beide Sensoren und den Analysator — nicht in den Teststreifen",
+      set(vw["Material"]) == {O[k] for k in ("o_lo2", "o_lglu", "o_o2", "o_glu", "o_bga")}, str([namen[x] for x in vw["Material"]]))
+b_o2 = e.fluss_bereich(O["o_o2"])
+check("Bereich O2-Sensor: Kalibrierung und Lagerung gehören dazu (kein neues Material), die Montage nicht",
+      {O["x_kal"], O["x_lag"]} <= set(b_o2["Prozessschritt"]) and O["x_mon"] not in b_o2["Prozessschritt"]
+      and set(b_o2["Plant"]) == {O["plc"], O["pl_o2"], O["pl_kal"]}, str([namen[x] for x in b_o2["Plant"]]))
+tb_o2 = e.tabelle(O["o_o2"], "Equipment", "herkunft")
+check("Tabelle entlang des Flusses: Equipments des O2-Sensors samt Chemlab und Kalibrierstand, ohne Montageplatz",
+      {O["rw01"], O["e_cdu"], O["e_kal"]} <= set(tb_o2["zeilen"]) and O["e_mp"] not in tb_o2["zeilen"])
+tm = e.tabelle(None, "Material")
+check("Material-Spalten: der Pool geht in den Analysator, Stufe 3",
+      tm["werte"][O["o_pool"]]["x:produkt"] == [O["o_bga"]] and tm["werte"][O["o_pool"]]["x:stufe"] == ["3"])
+luecke, _ = e.knoten_anlegen("Material", "Zwischenprodukt ohne Herkunft", {"MaterialID": "MAT-990", "MaterialType": "Work in Progress (WIP) / Intermediate Product"})
+roh, _ = e.knoten_anlegen("Material", "Rohstoff ohne Schritt", {"MaterialID": "MAT-991", "MaterialType": "Raw Material"})
+lk = {k["ref"]: k["luecken"] for k in e.zustand()["knoten"]}
+check("Lücke: ein Zwischenprodukt, das kein Schritt erzeugt, fällt auf — ein Rohstoff nicht",
+      lk[luecke] and not lk[roh] and not any(lk[O[k]] for k in ("o_pool", "o_bg", "m_strip")))
+
 # --- IDs aus SAP: je Typ eindeutig ---
 try:
     e.knoten_anlegen("Equipment", "Andere Anlage", {"EquipmentID": "EQ-101"})
@@ -610,21 +644,21 @@ except Fehler:
 ZIELE = ["name", "feld:EquipmentID", "bez:steht in|aus|Raum", "bez:ist Teil von|aus|Plant", "feld:EquipmentCategory"]
 TEXT = ("Bezeichnung\tEquipment\tRaum\tFunktionsplatz\tKategorie\n"
         "Siebdruckanlage SD-01 (neu)\tEQ-101\tSiebdruckraum\tSensorfertigung Linie 1\tKat 2\n"
-        "Plasmareiniger\tEQ-501\tR-501 Neuraum\tSensorfertigung Linie 1\tKat 1\n"
+        "Plasmareiniger\tEQ-591\tR-591 Neuraum\tSensorfertigung Linie 1\tKat 1\n"
         "Optische Inline-Inspektion OI-01\tEQ-102\tTrockenraum\t\t\n")
 vorher = len(e.zustand()["knoten"])
 pr = e.importieren("Equipment", TEXT, ZIELE, probe=True)
 check("Import: der Probelauf zählt neu und geändert und nennt neue Räume",
-      (pr["neu"], pr["geaendert"], pr["fehler"], pr["neue_ziele"]) == (1, 2, [], {"Raum": ["R-501 Neuraum"]}), str(pr))
+      (pr["neu"], pr["geaendert"], pr["fehler"], pr["neue_ziele"]) == (1, 2, [], {"Raum": ["R-591 Neuraum"]}), str(pr))
 check("Import: der Probelauf ändert nichts", len(e.zustand()["knoten"]) == vorher
       and e.db.get_node(O["sd01"])["EquipmentName"] == "Siebdruckanlage SD-01" and not pr["uebernommen"])
 ue = e.importieren("Equipment", TEXT, ZIELE, probe=False)
 plasma = next(x["ref"] for x in ue["zeilen"] if x["name"] == "Plasmareiniger")
 check("Import: vorhandene ID wird geändert (Name, Kategorie), neue angelegt",
       ue["uebernommen"] and e.db.get_node(O["sd01"])["EquipmentName"] == "Siebdruckanlage SD-01 (neu)"
-      and e.db.get_node(O["sd01"])["EquipmentCategory"] == "Kat 2" and e.db.get_node(plasma)["EquipmentID"] == "EQ-501")
+      and e.db.get_node(O["sd01"])["EquipmentCategory"] == "Kat 2" and e.db.get_node(plasma)["EquipmentID"] == "EQ-591")
 check("Import: der neue Raum ist angelegt, das neue Gerät steht darin und gehört zur Plant",
-      [namen.get(x, e.db.get_node(x)["RoomName"]) for x in e.db.get_connected(plasma, "out", target_collection="Raum")] == ["R-501 Neuraum"]
+      [namen.get(x, e.db.get_node(x)["RoomName"]) for x in e.db.get_connected(plasma, "out", target_collection="Raum")] == ["R-591 Neuraum"]
       and e.db.get_connected(plasma, "out", target_collection="Plant") == [O["pl1"]])
 check("Import: eine Beziehungsspalte ersetzt den bisherigen Raum (umgezogen, nicht in zwei Räumen)",
       e.db.get_connected(O["oi01"], "out", target_collection="Raum") == [O["rtr"]])

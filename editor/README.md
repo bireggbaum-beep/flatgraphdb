@@ -11,7 +11,11 @@ Der Bestand liegt in `editor/bestand/` (nicht im Git). Dunkles Design.
 Plant, Prozesse: Prozess › Schritt, oder ein beliebiges Objekt), oben Sekundär
 (welcher Typ als Zeilen), in der Mitte die Tabelle mit eigenen und abgeleiteten
 Spalten, rechts der Inspektor zum Pflegen und Zuordnen. Tabellenlayouts sind
-Varianten je Typ und liegen beim Bestand (`layouts.json`). **Import:** eine
+Varianten je Typ und liegen beim Bestand (`layouts.json`). **Produkte:**
+Endprodukt ▸ Komponenten links; bei einem Material als Bereich **Herkunft |
+Verwendung** entlang des Materialflusses (`Editor.fluss`: Input/Output der
+Schritte und Ablauf ohne Schleifen, Einstellungen unter `fluss` in
+`regeln.json`). **Import:** eine
 Tabelle aus Sheets oder Excel einfügen (＋ Neu ▾ oder Strg V auf der Seite),
 Spalten zuordnen, prüfen, übernehmen — Schlüssel ist die ID, alles oder nichts
 (`Editor.importieren`); die Zuordnung je Spaltenname merkt sich `importe.json`. Bedienung und
@@ -62,7 +66,7 @@ beim Verknüpfen verlangt. Wer ohne diese Prüfung arbeiten will:
 - `python editor/beispiel.py --bestand editor/bestand_beispiel` baut einen
   Beispielbestand: Fertigung eines Teststreifens über Chemlabor, Siebdruck
   (Ag/Carbon), Dispensieren, Trocknungen, Montage auf anderer Plant und QC
-  (130 Objekte, 227 Verknüpfungen, mit absichtlichen Lücken: Equipment ohne
+  (194 Objekte, 334 Verknüpfungen, zwei Produkte: Teststreifen und ein Blutgasanalysator aus O2-Sensor, Glukose-Sensor und Zukaufteilen, mit absichtlichen Lücken: Equipment ohne
   Dokument, Parameter ohne Equipment, Mikroskop ohne Kategorie).
 
 ## Alter Editor (`/alt`): Arbeitsfeld aus Spalten

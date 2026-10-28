@@ -20,5 +20,28 @@
     "Prozess",
     "Prozessschritt"
   ],
-  "kontext_hinweis": "Diese Typen erscheinen in der Tabelle ab Werk als abgeleitete Spalte, auch wenn sie zwei Schritte entfernt sind (Raum eines Equipments über die Plant)."
+  "kontext_hinweis": "Diese Typen erscheinen in der Tabelle ab Werk als abgeleitete Spalte, auch wenn sie zwei Schritte entfernt sind (Raum eines Equipments über die Plant).",
+  "fluss": {
+    "input": "benötigt Input",
+    "output": "erzeugt Output",
+    "folge": "führt zu Nachfolger (0:n)",
+    "folge_nicht": [
+      "Schleifen-Knoten (Loop)"
+    ],
+    "produkt": {
+      "feld": "MaterialType",
+      "werte": [
+        "Finished Good",
+        "Finished Medical Device"
+      ]
+    },
+    "blatt": {
+      "feld": "MaterialType",
+      "werte": [
+        "Raw Material",
+        "Component / Purchased Part"
+      ]
+    }
+  },
+  "fluss_hinweis": "Herkunft und Verwendung eines Materials laufen über Input/Output der Schritte und über den Ablauf (Vorgänger/Nachfolger, ohne Schleifen). Produkt: Material mit einem dieser Typen, das nirgends mehr eingeht. Blatt: Material, das von keinem Schritt erzeugt werden muss (Rohstoff, Zukaufteil); jedes andere Material ohne erzeugenden Schritt ist eine Lücke."
 }

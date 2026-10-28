@@ -121,7 +121,7 @@ class Modell:
         for a in kante.get("relation", {}).get("enum", []):
             art_merken(a)
         self.arten = list(gesehen.values())
-        self.hubs, self.einzeln, self.grob, self.kontext = [], [], set(), []
+        self.hubs, self.einzeln, self.grob, self.kontext, self.fluss = [], [], set(), [], None
         self.regeln, self.kantenfelder = [], {}      # Regel: von, art, nach; Art -> [Attribut]
         for von, art, nach, attr in paare:
             art = self.kanon_art(art)
@@ -155,6 +155,13 @@ class Modell:
         self.grob = {paare[x] for x in daten.get("grob", []) if x in paare}
         fehler += [x for x in daten.get("grob", []) if x not in paare]
         self.kontext = [t for t in (self.kanon_typ(x) for x in daten.get("kontext", [])) if t]
+        f = daten.get("fluss")
+        if f:
+            arten = {k: self.kanon_art(f.get(k, "")) for k in ("input", "output", "folge")}
+            fehler += [f.get(k) for k, a in arten.items() if not a]
+            if all(arten.values()):
+                self.fluss = {**arten, "folge_nicht": set(f.get("folge_nicht", [])),
+                              "produkt": f.get("produkt") or {}, "blatt": f.get("blatt") or {}}
         fehler += [x for x in daten.get("kontext", []) if not self.kanon_typ(x)]
         fehler += [x for x in daten.get("nicht_durchlaufen", []) if not self.kanon_typ(x)]
         fehler += [x for x in daten.get("nur_einzeln", []) if not self.kanon_art(x)]
@@ -288,7 +295,7 @@ class Editor:
                              if f["pflicht"] and f["name"] != nf
                              and d.get(f["name"]) in (None, "")]
                 knoten.append({
-                    "ref": ref, "typ": _anzeige(typ),
+                    "ref": ref, "typ": _anzeige(typ), "luecken": self._fluss_luecken(ref, d),
                     "name": d.get(nf) or kid,
                     "felder": {k: v for k, v in d.items()
                                if k not in (nf, "notiz") and not k.startswith("_") and v != ""},
@@ -378,6 +385,157 @@ class Editor:
             ergebnis[typ] = [p for p in kurz if not self._ist_grob(von, p)] or kurz
         return ergebnis
 
+    # --- Materialfluss: Herkunft und Verwendung -----------------------------
+
+    def _fl(self, art):
+        return self._art_b(self.modell.fluss[art])
+
+    def _ist(self, d, regel):
+        return bool(regel) and str((d or {}).get(regel.get("feld"), "")) in regel.get("werte", [])
+
+    def _fluss_luecken(self, ref, d):
+        """Ein Material, das kein Schritt erzeugt und das weder Rohstoff noch
+        Zukaufteil ist: hier bricht die Herkunft ab."""
+        f = self.modell.fluss if self.modell else None
+        if not f or ref.partition("/")[0] != "Material" or self._ist(d, f["blatt"]):
+            return []
+        if self.db.get_connected(ref, "in", self._fl("output")):
+            return []
+        return ["wird von keinem Schritt erzeugt (weder Rohstoff noch Zukaufteil)"]
+
+    def _folge(self, schritt, richtung):
+        """Nachbarschritte im Ablauf ohne Schleifen (eine Schleife führt zurück)."""
+        nicht = self.modell.fluss["folge_nicht"]
+        ergebnis = []
+        for _eid, e in self.db.get_connected_edges(schritt, "in" if richtung == "zurueck" else "out", self._fl("folge")):
+            if nicht & {str(v) for v in e.values()}:
+                continue
+            gegen = e["source"] if richtung == "zurueck" else e["target"]
+            if self.db.get_node(gegen, readonly=True) is not None:
+                ergebnis.append(gegen)
+        return ergebnis
+
+    def fluss(self, start, richtung="herkunft"):
+        """Alles, was entlang des Materialflusses vor (Herkunft) oder nach
+        (Verwendung) `start` liegt: {ref: stufe} für Schritte und Materialien.
+
+        Herkunft: Material <- erzeugender Schritt <- seine Inputs (eine Stufe
+        tiefer) und seine Vorgänger im Ablauf (gleiche Stufe). Erzeugt ein
+        Vorgänger selbst ein Material, zählt dieses als nächste Stufe — so
+        landen lose Teststreifen unter der Dose, nicht daneben. Verwendung
+        spiegelbildlich. Gemeinsame Zwischenprodukte (ein Pool für mehrere
+        Lösungen) erscheinen in jeder Kette, in die sie eingehen."""
+        import heapq
+        if not (self.modell and self.modell.fluss):
+            raise Fehler("Für Herkunft und Verwendung fehlt der Abschnitt „fluss“ in regeln.json.")
+        ein, aus = self._fl("input"), self._fl("output")
+        typ = start.partition("/")[0]
+        stufe, offen = {}, []          # kleinste Stufe zuerst, damit jedes Objekt seine kleinste bekommt
+
+        def besuche(ref, s):
+            if s < stufe.get(ref, 1 << 30):
+                stufe[ref] = s
+                heapq.heappush(offen, (s, ref))
+        if typ == "Prozess":
+            for s_ in self.db.get_connected(start, "in", target_collection="Prozessschritt"):
+                besuche(s_, 0)
+        else:
+            besuche(start, 0)
+        while offen:
+            s, ref = heapq.heappop(offen)
+            if s > stufe.get(ref, s):
+                continue
+            if ref.startswith("Material/"):
+                nach = self.db.get_connected(ref, "in", aus if richtung == "herkunft" else ein)
+                for schritt in nach:
+                    besuche(schritt, s)
+                continue
+            if richtung == "herkunft":
+                for m in self.db.get_connected(ref, "out", ein):
+                    besuche(m, s + 1)
+                for v in self._folge(ref, "zurueck"):
+                    erzeugt = self.db.get_connected(v, "out", aus)
+                    for m in erzeugt:
+                        besuche(m, s + 1)
+                    if not erzeugt:
+                        besuche(v, s)
+            else:
+                for m in self.db.get_connected(ref, "out", aus):
+                    besuche(m, s + 1)
+                for n in self._folge(ref, "vor"):
+                    besuche(n, s)
+        if richtung == "herkunft" and typ == "Material":
+            for s_ in self._nachbehandlung(start):
+                besuche(s_, 0)
+        return stufe
+
+    def _nachbehandlung(self, material):
+        """Was nach dem erzeugenden Schritt mit dem Material geschieht, ohne
+        dass es eine neue Materialnummer bekommt: Nachfolger, solange kein
+        anderes Material eingeht und keins entsteht (Kalibrierung, Lagerung) —
+        die Montage, in die weitere Teile eingehen, gehört nicht mehr dazu."""
+        ein, aus = self._fl("input"), self._fl("output")
+        gesehen, offen = set(), list(self.db.get_connected(material, "in", aus))
+        while offen:
+            for n in self._folge(offen.pop(), "vor"):
+                if n in gesehen:
+                    continue
+                if self.db.get_connected(n, "out", aus) or set(self.db.get_connected(n, "out", ein)) - {material}:
+                    continue
+                gesehen.add(n)
+                offen.append(n)
+        return gesehen
+
+    def fluss_bereich(self, start, richtung="herkunft"):
+        """Der Bereich entlang des Flusses, je Typ: Schritte und Materialien aus
+        `fluss`, alles andere von diesen Schritten aus wie im inneren Kreis
+        (Prozess, Equipment, Parameter, Raum …)."""
+        st = self.fluss(start, richtung)
+        schritte = [r for r in st if r.startswith("Prozessschritt/")]
+        ergebnis = {"Prozessschritt": set(schritte), "Material": {r for r in st if r.startswith("Material/")}}
+        for typ, wege in self.kurze_wege("Prozessschritt", 3).items():
+            if typ in ("Prozessschritt", "Material"):
+                continue
+            ziel = ergebnis.setdefault(typ, set())
+            for s_ in schritte:
+                for p in wege:
+                    ziel |= self._gehen(s_, p)
+        ergebnis["Material"].discard(start)
+        return {t: sorted(v) for t, v in ergebnis.items() if v}
+
+    def produkte(self):
+        """Endprodukte: Materialien vom Produkttyp, die nirgends mehr eingehen."""
+        f = self.modell.fluss if self.modell else None
+        if not f:
+            return []
+        return sorted(f"Material/{k}" for k, d in self.db.list_nodes("Material", readonly=True).items()
+                      if self._ist(d, f["produkt"]) and not self.db.get_connected(f"Material/{k}", "in", self._fl("input")))
+
+    def produktbaum(self):
+        """Seitenleiste: Endprodukt ▸ Komponenten (Stufe 1 der Herkunft)."""
+        kinder = {}
+        for p in self.produkte():
+            kinder[p] = sorted(r for r, s in self.fluss(p).items() if s == 1 and r.startswith("Material/"))
+        return {"kinder": kinder, "ohne": []}
+
+    def _produktspalten(self, typ, refs):
+        """Zusatzspalten für Material: in welche Endprodukte es eingeht und auf
+        welcher Stufe (0 = das Produkt, 1 = direkte Komponente …)."""
+        if typ != "Material" or not (self.modell and self.modell.fluss):
+            return [], {}
+        fuer, stufe = {}, {}
+        for p in self.produkte():
+            for r, s in self.fluss(p).items():
+                if r.startswith("Material/"):
+                    fuer.setdefault(r, set()).add(p)
+                    stufe[r] = min(stufe.get(r, s), s)
+        spalten = [{"key": "x:produkt", "titel": "für Produkt", "typ": "Material", "pfad": [], "standard": True,
+                    "weg": "Endprodukte, in die das Material über den Fluss eingeht"},
+                   {"key": "x:stufe", "titel": "Stufe", "typ": "", "pfad": [], "standard": True, "text": True,
+                    "weg": "0 = Endprodukt, 1 = geht direkt ein, 2 = in eine Komponente …"}]
+        werte = {r: {"x:produkt": sorted(fuer.get(r, [])), "x:stufe": [str(stufe[r])] if r in stufe else []} for r in refs}
+        return spalten, werte
+
     def bereich(self, anker=None, max_hops=3):
         """Was zum Anker gehört, je Typ {typ: [refs]} — Equipments im Raum (über
         die Plant), Schritte am Prozess. Ohne Anker: alle Objekte."""
@@ -425,6 +583,7 @@ class Editor:
             zusatz = [""] * len(wege)
             if len(wege) > 1:
                 for kandidat in ([art_kurz(p[-1]) for p in wege],
+                                 [art_kurz(p[0]) for p in wege],
                                  [f"über {p[-2]['typ']}" if len(p) > 1 else art_kurz(p[-1]) for p in wege],
                                  [" ".join(art_kurz(s) for s in p) for p in wege]):
                     if len(set(kandidat)) == len(wege):
@@ -438,23 +597,30 @@ class Editor:
                     "standard": len(p) == 1 or ziel in self.modell.kontext})
         return ergebnis
 
-    def tabelle(self, anker, typ):
+    def tabelle(self, anker, typ, fluss=None):
         """Primär (Anker oder alle) → Sekundär (Typ): die Zeilen, die Zahl je Typ
-        für die Auswahl darüber, die abgeleiteten Spalten und ihre Werte."""
+        für die Auswahl darüber, die abgeleiteten Spalten und ihre Werte.
+        `fluss` (herkunft/verwendung): Bereich entlang des Materialflusses."""
         typ = _anzeige(self._typ_b(typ))
-        bereich = self.bereich(anker)
+        bereich = self.fluss_bereich(anker, fluss) if anker and fluss else self.bereich(anker)
         zeilen = bereich.get(typ, [])
         spalten = self.spalten(typ) if self.modell else []
         werte = {r: {s["key"]: sorted(self._gehen(r, s["pfad"])) for s in spalten} for r in zeilen}
+        zs, zw = self._produktspalten(typ, zeilen)
+        for r in zeilen:
+            werte[r].update(zw.get(r, {}))
         return {"zahlen": {t: len(r) for t, r in bereich.items()}, "zeilen": zeilen,
-                "spalten": spalten, "werte": werte}
+                "spalten": spalten + zs, "werte": werte}
 
     def umfeld(self, ref):
         """Die abgeleiteten Spalten eines einzelnen Objekts (für den Inspektor)."""
         if self.db.get_node(ref, readonly=True) is None:
             raise Fehler("Dieses Objekt gibt es nicht (mehr).")
-        spalten = self.spalten(_anzeige(ref.partition("/")[0])) if self.modell else []
-        return {"spalten": spalten, "werte": {s["key"]: sorted(self._gehen(ref, s["pfad"])) for s in spalten}}
+        typ = _anzeige(ref.partition("/")[0])
+        spalten = self.spalten(typ) if self.modell else []
+        werte = {s["key"]: sorted(self._gehen(ref, s["pfad"])) for s in spalten}
+        zs, zw = self._produktspalten(typ, [ref])
+        return {"spalten": spalten + zs, "werte": {**werte, **zw.get(ref, {})}}
 
     # --- Tabellenlayouts (wie Layout-Varianten in SAP) ---------------------
 
@@ -1033,10 +1199,11 @@ def _aktionen(ed):
         return {"metapfade": ed.metapfade(d["von"], d.get("nach"), int(d.get("tiefe", 2))), "_nur": True}
 
     def tabelle(d):
-        return {**ed.tabelle(d.get("anker"), d["typ"]), "_nur": True}
+        return {**ed.tabelle(d.get("anker"), d["typ"], d.get("fluss")), "_nur": True}
 
     def baum(d):
-        return {"baeume": [ed.baum(b["oben"], b["unten"]) for b in d["baeume"]], "_nur": True}
+        return {"baeume": [ed.produktbaum() if b.get("art") == "produkte" else ed.baum(b["oben"], b["unten"])
+                           for b in d["baeume"]], "_nur": True}
 
     def tabelle_lesen(d):
         zeilen = ed._tabelle_lesen(d["text"])

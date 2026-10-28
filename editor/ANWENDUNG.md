@@ -13,6 +13,7 @@ als Tabelle nachschlagen. Alle Beispiele laufen auf dem Beispielbestand:
  Seitenleiste            Typ-Leiste über der Tabelle        rechts
  PRIMÄR: worum geht es   SEKUNDÄR: was soll ich sehen       DETAIL
  ─────────────────────   ────────────────────────────────   ─────────
+ Produkte Endprodukt ▸ Komponente
  Ort      Raum ▸ Plant   Equipment 5 · Prozessschritt 7 …   Inspektor
  Prozesse Prozess ▸ Schritt
  oder ein beliebiges Objekt („Als Bereich →“) oder „Alle Objekte“
@@ -45,6 +46,35 @@ ist ein Equipment, das einen seiner Schritte ausführt.
 | Equipment ohne Dokument | Alle Objekte | Equipment | Gruppieren nach Dokument → „(keine)“ |
 | Was hängt an diesem CPP? | – | – | Zeile anklicken: Inspektor zeigt Zusammenhang und Beziehungen |
 | Was betrifft ein Ausfall von Gerät X? | X öffnen → **Als Bereich →** | Prozessschritt oder Prozess | – |
+| Welche Equipments braucht der Analysator, über alle Komponenten? | Produkte › *Blutgasanalysator BG-1* (Herkunft) | Equipment | Gruppieren nach Plant |
+| Welche CPPs hat der O2-Sensor, Kalibrierung eingeschlossen? | Produkte › Analysator › *O2-Sensor* | Parameter | Facette Klasse = CPP |
+| Alle Rohstoffe eines Produkts | Produkte › *Produkt* | Material | Facette Typ = Raw Material, sortiert nach Stufe |
+| Wofür wird der Pool verwendet, was trifft eine Abweichung? | *Basislösung Pool* → Als Bereich → **Verwendung** | Material | Spalte „für Produkt“ |
+
+## Produkte: Herkunft und Verwendung
+
+Ein Produkt ist im Modell ein Material. Links unter **Produkte** stehen die
+Endprodukte (Materialtyp Finished Good oder Finished Medical Device, das in
+nichts mehr eingeht), darunter ihre Komponenten: was in die Endmontage eingeht.
+Niemand pflegt dafür eine Stückliste – sie ergibt sich aus Input und Output der
+Schritte.
+
+Ist ein Material der Bereich, schaltet **Herkunft | Verwendung** um:
+
+- **Herkunft** – woraus es entsteht: rückwärts über die Input-Materialien und
+  über die Vorgänger im Ablauf, also auch Lagerung und Kalibrierung vor der
+  Montage. Ohne Schleifen. Dazu, was nach der Herstellung ohne neue
+  Materialnummer mit ihm geschieht (der O2-Sensor wird kalibriert und gelagert);
+  die Montage, in die weitere Teile eingehen, gehört nicht mehr dazu.
+- **Verwendung** – wohin es geht: vorwärts bis zu den Endprodukten. Ein
+  gemeinsames Zwischenprodukt (der Pool für zwei Lösungen) erscheint in jeder
+  Kette.
+
+Die Material-Tabelle zeigt **für Produkt** und **Stufe** (0 = Endprodukt,
+1 = geht direkt ein, 2 = in eine Komponente …). Ein neues Material gibt es nur,
+wo die Materialnummer wechselt; ein reiner Zustandswechsel (kalibriert, frei)
+bleibt dasselbe Material. Ein Material, das kein Schritt erzeugt und das weder
+Rohstoff noch Zukaufteil ist, trägt ein rotes **!** – dort bricht die Herkunft ab.
 
 ## Pflegen
 
