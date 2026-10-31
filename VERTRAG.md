@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.4.2`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.4.3`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -723,6 +723,19 @@ allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
 zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knoten.
 
+- **Absturz an jeder Stelle des Umzugs** (31.10.2026): das Kind zählt jede
+  Aktion, die das Dateisystem ändert (schreibend öffnen, umbenennen,
+  löschen, Verzeichnis anlegen und entfernen, `fsync`) und stirbt mit
+  `os._exit` an der n-ten; danach wird zweimal geöffnet und der Inhalt
+  mit dem eines ungestörten Umzugs verglichen, dazu die Marke. Form 1
+  (Sammeldatei, Delta, Objektlinks): 104 Schritte, Form 2 (Datei je
+  Knoten und Kantenart): 68 Schritte; **0 Abweichungen**, kein Knoten und
+  keine Kante geht verloren, der Bestand wird beim nächsten Öffnen zu
+  Ende geführt. Die Probe fand einen Fehler in `4.4.2` selbst (ein
+  Bestand ohne Marke, dessen Umzug nach den Knoten, aber vor den Kanten
+  abbrach, galt als Form 3 und verlor alle Kanten); in `4.4.3` behoben.
+  Grenze: der Absturz ist ein Prozessende, kein Stromausfall; die
+  Schritte sind Aufrufe, nicht Kernelzustände.
 - **Nebendateien und Struktur** (20 Eingriffe: `_meta.json`,
   `_nummern.json`, `_absicht.json`, Fächer, Kantenfächer, Reste, fremde
   Dateien): kaputt heisst `DateiKaputt` (bei einer Speicherform 99

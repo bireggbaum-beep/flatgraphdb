@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.4.2"
+__version__ = "4.4.3"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -822,7 +822,12 @@ class FlatGraphDB:
         # Form 3, dem jemand die Datei weggenommen hat. Als Form 1/2 gelesen
         # wuerde jedes Fach zu EINEM Knoten "fach_000001" zusammengefasst —
         # ohne Fehler, und ohne Rueckweg (VERTRAG 3.3). Nur die Marke fehlt.
-        if gefunden is None and self._hat_faecher():
+        # Ausser der Umzug laeuft noch: nach dem Umbenennen der Knoten, vor
+        # dem der Kanten, stehen Faecher da und die Marke fehlt trotzdem —
+        # dann haengen die Umzugsverzeichnisse (nodes_form2 usw.) noch herum
+        # und der Umzug muss zu Ende gefuehrt werden, nicht uebersprungen.
+        if (gefunden is None and self._hat_faecher()
+                and not any(os.path.exists(o) for o in self._umzugsorte().values())):
             self._marke_schreiben()
             return
         # Marke fehlt oder nennt eine aeltere Form: umziehen, Stufe fuer

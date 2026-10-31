@@ -1,6 +1,9 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.4.3 (Speicherform 3)
+- Korrektur zu 4.4.2: Ein Bestand ohne _meta.json, dessen Umzug nach den Knoten, aber vor den Kanten abbrach, galt als fertig und verlor seine Kanten. Jetzt wird der Umzug zu Ende geführt, solange die Umzugsverzeichnisse noch da sind. pDMS: keine.
+
 4.4.2 (Speicherform 3)
 - Fehlt _meta.json in einem Bestand der Form 3, wird er nicht mehr als alt umgezogen (jedes Fach wurde zu einem Knoten); die Marke wird nachgetragen. pDMS: keine.
 - Ein Fach, _meta.json oder _nummern.json mit falscher Struktur wirft DateiKaputt statt AttributeError/TypeError oder still angenommen zu werden. pDMS: keine.

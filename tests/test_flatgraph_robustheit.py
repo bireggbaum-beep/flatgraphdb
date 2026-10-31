@@ -538,6 +538,118 @@ def nebendatei(eingriff, erwartet):
     return ergebnis, unveraendert
 
 
+# ---------------------------------------------------------------- 13
+# Absturz an JEDER Stelle des Umzugs. Kein Zufall: das Kind zählt jede Aktion,
+# die das Dateisystem ändert (schreibend öffnen, umbenennen, löschen,
+# Verzeichnis anlegen/entfernen, fsync), und stirbt mit os._exit an der
+# n-ten. Danach wird mit einem frischen Prozess geöffnet und der Inhalt mit
+# dem eines ungestörten Umzugs verglichen.
+UMZUG_KIND = r"""
+import sys, os, shutil, builtins, importlib.util
+n = int(sys.argv[3]); zaehler = [0]
+def tick():
+    zaehler[0] += 1
+    if zaehler[0] == n:
+        os._exit(137)
+for name in ("replace", "rename", "remove", "unlink", "rmdir", "makedirs", "mkdir", "fsync"):
+    echt = getattr(os, name)
+    def mk(echt):
+        def f(*a, **k):
+            tick(); return echt(*a, **k)
+        return f
+    setattr(os, name, mk(echt))
+_rm = shutil.rmtree
+shutil.rmtree = lambda *a, **k: (tick(), _rm(*a, **k))[1]
+_open = builtins.open
+def offen(datei, modus="r", *a, **k):
+    if any(c in str(modus) for c in "wax+"):
+        tick()
+    return _open(datei, modus, *a, **k)
+builtins.open = offen
+spec = importlib.util.spec_from_file_location("fgx", sys.argv[1])
+m = importlib.util.module_from_spec(spec); sys.modules["fgx"] = m
+spec.loader.exec_module(m)
+db = m.FlatGraphDB(sys.argv[2])
+db.close()
+print("fertig")
+"""
+
+
+def _form1_bestand():
+    w = frisch()
+    d = os.path.join(w, "datenbank")
+    os.makedirs(os.path.join(d, "nodes"))
+    os.makedirs(os.path.join(d, "edges"))
+    json_ = __import__("json")
+    json_.dump({f"d_{i}": {"n": i, "text": "x" * 30} for i in range(5)},
+               open(os.path.join(d, "nodes", "d.json"), "w"))
+    json_.dump({"d_4": {"n": 44}, "d_9": {"n": 9}}, open(os.path.join(d, "nodes", "d_temp.json"), "w"))
+    json_.dump({f"link_{i}": {"quelle": f"d/d_{i}", "ziel": f"d/d_{i + 1}", "typ": "folgt",
+                              "erstellt_am": "2026-01-01T00:00:00+00:00"} for i in range(4)},
+               open(os.path.join(d, "edges", "objektlinks.json"), "w"))
+    return w
+
+
+def _form2_bestand():
+    w = frisch()
+    json_ = __import__("json")
+    for sam in ("d", "e"):
+        for i in range(5):
+            pfad = os.path.join(w, "datenbank", "nodes", sam, f"{sam}_{i}.json")
+            os.makedirs(os.path.dirname(pfad), exist_ok=True)
+            json_.dump({"n": i}, open(pfad, "w"))
+    kanten = {f"link_{i}": {"source": f"d/d_{i}", "target": f"e/e_{i}", "type": "folgt",
+                            "created_at": "2026-01-01T00:00:00+00:00"} for i in range(5)}
+    os.makedirs(os.path.join(w, "datenbank", "edges"), exist_ok=True)
+    json_.dump(kanten, open(os.path.join(w, "datenbank", "edges", "folgt.json"), "w"))
+    json_.dump({"speicherform": 2}, open(os.path.join(w, "datenbank", "_meta.json"), "w"))
+    return w
+
+
+def _inhalt(wurzel):
+    db = fg.FlatGraphDB(wurzel)
+    try:
+        sammlungen = {c: db.list_nodes(c) for c in sorted(db.list_collections())}
+        kanten = sorted((e["source"], e["target"], e["type"]) for e in db.list_edges().values()) \
+            if hasattr(db.list_edges(), "values") else None
+        return repr(sammlungen), repr(kanten)
+    finally:
+        db.close()
+
+
+def umzug_mit_absturz(bauen, hoechstens=400):
+    """Gibt (Schritte, Abweichungen) zurück: an welchen Schritten der Bestand
+    danach NICHT dem ungestörten Ergebnis entsprach."""
+    quelle = bauen()
+    golden_w = tempfile.mkdtemp(prefix="fg_robust_")
+    shutil.rmtree(golden_w)
+    shutil.copytree(quelle, golden_w)
+    soll = _inhalt(golden_w)
+    shutil.rmtree(golden_w)
+    abweichungen = []
+    n = 0
+    for n in range(1, hoechstens):
+        arbeit = tempfile.mkdtemp(prefix="fg_robust_")
+        shutil.rmtree(arbeit)
+        shutil.copytree(quelle, arbeit)
+        r = subprocess.run([sys.executable, "-c", UMZUG_KIND, fg.__pfad__, arbeit, str(n)],
+                           capture_output=True, text=True)
+        fertig = "fertig" in r.stdout
+        try:
+            ist = _inhalt(arbeit)
+            ist2 = _inhalt(arbeit)                 # und ein zweites Mal
+            marke = __import__("json").load(open(os.path.join(arbeit, "datenbank", "_meta.json")))["speicherform"]
+            if ist != soll or ist2 != soll or marke != fg.SPEICHERFORM:
+                abweichungen.append((n, "anderer Inhalt" if ist != soll else "Marke " + str(marke)))
+        except Exception as e:
+            abweichungen.append((n, f"{type(e).__name__}: {str(e)[:60]}"))
+        shutil.rmtree(arbeit, ignore_errors=True)
+        if fertig:
+            break
+    shutil.rmtree(quelle, ignore_errors=True)
+    return n, abweichungen
+
+
 if __name__ == "__main__":
     for seed in (1, 2, 3):
         k, e = zufallsmodell(seed)
@@ -612,6 +724,13 @@ if __name__ == "__main__":
               ergebnis == erwartet, ergebnis if ergebnis != erwartet else "")
         if erwartet in ("kaputt", "zu_neu"):
             check(f"Nebendatei ({name}): abgewiesener Bestand bleibt Byte für Byte unverändert", unveraendert)
+
+    if getattr(fg, "SPEICHERFORM", 1) >= 3:
+        for name, bauen in (("Form 1 (Sammeldatei, Delta, Objektlinks)", _form1_bestand),
+                            ("Form 2 (Datei je Knoten und Kantenart)", _form2_bestand)):
+            schritte, abw = umzug_mit_absturz(bauen)
+            check(f"Umzug {name}: Absturz an jedem der {schritte} Schritte, danach inhaltsgleich",
+                  not abw, f"{len(abw)} Abweichungen, erste: {abw[:3]}" if abw else "")
 
     n_ok = sum(1 for _, ok, _ in results if ok)
     print(f"\n{n_ok}/{len(results)} Checks bestanden")
