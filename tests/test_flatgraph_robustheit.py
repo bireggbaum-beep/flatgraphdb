@@ -299,6 +299,7 @@ SCHREIBWEGE = {
     "delete_edge": lambda db, k: db.delete_edge(k),
     "soft_delete": lambda db, k: db.soft_delete("a", "2"),
     "restore_node": lambda db, k: db.restore_node("a", "3"),
+    "reverse_edge": lambda db, k: db.reverse_edge(k),
 }
 
 

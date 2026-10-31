@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.4.0"
+__version__ = "4.4.1"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -3235,6 +3235,33 @@ def _gesperrt(methode):
             return methode(self, *args, **kwargs)
     unter_sperre._unter_sperre = True
     return unter_sperre
+
+
+def _unteilbar(methode):
+    """Ausserhalb einer Transaktion als eigene Transaktion laufen.
+
+    Bis hierher aenderten diese Methoden erst den Speicher und schrieben dann;
+    scheiterte das Schreiben (volle Platte), kam der Fehler zwar an, der
+    Speicher aber zeigte den neuen Stand, die Platte den alten (Issue #39,
+    VERTRAG 2.6). Die Transaktion bringt das Undo-Log mit, das ein Scheitern
+    zuruecknimmt. Ein Fach bleibt ein Fach: geschrieben wird wie vorher direkt,
+    ohne Absichtsdatei. Nur mit `audit=True` sind es zwei Faecher (Knoten und
+    Protokoll), und die gehen jetzt gemeinsam ueber die Absichtsdatei.
+
+    Innen statt aussen von `_gesperrt`: die Tiefe wird unter der Sperre
+    gelesen, ein anderer Thread kann sie nicht dazwischen aendern.
+    """
+    @functools.wraps(methode)
+    def als_transaktion(self, *args, **kwargs):
+        if self._transaction_depth > 0:
+            return methode(self, *args, **kwargs)
+        with self.transaction():
+            return methode(self, *args, **kwargs)
+    return als_transaktion
+
+
+for _name in ("create_node", "update_node", "create_edge", "delete_edge", "reverse_edge"):
+    setattr(FlatGraphDB, _name, _unteilbar(vars(FlatGraphDB)[_name]))
 
 
 for _name, _methode in list(vars(FlatGraphDB).items()):

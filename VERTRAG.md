@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.4.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.4.1`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -198,6 +198,20 @@ das Schreiben, widersprachen sich beide — nachgewiesen:
 | zu lange Kennung (nur Speicherform 2, als Dateiname) | `OSError` beim Schreiben, Knoten blieb im Speicher |
 | `NaN` | geschrieben — für jedes Werkzeug ausser Python unlesbar |
 | Sammlung `../../x` | Verzeichnis ausserhalb von `datenbank/` angelegt |
+
+**Auch ein Scheitern beim Schreiben selbst lässt den Speicher beim alten
+Stand** (ab `4.4.1`, Issue #39). Bis dahin galt das nur für eine
+Transaktion, `soft_delete` und `restore_node`. `create_node`,
+`update_node`, `create_edge`, `delete_edge` und `reverse_edge` änderten
+erst den Speicher und schrieben dann; scheiterte `fsync` mit `ENOSPC`, kam
+der Fehler an, der Speicher aber zeigte den neuen Stand, die Platte den
+alten, und nach dem Neustart war die Änderung weg. Jetzt läuft jede dieser
+Methoden ausserhalb einer Transaktion als eigene Transaktion. Kosten
+(Linux, 31.10.2026, `bench/lauf.py schreiben`): im Rauschen, ein Fach
+bleibt ein direkter Schreibvorgang. Mit `audit=True` sind es zwei Fächer,
+Knoten und Protokoll, und die gehen jetzt gemeinsam über die
+Absichtsdatei: `update_node` 4.17 → 5.11 ms (Median aus 5 × 200).
+Festgenagelt in `tests/test_flatgraph_robustheit.py`, „Platte voll bei …“.
 
 Die Prüfung kostet 7 µs je Knoten mit 500 Bytes (40 µs bei 6 kB), unter
 1 % eines Schreibvorgangs. Festgenagelt in
@@ -707,12 +721,11 @@ allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
 zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knoten.
 
-**Offen (Issue #39):** Scheitert `fsync` mit `ENOSPC` beim Einzelschreiben,
-bleibt der Speicher beim NEUEN Stand, obwohl die Platte den alten hat.
-Betroffen sind `create_node`, `update_node`, `create_edge` und
-`delete_edge`; `soft_delete` und `restore_node` halten sich an 2.6. Das
-widerspricht 2.6; die Proben „Platte voll bei …“ fallen bis zur Behebung
-(5 von 67 Checks).
+**Platte voll** (`fsync` wirft `ENOSPC`, bei `create_node`,
+`update_node`, `create_edge`, `delete_edge`, `soft_delete`,
+`restore_node`, `reverse_edge`): der Fehler kommt an, Speicher und Platte
+bleiben beim alten Stand. Bis 4.4.0 blieb bei fünf dieser sieben Wege der
+Speicher beim neuen Stand (Issue #39, behoben in 4.4.1, siehe 2.6).
 
 ## 6. Die Form auf der Platte
 
@@ -830,9 +843,7 @@ Was diesen Vertrag weiterhin unmittelbar betrifft:
    `create_edge` prüft beim Anlegen; wird ein Knoten SPÄTER weich
    gelöscht, bleiben seine Kanten liegen und werden erst beim Lesen
    herausgefiltert. Sichtbar wird das nur über `list_edges`.
-3. **Einzelschreiben bei vollem Datenträger** (Issue #39, Abschnitt 5,
-   „Robustheit“): Speicher und Platte widersprechen sich nach dem Fehler.
-4. **Threads, Prozesse, Instanzen:** seit `3.0.0-entwurf` threadsicher
+3. **Threads, Prozesse, Instanzen:** seit `3.0.0-entwurf` threadsicher
    (Abschnitt 3.1); mehrere Prozesse und mehrere Instanzen sind
    ausgeschlossen statt nur ungeschützt (Abschnitt 3.2). Bis 3.0.0 stand
    hier „keine Lücke, sondern eine Entscheidung“ — das war falsch.
