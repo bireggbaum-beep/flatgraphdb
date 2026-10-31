@@ -671,9 +671,16 @@ nach jeder Änderung:
 - **Zweiter Prozess** auf demselben Bestand: `BestandBelegt`.
 - **Dauerlauf** (1500 Transaktionen): Dateizahl unverändert, Stand nach
   Neustart richtig.
+- **Kill in der Transaktion** (6 Läufe, Umbuchung zwischen zwei Fächern,
+  60–134 bestätigte Umbuchungen je Lauf): Summe immer unverändert, keine
+  bestätigte Umbuchung verloren.
+- **Threads** (4 × 100 gleichzeitige `create_node`): 400 von 400, keine
+  Fehler.
 
 **Gegenprobe (31.10.2026):** je eine mutierte Kopie, an der die Probe
-nachweislich fällt: Fach an Ort und Stelle statt über `.tmp` und
+nachweislich fällt (zusätzlich: Transaktion fachweise statt mit Absicht
+schreiben → „Kill in der Transaktion“ fällt in 3 von 6 Läufen; Sperre
+entfernt → „Threads“ fällt, 107 von 400): Fach an Ort und Stelle statt über `.tmp` und
 `os.replace` schreiben → Kill-Schleife fällt in 4 von 8 Läufen
 (`DateiKaputt`); nur jeder siebte Schreibvorgang kommt auf die Platte →
 Kill-Schleife fällt; `update_node` ohne Schreiben → Zufallsmodell fällt
@@ -686,9 +693,11 @@ zeigt das nicht. Ebenso nicht geprüft: Bitflips, die gültiges JSON
 ergeben, und Windows.
 
 **Offen (Issue #39):** Scheitert `fsync` mit `ENOSPC` beim Einzelschreiben,
-bleibt der Knoten im Speicher stehen, obwohl die Platte ihn nicht hat.
-Das widerspricht 2.6; die Probe „Platte voll: Speicher zeigt den
-gescheiterten Knoten nicht“ fällt bis zur Behebung.
+bleibt der Speicher beim NEUEN Stand, obwohl die Platte den alten hat.
+Betroffen sind `create_node`, `update_node`, `create_edge` und
+`delete_edge`; `soft_delete` und `restore_node` halten sich an 2.6. Das
+widerspricht 2.6; die Proben „Platte voll bei …“ fallen bis zur Behebung
+(5 von 55 Checks).
 
 ## 6. Die Form auf der Platte
 

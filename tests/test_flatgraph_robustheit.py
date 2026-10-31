@@ -226,6 +226,136 @@ def dauerlauf(n=1500):
     return nach100, ende, stimmt
 
 
+# ---------------------------------------------------------------- 7
+UMBUCHER = r"""
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location("fgx", sys.argv[1])
+m = importlib.util.module_from_spec(spec); sys.modules["fgx"] = m
+spec.loader.exec_module(m)
+db = m.FlatGraphDB(sys.argv[2])
+n = 0
+while True:
+    with db.transaction():      # zwei Sammlungen = zwei Fächer
+        db.update_node("a", "x", {"v": db.get_node("a/x")["v"] - 1})
+        db.update_node("b", "y", {"v": db.get_node("b/y")["v"] + 1})
+    n += 1
+    print(n, flush=True)
+"""
+
+
+def kill_in_transaktion(seed):
+    """Umbuchung zwischen zwei Fächern, Prozess abgeschossen: die Summe darf
+    nie von 1000 abweichen, und nichts Bestätigtes darf fehlen."""
+    wurzel, rnd = frisch(), random.Random(seed)
+    db = fg.FlatGraphDB(wurzel)
+    db.create_node("a", "x", {"v": 1000})
+    db.create_node("b", "y", {"v": 0})
+    db.close()
+    p = subprocess.Popen([sys.executable, "-c", UMBUCHER, fg.__pfad__, wurzel],
+                         stdout=subprocess.PIPE, text=True)
+    time.sleep(0.3 + rnd.random() * 0.5)
+    p.send_signal(signal.SIGKILL)
+    bestaetigt = len(p.stdout.read().split())
+    p.wait()
+    try:
+        db = fg.FlatGraphDB(wurzel)
+        x = db.get_node("a/x")["v"]
+        y = db.get_node("b/y")["v"]
+        db.close()
+    except Exception as e:
+        shutil.rmtree(wurzel)
+        return False, False, f"{type(e).__name__}: {e}"
+    shutil.rmtree(wurzel)
+    summe_ok = x + y == 1000
+    # die letzte, noch nicht bestätigte Umbuchung darf gelten oder nicht
+    nichts_verloren = y in (bestaetigt, bestaetigt + 1)
+    return summe_ok, nichts_verloren, f"{bestaetigt} bestätigt, x={x} y={y}"
+
+
+# ---------------------------------------------------------------- 8
+def _stand(db):
+    return (repr(sorted((k, sorted(v.items())) for k, v in db.list_nodes("a", include_deleted=True).items())),
+            repr(sorted((v["source"], v["target"], v["type"]) for v in db.list_edges("t").values())))
+
+
+def _vorbereiten(wurzel):
+    db = fg.FlatGraphDB(wurzel)
+    db.create_node("a", "1", {"v": 1})
+    db.create_node("a", "2", {"v": 2})
+    db.create_node("a", "3", {"v": 3})
+    # zwei Kanten: wird die einzige gelöscht, wird das Fach entfernt statt
+    # geschrieben, und es gäbe keinen fsync, der scheitern könnte
+    db.create_edge("a/1", "a/2", "t")
+    db.create_edge("a/1", "a/3", "t")
+    kante = next(iter(db.list_edges("t")))
+    db.soft_delete("a", "3")
+    return db, kante
+
+
+SCHREIBWEGE = {
+    "create_node": lambda db, k: db.create_node("a", "neu", {"v": 9}),
+    "update_node": lambda db, k: db.update_node("a", "1", {"v": 99}),
+    "create_edge": lambda db, k: db.create_edge("a/2", "a/1", "t"),
+    "delete_edge": lambda db, k: db.delete_edge(k),
+    "soft_delete": lambda db, k: db.soft_delete("a", "2"),
+    "restore_node": lambda db, k: db.restore_node("a", "3"),
+}
+
+
+def platte_voll_weg(name):
+    """Speicher und Platte müssen nach dem gescheiterten Schreiben gleich
+    sein — gleich dem alten Stand, den wir vorher gesehen haben."""
+    wurzel = frisch()
+    db, kante = _vorbereiten(wurzel)
+    alt = _stand(db)
+    echt = os.fsync
+
+    def voll(fd):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    os.fsync = voll
+    try:
+        try:
+            SCHREIBWEGE[name](db, kante)
+            geworfen = False
+        except OSError:
+            geworfen = True
+    finally:
+        os.fsync = echt
+    speicher = _stand(db)
+    db = neu_oeffnen(db)
+    platte = _stand(db)
+    db.close()
+    shutil.rmtree(wurzel)
+    return geworfen, speicher == alt, platte == alt
+
+
+# ---------------------------------------------------------------- 9
+def threads_last(n_threads=4, je=100):
+    import threading
+    wurzel = frisch()
+    db = fg.FlatGraphDB(wurzel)
+    fehler = []
+
+    def arbeit(t):
+        try:
+            for i in range(je):
+                db.create_node("a", f"{t}-{i}", {"v": i})
+        except Exception as e:
+            fehler.append(e)
+
+    ts = [threading.Thread(target=arbeit, args=(t,)) for t in range(n_threads)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    db = neu_oeffnen(db)
+    anzahl = len(db.list_nodes("a"))
+    db.close()
+    shutil.rmtree(wurzel)
+    return anzahl, fehler
+
+
 if __name__ == "__main__":
     for seed in (1, 2, 3):
         k, e = zufallsmodell(seed)
@@ -251,6 +381,21 @@ if __name__ == "__main__":
     a, b, stimmt = dauerlauf()
     check("Dauerlauf: Dateizahl wächst bei Überschreiben nicht", b == a, f"{a} -> {b}")
     check("Dauerlauf: Stand nach 1500 Transaktionen und Neustart stimmt", stimmt)
+
+    for seed in range(6):
+        summe, verl, d = kill_in_transaktion(seed)
+        check(f"Kill in Transaktion (Seed {seed}): Summe bleibt 1000 (alles oder nichts)", summe, d)
+        check(f"Kill in Transaktion (Seed {seed}): keine bestätigte Umbuchung geht verloren", verl, d)
+
+    for name in SCHREIBWEGE:
+        geworfen, mem, pl = platte_voll_weg(name)
+        check(f"Platte voll bei {name}: Fehler kommt an", geworfen)
+        check(f"Platte voll bei {name}: Speicher bleibt beim alten Stand", mem)
+        check(f"Platte voll bei {name}: Platte bleibt beim alten Stand", pl)
+
+    anzahl, fehler = threads_last()
+    check("Threads: 4 x 100 gleichzeitige create_node, nichts geht verloren", anzahl == 400 and not fehler,
+          f"{anzahl}/400, Fehler: {fehler[:1]}")
 
     n_ok = sum(1 for _, ok, _ in results if ok)
     print(f"\n{n_ok}/{len(results)} Checks bestanden")
