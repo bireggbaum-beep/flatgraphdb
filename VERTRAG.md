@@ -672,6 +672,14 @@ nach jeder Änderung:
 - **Dauerlauf** (1500 Transaktionen): Dateizahl unverändert, Stand nach
   Neustart richtig.
 
+**Gegenprobe (31.10.2026):** je eine mutierte Kopie, an der die Probe
+nachweislich fällt: Fach an Ort und Stelle statt über `.tmp` und
+`os.replace` schreiben → Kill-Schleife fällt in 4 von 8 Läufen
+(`DateiKaputt`); nur jeder siebte Schreibvorgang kommt auf die Platte →
+Kill-Schleife fällt; `update_node` ohne Schreiben → Zufallsmodell fällt
+in allen 3 Seeds; Rollback ohne `_rueckgaengig` → Zufallsmodell fällt in
+allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
+
 **Grenze:** `SIGKILL` ist ein Prozessabsturz, kein Stromausfall; der
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
 zeigt das nicht. Ebenso nicht geprüft: Bitflips, die gültiges JSON
