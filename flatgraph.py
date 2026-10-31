@@ -1010,7 +1010,7 @@ class FlatGraphDB:
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError as e:
+        except ValueError as e:  # JSONDecodeError und UnicodeDecodeError
             raise DateiKaputt(f"File '{filepath}' is not valid JSON: {e}") from e
         except IOError as e:
             raise DateiKaputt(f"Could not read file '{filepath}': {e}") from e
