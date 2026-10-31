@@ -655,6 +655,33 @@ nach jeder Änderung:
 
 ---
 
+### Robustheit, nachgemessen am 31.10.2026
+
+`tests/test_flatgraph_robustheit.py` (Linux, feste Seeds, etwa 8 s):
+
+- **Zufallsmodell** (3 Seeds, je 400 Schritte aus Anlegen, Ändern, Kante,
+  Rollback, Neustart): Knoten und Kanten nach dem Neustart gleich dem
+  Modell, 0 Abweichungen.
+- **Kill-Schleife** (8 Läufe, `SIGKILL` nach 0.3–0.8 s, 163–472
+  bestätigte Schreibvorgänge je Lauf): 0 bestätigte Schreibvorgänge
+  verloren, der Bestand liess sich jedes Mal öffnen.
+- **Beschädigte Fächer** (abgeschnitten, Müll am Ende, leer, ungültiges
+  UTF-8): `DateiKaputt`, nie stilles Weiterlesen. Ungültiges UTF-8 warf
+  bis hierhin `UnicodeDecodeError`; behoben.
+- **Zweiter Prozess** auf demselben Bestand: `BestandBelegt`.
+- **Dauerlauf** (1500 Transaktionen): Dateizahl unverändert, Stand nach
+  Neustart richtig.
+
+**Grenze:** `SIGKILL` ist ein Prozessabsturz, kein Stromausfall; der
+Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
+zeigt das nicht. Ebenso nicht geprüft: Bitflips, die gültiges JSON
+ergeben, und Windows.
+
+**Offen (Issue #39):** Scheitert `fsync` mit `ENOSPC` beim Einzelschreiben,
+bleibt der Knoten im Speicher stehen, obwohl die Platte ihn nicht hat.
+Das widerspricht 2.6; die Probe „Platte voll: Speicher zeigt den
+gescheiterten Knoten nicht“ fällt bis zur Behebung.
+
 ## 6. Die Form auf der Platte
 
 Speicherform 3 (ab `3.0.0-entwurf`, Issue #32):
@@ -771,7 +798,9 @@ Was diesen Vertrag weiterhin unmittelbar betrifft:
    `create_edge` prüft beim Anlegen; wird ein Knoten SPÄTER weich
    gelöscht, bleiben seine Kanten liegen und werden erst beim Lesen
    herausgefiltert. Sichtbar wird das nur über `list_edges`.
-3. **Threads, Prozesse, Instanzen:** seit `3.0.0-entwurf` threadsicher
+3. **Einzelschreiben bei vollem Datenträger** (Issue #39, Abschnitt 5,
+   „Robustheit“): Speicher und Platte widersprechen sich nach dem Fehler.
+4. **Threads, Prozesse, Instanzen:** seit `3.0.0-entwurf` threadsicher
    (Abschnitt 3.1); mehrere Prozesse und mehrere Instanzen sind
    ausgeschlossen statt nur ungeschützt (Abschnitt 3.2). Bis 3.0.0 stand
    hier „keine Lücke, sondern eine Entscheidung“ — das war falsch.
