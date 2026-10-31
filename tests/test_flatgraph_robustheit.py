@@ -356,6 +356,109 @@ def threads_last(n_threads=4, je=100):
     return anzahl, fehler
 
 
+# ---------------------------------------------------------------- 10
+def bitflips(art, n=300, seed=1):
+    """Ein Bit in einem Fach kippen, öffnen, alles lesen. Erlaubt sind drei
+    Ausgänge: gleicher Stand (Kippen in Leerraum), `DateiKaputt`, oder ein
+    stilles anderes Ergebnis — Letzteres lässt sich ohne Prüfsumme nicht
+    erkennen und wird nur GEZÄHLT. Jeder andere Fehlertyp ist ein Fehler."""
+    rnd, zaehler, andere = random.Random(seed), {"gleich": 0, "kaputt": 0, "still": 0}, {}
+    wurzel = frisch()
+    db = fg.FlatGraphDB(wurzel)
+    for i in range(8):
+        db.create_node("a", str(i), {"name": f"Knoten {i}", "v": i * 7, "liste": [1, 2, 3], "t": "äöü"})
+    for i in range(7):
+        db.create_edge(f"a/{i}", f"a/{i + 1}", "t", meta={"g": i})
+    db.close()
+    pfad = os.path.join(wurzel, "datenbank", *(("nodes", "a") if art == "nodes" else ("edges", "t")),
+                        "fach_000001.json")
+    roh = open(pfad, "rb").read()
+
+    def lies(db):
+        return repr(sorted(db.list_nodes("a").items())) + repr(sorted(db.list_edges("t").items()))
+
+    db = fg.FlatGraphDB(wurzel)
+    soll = lies(db)
+    db.close()
+    for _ in range(n):
+        b = bytearray(roh)
+        b[rnd.randrange(len(b))] ^= 1 << rnd.randrange(8)
+        open(pfad, "wb").write(bytes(b))
+        db = None
+        try:
+            db = fg.FlatGraphDB(wurzel)
+            zaehler["gleich" if lies(db) == soll else "still"] += 1
+        except fg.DateiKaputt:
+            zaehler["kaputt"] += 1
+        except Exception as e:
+            andere[type(e).__name__] = andere.get(type(e).__name__, 0) + 1
+        finally:
+            if db is not None:
+                db.close()
+    shutil.rmtree(wurzel)
+    return zaehler, andere
+
+
+# ---------------------------------------------------------------- 11
+GROSS_N = 20000      # klein genug für die Suite; 100 000 stehen im Vertrag
+
+
+def grosser_bestand(n=GROSS_N):
+    wurzel = frisch()
+    db = fg.FlatGraphDB(wurzel)
+    with db.transaction():
+        for i in range(n):
+            db.create_node("a", str(i), {"v": i, "n": f"Knoten {i}"})
+        for i in range(2 * n):
+            db.create_edge(f"a/{i % n}", f"a/{(i * 7 + 1) % n}", "t" if i < n else "u")
+    t = time.time()
+    db = neu_oeffnen(db)
+    oeffnen = time.time() - t
+    knoten = len(db.list_nodes("a", readonly=True))
+    kanten = len(db.list_edges("t")) + len(db.list_edges("u"))
+    # Kante i geht von i % n nach (7i+1) % n. Knoten 5 hat Kante 5 (Art t)
+    # und Kante n+5 (Art u); beide treffen denselben Knoten, daher zweimal
+    ziel = f"a/{(5 * 7 + 1) % n}"
+    stichprobe = (db.get_node(f"a/{n - 1}")["v"] == n - 1
+                  and db.get_connected("a/5") == [ziel, ziel])
+    db.close()
+    shutil.rmtree(wurzel)
+    return knoten, kanten, stichprobe, oeffnen
+
+
+GROSSER_SCHREIBER = r"""
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location("fgx", sys.argv[1])
+m = importlib.util.module_from_spec(spec); sys.modules["fgx"] = m
+spec.loader.exec_module(m)
+db = m.FlatGraphDB(sys.argv[2])
+with db.transaction():
+    for i in range(int(sys.argv[3])):
+        db.create_node("a", str(i), {"v": i, "n": "Knoten " + str(i)})
+print("fertig", flush=True)
+"""
+
+
+def kill_grosse_transaktion(seed, anteile, dauer):
+    """Eine Transaktion über viele Fächer, irgendwo abgeschossen: danach
+    entweder keiner oder alle Knoten, nie ein Teil."""
+    wurzel, rnd = frisch(), random.Random(seed)
+    p = subprocess.Popen([sys.executable, "-c", GROSSER_SCHREIBER, fg.__pfad__, wurzel, str(GROSS_N)],
+                         stdout=subprocess.PIPE, text=True)
+    time.sleep(dauer * (anteile[0] + rnd.random() * (anteile[1] - anteile[0])))
+    p.send_signal(signal.SIGKILL)
+    p.wait()
+    try:
+        db = fg.FlatGraphDB(wurzel)
+        anzahl = len(db.list_nodes("a", readonly=True)) if "a" in db.list_collections() else 0
+        db.close()
+    except Exception as e:
+        shutil.rmtree(wurzel)
+        return None, f"{type(e).__name__}: {e}"
+    shutil.rmtree(wurzel)
+    return anzahl, ""
+
+
 if __name__ == "__main__":
     for seed in (1, 2, 3):
         k, e = zufallsmodell(seed)
@@ -396,6 +499,33 @@ if __name__ == "__main__":
     anzahl, fehler = threads_last()
     check("Threads: 4 x 100 gleichzeitige create_node, nichts geht verloren", anzahl == 400 and not fehler,
           f"{anzahl}/400, Fehler: {fehler[:1]}")
+
+    for art in ("nodes", "edges"):
+        z, andere = bitflips(art)
+        check(f"Bitflip im {'Knoten' if art == 'nodes' else 'Kanten'}fach (300 Kippen): "
+              "nie ein anderer Fehler als DateiKaputt", not andere,
+              f"{z['kaputt']} DateiKaputt, {z['gleich']} gleich, {z['still']} still verändert"
+              + (f", ANDERE: {andere}" if andere else ""))
+
+    kn, ka, probe, oeffnen = grosser_bestand()
+    check(f"Grosser Bestand: {GROSS_N} Knoten und {2 * GROSS_N} Kanten in einer Transaktion, "
+          "nach Neustart vollständig", kn == GROSS_N and ka == 2 * GROSS_N, f"{kn} Knoten, {ka} Kanten")
+    check("Grosser Bestand: Stichproben (letzter Knoten, Nachbar) stimmen", probe, f"Öffnen {oeffnen:.1f} s")
+
+    t0 = time.time()
+    wurzel = frisch()
+    subprocess.run([sys.executable, "-c", GROSSER_SCHREIBER, fg.__pfad__, wurzel, str(GROSS_N)],
+                   capture_output=True)
+    dauer = time.time() - t0
+    shutil.rmtree(wurzel)
+    zustaende = []
+    for seed in range(8):
+        anzahl, d = kill_grosse_transaktion(seed, (0.2, 1.0), dauer)
+        zustaende.append(anzahl)
+        check(f"Kill in grosser Transaktion (Seed {seed}): alle oder keine {GROSS_N} Knoten",
+              anzahl in (0, GROSS_N), d or f"{anzahl} Knoten")
+    print(f"      (Zustände: {sum(1 for z in zustaende if z == 0)}x leer, "
+          f"{sum(1 for z in zustaende if z == GROSS_N)}x ganz)")
 
     n_ok = sum(1 for _, ok, _ in results if ok)
     print(f"\n{n_ok}/{len(results)} Checks bestanden")

@@ -676,11 +676,27 @@ nach jeder Änderung:
   bestätigte Umbuchung verloren.
 - **Threads** (4 × 100 gleichzeitige `create_node`): 400 von 400, keine
   Fehler.
+- **Kippbits** (je 300 einzelne Bitflips im Knoten- und im Kantenfach):
+  nie ein anderer Fehler als `DateiKaputt`. Ein Kantenfach mit gekipptem
+  Schlüssel (`"taRget"`) warf bis hierhin ein nacktes `KeyError` aus dem
+  Öffnen (24 von 300); behoben, es ist jetzt `DateiKaputt`. **Es gibt
+  keine Prüfsumme:** 55 von 300 Kippen im Knotenfach und 101 von 300 im
+  Kantenfach ergaben gültiges JSON mit anderem Inhalt und blieben
+  unbemerkt (ein gekippter Wert, ein gekippter Verweis). flatgraph
+  erkennt kaputte Dateien, aber keine veränderten.
+- **Grosser Bestand** (20 000 Knoten, 40 000 Kanten in einer Transaktion):
+  nach dem Neustart vollständig, Stichproben stimmen, Öffnen 0.9–1.1 s.
+  **Kill in grosser Transaktion** (8 Läufe, `SIGKILL` zwischen 20 % und
+  100 % der Laufzeit; 7 × leer, 1 × ganz): nie ein Teil der Knoten.
+  Einmalig, nicht Teil der Suite (Linux, 31.10.2026, 100 000 Knoten und
+  200 000 Kanten in einer Transaktion): Schreiben 38 s, Öffnen 5.6 s,
+  12 002 Dateien, Spitze des Arbeitsspeichers 588 MB für Schreiben und
+  Öffnen im selben Prozess. Eine einzelne Messung, kein Median.
 
 **Gegenprobe (31.10.2026):** je eine mutierte Kopie, an der die Probe
 nachweislich fällt (zusätzlich: Transaktion fachweise statt mit Absicht
 schreiben → „Kill in der Transaktion“ fällt in 3 von 6 Läufen; Sperre
-entfernt → „Threads“ fällt, 107 von 400): Fach an Ort und Stelle statt über `.tmp` und
+entfernt → „Threads“ fällt, 107 von 400; Kantenfix zurückgenommen → „Bitflip im Kantenfach“ fällt; fachweise Transaktion → „Kill in grosser Transaktion“ fällt in 7 von 8 Läufen mit 325–15 425 von 20 000 Knoten): Fach an Ort und Stelle statt über `.tmp` und
 `os.replace` schreiben → Kill-Schleife fällt in 4 von 8 Läufen
 (`DateiKaputt`); nur jeder siebte Schreibvorgang kommt auf die Platte →
 Kill-Schleife fällt; `update_node` ohne Schreiben → Zufallsmodell fällt
@@ -689,15 +705,14 @@ allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
 
 **Grenze:** `SIGKILL` ist ein Prozessabsturz, kein Stromausfall; der
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
-zeigt das nicht. Ebenso nicht geprüft: Bitflips, die gültiges JSON
-ergeben, und Windows.
+zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knoten.
 
 **Offen (Issue #39):** Scheitert `fsync` mit `ENOSPC` beim Einzelschreiben,
 bleibt der Speicher beim NEUEN Stand, obwohl die Platte den alten hat.
 Betroffen sind `create_node`, `update_node`, `create_edge` und
 `delete_edge`; `soft_delete` und `restore_node` halten sich an 2.6. Das
 widerspricht 2.6; die Proben „Platte voll bei …“ fallen bis zur Behebung
-(5 von 55 Checks).
+(5 von 67 Checks).
 
 ## 6. Die Form auf der Platte
 

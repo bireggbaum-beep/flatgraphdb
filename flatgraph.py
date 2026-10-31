@@ -694,7 +694,15 @@ class FlatGraphDB:
             eimer = [(rel_type, self._cache["edges"].get(rel_type, {}))]
         for art, bucket in eimer:
             for edge_id, edge in bucket.items():
-                self._index_edge(edge_id, edge)
+                try:
+                    self._index_edge(edge_id, edge)
+                except (KeyError, TypeError, AttributeError) as e:
+                    # Ein Kippbit in einem Schluessel ("taRget") ist gueltiges
+                    # JSON, aber keine Kante mehr. Ohne das kam ein nacktes
+                    # KeyError aus dem Oeffnen — nicht von einer kaputten Datei
+                    # zu unterscheiden, die man nur lesen kann.
+                    raise DateiKaputt(f"Kante '{edge_id}' der Art '{art}' ist "
+                                      f"keine gueltige Kante: {e!r}") from e
 
     @staticmethod
     def _translate_legacy_edge(edge):
