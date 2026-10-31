@@ -1,6 +1,10 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.4.2 (Speicherform 3)
+- Fehlt _meta.json in einem Bestand der Form 3, wird er nicht mehr als alt umgezogen (jedes Fach wurde zu einem Knoten); die Marke wird nachgetragen. pDMS: keine.
+- Ein Fach, _meta.json oder _nummern.json mit falscher Struktur wirft DateiKaputt statt AttributeError/TypeError oder still angenommen zu werden. pDMS: keine.
+
 4.4.1 (Speicherform 3)
 - Volle Platte: create_node, update_node, create_edge, delete_edge und reverse_edge lassen den Speicher beim alten Stand, wenn das Schreiben scheitert (Issue #39). Mit audit=True gehen Knoten und Protokoll gemeinsam über die Absichtsdatei. pDMS: keine.
 - Ungültiges UTF-8 in einem Fach und eine Kante ohne source/target werfen DateiKaputt statt UnicodeDecodeError/KeyError. pDMS: keine.

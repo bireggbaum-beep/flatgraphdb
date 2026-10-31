@@ -460,6 +460,84 @@ def kill_grosse_transaktion(seed, anteile, dauer):
     return anzahl, ""
 
 
+# ---------------------------------------------------------------- 12
+def _verzeichnisbild(wurzel):
+    bild = {}
+    for r, _, fs in os.walk(os.path.join(wurzel, "datenbank")):
+        for f in fs:
+            pfad = os.path.join(r, f)
+            bild[os.path.relpath(pfad, wurzel)] = open(pfad, "rb").read()
+    return bild
+
+
+def _neben_stand():
+    wurzel = frisch()
+    db = fg.FlatGraphDB(wurzel)
+    for i in range(3):
+        db.create_node("a", str(i), {"v": i})
+    db.create_edge("a/0", "a/1", "t")
+    db.next_id("a", "d_", 3)
+    db.create_node("a", "d_000001", {"v": 1})
+    db.soft_delete("a", "d_000001")
+    db.purge("a", "d_000001")          # legt _nummern.json an
+    db.close()
+    return wurzel
+
+
+def _schreibe(rel, inhalt):
+    def eingriff(d):
+        pfad = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(pfad), exist_ok=True)
+        with open(pfad, "w", encoding="utf-8") as f:
+            f.write(inhalt)
+    return eingriff
+
+
+NEBENDATEIEN = [
+    # (Name, Eingriff, erwartet)  kaputt = DateiKaputt und nichts verändert,
+    #                              gesund = öffnet mit den 3 Knoten
+    ("_meta.json: Müll", _schreibe("_meta.json", "{{{"), "kaputt"),
+    ("_meta.json: leer", _schreibe("_meta.json", ""), "kaputt"),
+    ("_meta.json: Liste statt Objekt", _schreibe("_meta.json", "[1]"), "kaputt"),
+    ("_meta.json: speicherform ist Text", _schreibe("_meta.json", '{"speicherform":"x"}'), "kaputt"),
+    ("_meta.json: speicherform 99", _schreibe("_meta.json", '{"speicherform":99}'), "zu_neu"),
+    ("_meta.json fehlt (Form 3)", lambda d: os.remove(os.path.join(d, "_meta.json")), "gesund"),
+    ("_nummern.json: Müll", _schreibe("_nummern.json", "{{{"), "kaputt"),
+    ("_nummern.json: Liste statt Objekt", _schreibe("_nummern.json", "[1]"), "kaputt"),
+    ("_nummern.json: Nummer ist Text", _schreibe("_nummern.json", '{"a":{"d_":"x"}}'), "kaputt"),
+    ("_absicht.json: Müll", _schreibe("_absicht.json", "{{{"), "kaputt"),
+    ("_absicht.json: Liste", _schreibe("_absicht.json", "[1]"), "kaputt"),
+    ("_absicht.json: Pfad ausserhalb", _schreibe("_absicht.json", '{"neu":["../../x.neu"],"loeschen":[]}'), "kaputt"),
+    ("Fach: Liste statt Objekt", _schreibe("nodes/a/fach_000001.json", "[1,2]"), "kaputt"),
+    ("Fach: Knoten ist eine Zahl", _schreibe("nodes/a/fach_000001.json", '{"0":5}'), "kaputt"),
+    ("Kennung in zwei Fächern, verschieden", _schreibe("nodes/a/fach_000002.json", '{"0":{"v":99}}'), "kaputt"),
+    ("Kantenfach: Liste statt Objekt", _schreibe("edges/t/fach_000001.json", "[1]"), "kaputt"),
+    ("Kantenfach: Kante ist eine Zahl", _schreibe("edges/t/fach_000001.json", '{"e":5}'), "kaputt"),
+    (".neu ohne Absicht liegt herum", _schreibe("nodes/a/fach_000001.json.neu", '{"zz":{"v":1}}'), "gesund"),
+    (".tmp-Rest liegt herum", _schreibe("nodes/a/fach_000001.json.tmp", "halb"), "gesund"),
+    ("fremde Datei im Fachordner", _schreibe("nodes/a/notizen.txt", "hallo"), "gesund"),
+]
+
+
+def nebendatei(eingriff, erwartet):
+    wurzel = _neben_stand()
+    eingriff(os.path.join(wurzel, "datenbank"))
+    vorher = _verzeichnisbild(wurzel)
+    try:
+        db = fg.FlatGraphDB(wurzel)
+        knoten = sorted(db.list_nodes("a"))
+        db.close()
+        ergebnis, unveraendert = ("gesund" if knoten == ["0", "1", "2"] else f"offen mit {knoten}"), True
+    except fg.SpeicherformZuNeu:
+        ergebnis, unveraendert = "zu_neu", _verzeichnisbild(wurzel) == vorher
+    except fg.DateiKaputt:
+        ergebnis, unveraendert = "kaputt", _verzeichnisbild(wurzel) == vorher
+    except Exception as e:
+        ergebnis, unveraendert = f"{type(e).__name__}", True
+    shutil.rmtree(wurzel)
+    return ergebnis, unveraendert
+
+
 if __name__ == "__main__":
     for seed in (1, 2, 3):
         k, e = zufallsmodell(seed)
@@ -527,6 +605,13 @@ if __name__ == "__main__":
               anzahl in (0, GROSS_N), d or f"{anzahl} Knoten")
     print(f"      (Zustände: {sum(1 for z in zustaende if z == 0)}x leer, "
           f"{sum(1 for z in zustaende if z == GROSS_N)}x ganz)")
+
+    for name, eingriff, erwartet in NEBENDATEIEN:
+        ergebnis, unveraendert = nebendatei(eingriff, erwartet)
+        check(f"Nebendatei ({name}): {'DateiKaputt' if erwartet == 'kaputt' else 'SpeicherformZuNeu' if erwartet == 'zu_neu' else 'öffnet mit allen 3 Knoten'}",
+              ergebnis == erwartet, ergebnis if ergebnis != erwartet else "")
+        if erwartet in ("kaputt", "zu_neu"):
+            check(f"Nebendatei ({name}): abgewiesener Bestand bleibt Byte für Byte unverändert", unveraendert)
 
     n_ok = sum(1 for _, ok, _ in results if ok)
     print(f"\n{n_ok}/{len(results)} Checks bestanden")

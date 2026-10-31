@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.4.1`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.4.2`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -417,6 +417,8 @@ ist ein Update, das andere eine Reparatur.
 
 Die Marke steht in `datenbank/_meta.json` und wird beim Öffnen angelegt,
 wenn sie fehlt. Ein Bestand von vor dieser Prüfung öffnet also normal.
+Fehlt sie in einem Bestand mit Fächern (Form 3), wird nur sie nachgetragen;
+der Bestand wird nicht umgezogen (ab `4.4.2`).
 
 **Ein Bestand in einer älteren Form wird beim Öffnen umgezogen**, und zwar
 in dieser Reihenfolge: erst alle neuen Dateien schreiben, dann die alten
@@ -720,6 +722,22 @@ allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
 **Grenze:** `SIGKILL` ist ein Prozessabsturz, kein Stromausfall; der
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
 zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knoten.
+
+- **Nebendateien und Struktur** (20 Eingriffe: `_meta.json`,
+  `_nummern.json`, `_absicht.json`, Fächer, Kantenfächer, Reste, fremde
+  Dateien): kaputt heisst `DateiKaputt` (bei einer Speicherform 99
+  `SpeicherformZuNeu`), und der abgewiesene Bestand bleibt Byte für Byte
+  unverändert. Bis `4.4.2` fielen 8 davon durch: ein Fach oder eine Marke
+  mit falscher Struktur warf `AttributeError`/`TypeError` aus dem Öffnen
+  oder wurde still angenommen (`_nummern.json` als Liste hätte `next_id`
+  Nummern neu vergeben lassen). **Der schwerste Fund:** Fehlte
+  `_meta.json` in einem Bestand der Form 3, hielt flatgraph ihn für alt und
+  zog ihn um; jedes Fach wurde zu EINEM Knoten `fach_000001`, ohne Fehler.
+  Jetzt zählt die Marke als fehlend, nur wenn auch keine Fächer da sind;
+  sonst wird sie nachgetragen. Ein Bestand ohne Marke und ohne Fächer
+(Form 1, eine Sammeldatei je Sammlung) wird weiter umgezogen. Grenze, nach
+dem Code und nicht nachgestellt: ein Bestand ohne Marke, der in einem
+Sammlungsordner eine Datei `fach_<Zahl>.json` hat, gilt als Form 3.
 
 **Platte voll** (`fsync` wirft `ENOSPC`, bei `create_node`,
 `update_node`, `create_edge`, `delete_edge`, `soft_delete`,

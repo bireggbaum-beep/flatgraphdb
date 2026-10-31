@@ -254,7 +254,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.4.1"
+__version__ = "4.4.2"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -571,6 +571,15 @@ class FlatGraphDB:
         # dieselbe Nummer noch einmal vergibt. Kein Teil der Speicherform:
         # fehlt die Datei, gilt wie bisher, was im Bestand steht.
         self._nummern = self._load_json_from_disk(self._nummern_datei())
+        # Eine Marke, die nicht {sammlung: {praefix: zahl}} ist, darf nicht
+        # still gelten: next_id vergaebe sonst Nummern neu, die es schon gab,
+        # oder scheiterte erst beim ersten Aufruf mit einem TypeError.
+        if not (isinstance(self._nummern, dict) and all(
+                isinstance(e, dict) and all(isinstance(z, int) and not isinstance(z, bool)
+                                            for z in e.values())
+                for e in self._nummern.values())):
+            raise DateiKaputt(f"'{self._nummern_datei()}' ist nicht "
+                              f"{{Sammlung: {{Praefix: Zahl}}}}.")
         # Vor dem Einlesen, nicht danach: ein Bestand in neuerer Form soll
         # gar nicht erst halb geladen werden.
         self._speicherform_pruefen()
@@ -766,6 +775,19 @@ class FlatGraphDB:
         self._save_json_atomic(self._nummern_datei(), zusammen)
         self._nummern = zusammen
 
+    def _hat_faecher(self):
+        """Liegt irgendwo `nodes/<sammlung>/fach_N.json` oder `edges/<art>/fach_N.json`?"""
+        for art in ("nodes", "edges"):
+            basis = self.dirs[art]
+            if not os.path.isdir(basis):
+                continue
+            for eintrag in os.listdir(basis):
+                ordner = os.path.join(basis, eintrag)
+                if os.path.isdir(ordner) and any(
+                        re.fullmatch(r"fach_\d+\.json", d) for d in os.listdir(ordner)):
+                    return True
+        return False
+
     def _speicherform_pruefen(self):
         """Verweigern, statt kommentarlos einen leeren Bestand zu laden.
 
@@ -783,12 +805,26 @@ class FlatGraphDB:
         gefunden = None
         if os.path.exists(pfad):
             daten = self._load_json_from_disk(pfad)
+            if not isinstance(daten, dict):
+                raise DateiKaputt(f"'{pfad}' ist kein Objekt.")
             gefunden = daten.get("speicherform")
+            # Eine Marke, die es gibt, aber keine Zahl nennt, ist kaputt —
+            # nicht „fehlt“. Sonst gilt der Bestand als alt und wird umgezogen.
+            if "speicherform" in daten and (not isinstance(gefunden, int)
+                                            or isinstance(gefunden, bool)):
+                raise DateiKaputt(f"'{pfad}': speicherform ist keine Zahl.")
             if isinstance(gefunden, int) and gefunden > SPEICHERFORM:
                 raise SpeicherformZuNeu(gefunden, SPEICHERFORM, self.root)
             if gefunden == SPEICHERFORM:
                 self._umzugsreste_wegraeumen()
                 return
+        # Fehlt die Marke, aber die Faecher sind da, ist es ein Bestand der
+        # Form 3, dem jemand die Datei weggenommen hat. Als Form 1/2 gelesen
+        # wuerde jedes Fach zu EINEM Knoten "fach_000001" zusammengefasst —
+        # ohne Fehler, und ohne Rueckweg (VERTRAG 3.3). Nur die Marke fehlt.
+        if gefunden is None and self._hat_faecher():
+            self._marke_schreiben()
+            return
         # Marke fehlt oder nennt eine aeltere Form: umziehen, Stufe fuer
         # Stufe. Fehlt sie, ist der Bestand aelter als die Pruefung und liegt
         # damit in Form 1.
@@ -1322,7 +1358,10 @@ class FlatGraphDB:
                 continue
             nr = int(treffer.group(1))
             pfad = ablage.pfad(nr)
-            for k, v in self._load_json_from_disk(pfad).items():
+            fach = self._load_json_from_disk(pfad)
+            if not (isinstance(fach, dict) and all(isinstance(v, dict) for v in fach.values())):
+                raise DateiKaputt(f"'{pfad}' ist kein Fach: erwartet {{Kennung: Objekt}}.")
+            for k, v in fach.items():
                 if k in daten:
                     if daten[k] != v:
                         raise DateiKaputt(
