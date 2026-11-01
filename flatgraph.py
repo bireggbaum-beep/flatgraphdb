@@ -106,6 +106,22 @@ class KanteExistiert(FlatGraphFehler, ValueError):
     """Diese ungerichtete Kante gibt es schon (A–B und B–A sind dieselbe)."""
 
 
+class ZyklusGefunden(FlatGraphFehler, ValueError):
+    """Eine Reihenfolge gibt es nicht: die Kantenart hat einen Kreis.
+
+    `zyklen` haelt die beteiligten Knoten (wie `detect_cycles`), damit der
+    Aufrufer zeigen kann, WO, ohne die Suche zu wiederholen.
+    """
+
+    def __init__(self, zyklen):
+        self.zyklen = zyklen
+        # Mengen, keine Wege: die Knoten eines Kreises sind sortiert, nicht
+        # in der Folge ihrer Kanten.
+        teile = "; ".join("{" + ", ".join(z) + "}" for z in zyklen[:3])
+        super().__init__(f"{len(zyklen)} Kreis(e) in der Kantenart: {teile}"
+                         + (" …" if len(zyklen) > 3 else ""))
+
+
 class UngueltigeReferenz(FlatGraphFehler, ValueError):
     """Eine Knotenreferenz ist nicht `sammlung/kennung`.
 
@@ -254,7 +270,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.4.3"
+__version__ = "4.5.0"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -2837,6 +2853,140 @@ class FlatGraphDB:
             ref = vorgaenger[ref][0]
         weg.append((start_ref, None))
         return weg[::-1]
+
+    def _teilgraph(self, rel_type, sammlung, direction):
+        """Knoten und Nachfolger EINER Kantenart, fuer Sortieren und Kreise.
+
+        Nur lebende Knoten; eine Kante, deren Ende fehlt oder weich geloescht
+        ist, zaehlt nicht (wie beim Lesen sonst auch). Mit `sammlung` nur
+        Kanten zwischen Knoten dieser Sammlung, dafuer auch deren Knoten
+        ohne Kante — sie gehoeren zur Reihenfolge, nur ohne Vorgaenger.
+        """
+        if direction not in ("out", "in"):
+            raise ValueError(f"direction muss 'out' oder 'in' sein, nicht {direction!r}: "
+                             f"eine Reihenfolge hat eine Richtung.")
+        knoten = self._cache["nodes"]
+
+        def lebt(ref):
+            col, _, nid = ref.partition("/")
+            if sammlung is not None and col != sammlung:
+                return False
+            daten = knoten.get(col, {}).get(nid)
+            return daten is not None and not self._is_deleted(daten)
+
+        nach = {}
+        if sammlung is not None:
+            for nid, daten in knoten.get(sammlung, {}).items():
+                if not self._is_deleted(daten):
+                    nach[f"{sammlung}/{nid}"] = set()
+        for eid, kante in self._cache["edges"].get(rel_type, {}).items():
+            q, z = kante["source"], kante["target"]
+            if not (lebt(q) and lebt(z)):
+                continue
+            if self._ungerichtet(kante):
+                # A–B hat kein Vorher und Nachher; als Kreis zu melden waere
+                # genauso falsch wie sie zu uebergehen.
+                raise ValueError(f"Kante '{eid}' der Art '{rel_type}' ist ungerichtet: "
+                                 f"sie gibt keine Reihenfolge her.")
+            if direction == "in":
+                q, z = z, q
+            nach.setdefault(q, set()).add(z)
+            nach.setdefault(z, set())
+        return nach
+
+    @staticmethod
+    def _kreise(nach):
+        """Stark zusammenhaengende Teile mit Kreis (Tarjan, ohne Rekursion —
+        eine lange Kette sprengte sonst die Rekursionsgrenze)."""
+        nummer, tief, stapel, auf_stapel, zyklen = {}, {}, [], set(), []
+        zaehler = 0
+        for anfang in sorted(nach):
+            if anfang in nummer:
+                continue
+            arbeit = [(anfang, iter(sorted(nach[anfang])))]
+            nummer[anfang] = tief[anfang] = zaehler
+            zaehler += 1
+            stapel.append(anfang)
+            auf_stapel.add(anfang)
+            while arbeit:
+                v, nachfolger = arbeit[-1]
+                weiter = False
+                for w in nachfolger:
+                    if w not in nummer:
+                        nummer[w] = tief[w] = zaehler
+                        zaehler += 1
+                        stapel.append(w)
+                        auf_stapel.add(w)
+                        arbeit.append((w, iter(sorted(nach[w]))))
+                        weiter = True
+                        break
+                    if w in auf_stapel:
+                        tief[v] = min(tief[v], nummer[w])
+                if weiter:
+                    continue
+                arbeit.pop()
+                if arbeit:
+                    tief[arbeit[-1][0]] = min(tief[arbeit[-1][0]], tief[v])
+                if tief[v] == nummer[v]:
+                    teil = []
+                    while True:
+                        w = stapel.pop()
+                        auf_stapel.discard(w)
+                        teil.append(w)
+                        if w == v:
+                            break
+                    if len(teil) > 1 or v in nach[v]:
+                        zyklen.append(sorted(teil))
+        return sorted(zyklen)
+
+    def detect_cycles(self, rel_type, sammlung=None):
+        """Kreise in EINER Kantenart melden, nicht werfen (wie `schema_verstoesse`).
+
+        :return: Liste der Kreise, jeder als sortierte Liste der beteiligten
+                 Knoten (alle, die gegenseitig voneinander erreichbar sind);
+                 eine Kante auf sich selbst ist ein Kreis aus einem Knoten.
+                 Leer, wenn es keinen gibt.
+        :raises ValueError: die Kantenart hat eine ungerichtete Kante.
+        """
+        return self._kreise(self._teilgraph(rel_type, sammlung, "out"))
+
+    def topological_sort(self, rel_type, direction="out", sammlung=None):
+        """Reihenfolge entlang EINER Kantenart, stufenweise (Kahn).
+
+        Ueber alle Kantenarten zugleich ergaebe eine Reihenfolge keinen Sinn;
+        deshalb ist `rel_type` Pflicht. `direction="out"`: die Quelle einer
+        Kante kommt vor ihrem Ziel; `"in"` umgekehrt (fuer Arten wie
+        „folgt auf“, die vom Spaeteren zum Frueheren zeigen).
+
+        :return: Stufen `[[ref, …], …]`: eine Stufe haengt nur von frueheren
+                 ab, was in derselben Stufe steht, kann parallel laufen. Jede
+                 Stufe ist sortiert, das Ergebnis also bei gleichem Bestand
+                 gleich.
+        :raises ZyklusGefunden: die Kantenart hat einen Kreis; `.zyklen`
+                 nennt die Knoten.
+        :raises ValueError: ungerichtete Kante, oder `direction` nicht
+                 'out'/'in'.
+        """
+        nach = self._teilgraph(rel_type, sammlung, direction)
+        grad = dict.fromkeys(nach, 0)
+        for ziele in nach.values():
+            for z in ziele:
+                grad[z] += 1
+        stufe = sorted(k for k, g in grad.items() if g == 0)
+        stufen, gesehen = [], 0
+        while stufe:
+            stufen.append(stufe)
+            gesehen += len(stufe)
+            naechste = []
+            for k in stufe:
+                for z in nach[k]:
+                    grad[z] -= 1
+                    if grad[z] == 0:
+                        naechste.append(z)
+            stufe = sorted(naechste)
+        if gesehen < len(nach):
+            raise ZyklusGefunden(self._kreise(nach))
+        return stufen
 
     def collect_related(self, start_ref, rel_type_path, direction="out"):
         """

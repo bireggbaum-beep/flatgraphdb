@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.4.3`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.5.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -488,6 +488,50 @@ Sprüngen (Breitensuche, **ungewichtet**) und nimmt dieselben Parameter wie
 
 Geprüft in `tests/test_flatgraph_weg.py`.
 
+### 2.12 Reihenfolge und Kreise: `topological_sort`, `detect_cycles`
+
+Ab `4.5.0` (Issue #38). Beide arbeiten auf **einer** Kantenart
+(`rel_type` ist Pflicht): über alle Kantenarten zugleich ergäbe eine
+Reihenfolge keinen Sinn. Lesemethoden, die Speicherform bleibt.
+
+`topological_sort(rel_type, direction="out", sammlung=None)` gibt die
+Reihenfolge **stufenweise** zurück (Kahn): `[[ref, …], …]`. Eine Stufe
+hängt nur von früheren ab; was in derselben Stufe steht, kann parallel
+laufen. Jede Stufe ist sortiert, das Ergebnis bei gleichem Bestand also
+gleich. `direction="out"`: die Quelle kommt vor dem Ziel; `"in"`
+umgekehrt, für Arten wie „folgt auf“, die vom Späteren zum Früheren
+zeigen. `traverse` taugt dafür nicht: es sortiert nach Abstand vom Start,
+und bei A→B→D, A→C→E→D käme D vor E.
+
+`detect_cycles(rel_type, sammlung=None)` **meldet**, statt zu werfen (wie
+`schema_verstoesse`): eine Liste der Kreise, jeder als sortierte Liste
+aller Knoten, die gegenseitig voneinander erreichbar sind. Leer, wenn es
+keinen gibt.
+
+- **Kreis bei `topological_sort`:** `ZyklusGefunden` (auch ein
+  `ValueError`); `.zyklen` nennt dieselben Knoten wie `detect_cycles`.
+- **Eine Kante auf sich selbst** ist ein Kreis aus einem Knoten.
+- **Ungerichtete Kanten** in der Kantenart: `ValueError`. Sie haben kein
+  Vorher und Nachher; sie als Kreis zu melden wäre so falsch wie sie zu
+  übergehen.
+- **Weich gelöschte Knoten** zählen nicht, ihre Kanten auch nicht. Ein
+  gelöschter Knoten kann also einen Kreis brechen.
+- **`sammlung`:** nur Kanten zwischen Knoten dieser Sammlung; deren Knoten
+  ohne Kante stehen in der ersten Stufe. Ohne `sammlung` gehören nur
+  Knoten dazu, die eine Kante dieser Art haben.
+- **Unbekannte Kantenart:** `[]` von beiden, kein Fehler (wie `traverse`).
+- **Kosten**, nachgemessen (Linux, 01.11.2026, Median aus 5, je Knoten
+  zwei Kanten auf frühere Knoten): 2000 Knoten `topological_sort` 5 ms,
+  `detect_cycles` 6 ms; 20 000 Knoten 88 ms und 95 ms. Linear in Knoten
+  plus Kanten der Kantenart. Ohne Rekursion: ein Kreis über 5000 Knoten
+  wird gefunden.
+
+Kreise beim Anlegen verhindern (`create_edge` weist eine Kante ab, die
+einen Kreis schlösse) ist **nicht** zugesagt; das wäre eine
+Vertragsausweitung und ein eigenes Issue.
+
+Geprüft in `tests/test_flatgraph_reihenfolge.py`.
+
 ---
 
 ## 4. Verhalten im Fehlerfall
@@ -509,6 +553,8 @@ Geprüft in `tests/test_flatgraph_weg.py`.
 | `reverse_edge` auf fehlende Kante (ab 4.3.0) | `KanteFehlt` |
 | `find_path` mit fehlendem oder weich gelöschtem Start/Ziel (ab 4.4.0) | `KnotenFehlt` |
 | `reverse_edge` auf ungerichtete Kante, Kaskadenkante oder nicht erlaubtes Paar (ab 4.3.0) | `ValueError` |
+| `topological_sort` auf eine Kantenart mit Kreis (ab 4.5.0) | `ZyklusGefunden` |
+| `topological_sort`/`detect_cycles` auf eine Kantenart mit ungerichteter Kante, `topological_sort` mit `direction` nicht `out`/`in` (ab 4.5.0) | `ValueError` |
 | `get_node` mit kaputter Referenz | `UngueltigeReferenz` |
 | `get_node` auf fehlenden Knoten | `None` |
 | `get_edge` auf fehlende Kante | `None` |
@@ -534,7 +580,7 @@ Alle erben von `FlatGraphFehler` — wer alles fangen will, fängt die. Und
 
     KnotenFehlt, KnotenExistiert, KanteFehlt   auch KeyError
     UngueltigeReferenz, KanteExistiert,
-    NichtImPapierkorb                           auch ValueError
+    NichtImPapierkorb, ZyklusGefunden           auch ValueError
     DateiKaputt                                 auch RuntimeError
     AbschlussHaengt                             auch OSError
 
