@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.5.1`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.5.2`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -183,6 +183,14 @@ Ab `3.0.0-entwurf`. Geprüft wird VOR jeder Änderung am Arbeitsspeicher:
   Metadaten), durch einen Gang über die Typen: 5.7 µs für einen Knoten mit
   50 KB Text, bis 4.0 per JSON hin und zurück 254 µs — und das Surrogat
   kam trotzdem durch, blieb im Speicher und sperrte sein Fach.
+- **Höchstens 100 Ebenen Verschachtelung** (`MAX_VERSCHACHTELUNG`, ab
+  `4.5.2`), der Knoten selbst zählt als erste: tiefer wird mit
+  `NichtSpeicherbar` abgewiesen. Bis 4.5.1 hing die Grenze an der
+  Aufruftiefe: die Prüfung nahm bis etwa 994 Ebenen an, eingerückt
+  schreiben liess sich nur bis etwa 992, und tiefer in einer App sank
+  beides — dazwischen warf `create_node` ein nacktes `RecursionError`
+  beim Schreiben. 100 wie MongoDB für Dokumente; die Zahl ist eine
+  Entscheidung und eine Konstante.
 - **Sammlungen und Kantenarten haben sichere Namen.** Abgewiesen mit
   `UngueltigerName` (auch ein `ValueError`), siehe Abschnitt 7.
 - **Kennungen sind nicht leere Zeichenketten**, als UTF-8 schreibbar. Ebenfalls `UngueltigerName`.
@@ -785,6 +793,32 @@ allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
 zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knoten.
 
+- **Belastung** (`tests/test_flatgraph_belastung.py`, 04.11.2026, etwa
+  20 s):
+  - *Leser und Schreiber gemischt* (3 s, drei Schreiber buchen in
+    Transaktionen um und nehmen jede dritte zurück, vier Leser lesen
+    dabei): etwa 800 Buchungen, 300 Rollbacks, 600 Lesungen; kein Leser
+    sah eine falsche Summe, einen zurückgenommenen Zwischenstand, eine
+    ungerade Kantenzahl oder eine unvollständige Kette.
+  - *Extreme Einzelwerte*, alle nach dem Neustart gleich: ein Knoten mit
+    50 MB Text (1 s), 100 000 Felder, eine Kennung mit 100 000 Zeichen,
+    Emoji und Umlaut in Kennung und Sammlung, 100 Ebenen
+    Verschachtelung; ein Knoten mit 20 000 Kanten (`get_connected`
+    12 ms), 2000 Sammlungen (Öffnen 0.06 s). Einmalig, nicht in der
+    Suite: 50 000 Kanten an einem Knoten 38 ms, 10 000 Sammlungen Öffnen
+    0.34 s. Abgewiesen mit `NichtSpeicherbar`, Bestand danach unverändert:
+    101, 990 und 5000 Ebenen, ein Wert, der sich selbst enthält.
+  - *Dauerlauf* (20 000 gemischte Operationen gegen ein Modell, mit
+    Rollbacks, Neustarts, weichem und endgültigem Löschen, Müllsammler;
+    11 s): an allen fünf Messpunkten gleich dem Modell. Bei gleich vielen
+    Einträgen (300 Knoten, 100–130 Kanten) bleiben Dateizahl, Platz und
+    Arbeitsspeicher nach dem Öffnen je Eintrag gleich (letzter / erster
+    Messpunkt 1.00, 1.01, 1.04). **Ausnahme:** `datenbank/maintenance.log`
+    wächst mit jedem `purge` und jedem Lauf des Müllsammlers, hier
+    7.9 → 38 KB, ohne Grenze (Abschnitt 8).
+  - Gegenprobe: Transaktion ohne Sperre → „Gemischt“ fällt (Summe 981);
+    Grenze 1000 statt 100 → `RecursionError`; ohne Verdichten → Dateien je
+    Eintrag 1.94; `update_node` ohne Schreiben → fällt.
 - **Absturz und Plattenfehler an jeder Stelle, für jede Operation über
   mehrere Dateien** (`tests/test_flatgraph_absturz.py`, 04.11.2026): der
   Zähler aus der Umzug-Probe; an der n-ten Aktion stirbt ein Kindprozess
@@ -970,3 +1004,9 @@ Was diesen Vertrag weiterhin unmittelbar betrifft:
    (Abschnitt 3.1); mehrere Prozesse und mehrere Instanzen sind
    ausgeschlossen statt nur ungeschützt (Abschnitt 3.2). Bis 3.0.0 stand
    hier „keine Lücke, sondern eine Entscheidung“ — das war falsch.
+4. **`datenbank/maintenance.log` wächst ohne Grenze und wird angehängt**
+   (gefunden 04.11.2026, Abschnitt 5 „Belastung“). Jeder `purge` und
+   jeder Lauf des Müllsammlers hängt eine Zeile an, mit `open(..., "a")`:
+   an Ort und Stelle, gegen die Regel, dass jede Datei über eine
+   Arbeitsdatei geschrieben wird. Ein Absturz mitten im Anhängen lässt
+   eine halbe Zeile; Daten des Bestands betrifft das nicht. Offen.

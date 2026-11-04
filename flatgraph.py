@@ -270,7 +270,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.5.1"
+__version__ = "4.5.2"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -298,6 +298,14 @@ SPEICHERFORM = 3
 # (400 je Fach: 4 ms je Knoten, 0.51 s kalt). Auf einen 4-KB-Block
 # auszurichten lohnt nicht — Verschnitt entsteht nur im letzten Block.
 FACH_GROESSE = 25
+
+# Wie tief ein Wert verschachtelt sein darf (Listen und Objekte ineinander).
+# Eine feste Zahl, weil die Grenze sonst von der Aufruftiefe abhing: die
+# Pruefung lief weiter oben im Stapel als das Schreiben, und dazwischen lag
+# ein Spalt, in dem create_node ein nacktes RecursionError beim Schreiben
+# warf (gefunden von tests/test_flatgraph_belastung.py). 100 wie MongoDB;
+# weit unter dem, was json mit Einrueckung schafft, auch tief in einer App.
+MAX_VERSCHACHTELUNG = 100
 
 _log = logging.getLogger("flatgraph")
 
@@ -1744,9 +1752,12 @@ class FlatGraphDB:
         liess sich bis zum Neustart nicht mehr schreiben.
         """
         def fehler(pfad, grund):
+            # Bei hundert Ebenen waere der Pfad allein Hunderte Zeichen lang.
+            if len(pfad) > 80:
+                pfad = pfad[:77] + "…"
             return NichtSpeicherbar(f"{wo}: {pfad or 'Wert'} {grund}")
 
-        def gehen(wert, pfad):
+        def gehen(wert, pfad, tiefe=0):
             if isinstance(wert, str):
                 if not _als_utf8_schreibbar(wert):
                     raise fehler(pfad, "laesst sich nicht als UTF-8 schreiben "
@@ -1759,6 +1770,9 @@ class FlatGraphDB:
                     raise fehler(pfad, f"ist {wert!r}; JSON kennt das nicht.")
                 return
             if isinstance(wert, (dict, list)):
+                if tiefe >= MAX_VERSCHACHTELUNG:
+                    raise fehler(pfad, f"ist tiefer als {MAX_VERSCHACHTELUNG} Stufen "
+                                       f"verschachtelt (oder enthaelt sich selbst).")
                 if isinstance(wert, dict):
                     for k, v in wert.items():
                         if not isinstance(k, str):
@@ -1767,10 +1781,10 @@ class FlatGraphDB:
                         if not _als_utf8_schreibbar(k):
                             raise fehler(pfad, f"hat den Schluessel {k!r}, der sich "
                                                f"nicht als UTF-8 schreiben laesst.")
-                        gehen(v, f"{pfad}.{k}" if pfad else k)
+                        gehen(v, f"{pfad}.{k}" if pfad else k, tiefe + 1)
                 else:
                     for i, v in enumerate(wert):
-                        gehen(v, f"{pfad}[{i}]")
+                        gehen(v, f"{pfad}[{i}]", tiefe + 1)
                 return
             raise fehler(pfad, f"ist vom Typ {type(wert).__name__} (Tupel und "
                                f"Mengen wuerden zu Listen oder gar nicht gespeichert).")
