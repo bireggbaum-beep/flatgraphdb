@@ -1,6 +1,9 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.5.3 (Speicherform 3)
+- datenbank/maintenance.log behält die letzten 1000 Einträge (MAX_PROTOKOLL) und wird über eine Arbeitsdatei geschrieben statt angehängt.
+
 4.5.2 (Speicherform 3)
 - Höchstens 100 Ebenen Verschachtelung (MAX_VERSCHACHTELUNG), tiefer wirft NichtSpeicherbar. Vorher hing die Grenze an der Aufruftiefe, und dazwischen warf create_node ein nacktes RecursionError beim Schreiben. Werte mit 101 bis etwa 990 Ebenen, die bisher gingen, werden jetzt abgewiesen.
 

@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.5.2`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.5.3`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -354,7 +354,12 @@ nichts.
 - **Wie der Müllsammler:** unter der Sperre der Instanz, nicht in einer
   Transaktion (`NichtInTransaktion`), keine Meldung über `bei_aenderung`.
   Je entferntem Knoten ein Eintrag `purge` im Audit-Protokoll (mit
-  `audit=True`), eine Zeile in `datenbank/maintenance.log`.
+  `audit=True`), eine Zeile in `datenbank/maintenance.log`. Das Protokoll
+  behält ab `4.5.3` die letzten 1000 Einträge (`MAX_PROTOKOLL`) und wird
+  wie jede Datei über eine Arbeitsdatei geschrieben; bis 4.5.2 wurde
+  angehängt, an Ort und Stelle und ohne Grenze. Kosten: `purge` mit
+  vollem Protokoll 1.69 → 3.77 ms (Median der letzten 100 von 1300,
+  Linux, 04.11.2026), vor allem der zusätzliche `fsync`.
 - **Rückgabe:** `{"ref", "scanned", "edges_removed", "nodes_purged",
   "assets_archived", "assets_kept", "vault_text_removed",
   "faecher_verdichtet"}`.
@@ -813,9 +818,9 @@ zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knot
     11 s): an allen fünf Messpunkten gleich dem Modell. Bei gleich vielen
     Einträgen (300 Knoten, 100–130 Kanten) bleiben Dateizahl, Platz und
     Arbeitsspeicher nach dem Öffnen je Eintrag gleich (letzter / erster
-    Messpunkt 1.00, 1.01, 1.04). **Ausnahme:** `datenbank/maintenance.log`
-    wächst mit jedem `purge` und jedem Lauf des Müllsammlers, hier
-    7.9 → 38 KB, ohne Grenze (Abschnitt 8).
+    Messpunkt 1.00, 1.01, 1.04). `datenbank/maintenance.log` wuchs bis
+    4.5.2 ohne Grenze (hier 7.9 → 38 KB); ab 4.5.3 behält es die letzten
+    1000 Einträge, geprüft mit einer Grenze von 50 über 120 Läufe.
   - Gegenprobe: Transaktion ohne Sperre → „Gemischt“ fällt (Summe 981);
     Grenze 1000 statt 100 → `RecursionError`; ohne Verdichten → Dateien je
     Eintrag 1.94; `update_node` ohne Schreiben → fällt.
@@ -983,30 +988,19 @@ Form 2 (3.0.0) hatte eine Datei je Knoten und eine je Kantenart.
 
 ## 8. Bekannte Schwächen
 
-Vollständig in `docs/archiv/ISSUES_bis_2026-09.md`, „Bestandsaufnahme flatgraph".
+Stand 04.11.2026. Was erledigt ist, steht an seiner Stelle im Vertrag; die
+Geschichte der früheren Punkte in `CHANGELOG.txt`.
 
-Fünf Punkte standen hier in 2.1. Vier davon sind in 2.2 erledigt und
-stehen jetzt an ihrer Stelle im Vertrag: der Adjazenzindex (Abschnitt 5),
-das stille Scheitern und die Fehlertypen (Abschnitt 4), die Formatprüfung
-(Abschnitt 3.3) und die Schemalücke (Abschnitt 4).
-
-Was diesen Vertrag weiterhin unmittelbar betrifft:
-
-1. **Schreiben wächst mit der Sammlung** (Abschnitt 5). Bei jeder
-   Änderung wird die ganze Sammlung neu geschrieben. Das ist der Grund
-   für `transaction()` — und der Grund, warum die nächste Speicherform
-   eine Datei je Knoten sein wird.
-2. **Kanten überleben das weiche Löschen ihrer Knoten** (Abschnitt 2.5).
+1. **Kanten überleben das weiche Löschen ihrer Knoten** (Abschnitt 2.5).
    `create_edge` prüft beim Anlegen; wird ein Knoten SPÄTER weich
    gelöscht, bleiben seine Kanten liegen und werden erst beim Lesen
-   herausgefiltert. Sichtbar wird das nur über `list_edges`.
-3. **Threads, Prozesse, Instanzen:** seit `3.0.0-entwurf` threadsicher
-   (Abschnitt 3.1); mehrere Prozesse und mehrere Instanzen sind
-   ausgeschlossen statt nur ungeschützt (Abschnitt 3.2). Bis 3.0.0 stand
-   hier „keine Lücke, sondern eine Entscheidung“ — das war falsch.
-4. **`datenbank/maintenance.log` wächst ohne Grenze und wird angehängt**
-   (gefunden 04.11.2026, Abschnitt 5 „Belastung“). Jeder `purge` und
-   jeder Lauf des Müllsammlers hängt eine Zeile an, mit `open(..., "a")`:
-   an Ort und Stelle, gegen die Regel, dass jede Datei über eine
-   Arbeitsdatei geschrieben wird. Ein Absturz mitten im Anhängen lässt
-   eine halbe Zeile; Daten des Bestands betrifft das nicht. Offen.
+   herausgefiltert. Sichtbar wird das nur über `list_edges`. Endgültig
+   entfernt werden sie mit `purge` oder dem Müllsammler.
+2. **Keine Prüfsumme** (Abschnitt 5, „Kippbits“). Ein gekipptes Bit, das
+   gültiges JSON mit anderem Inhalt ergibt, bleibt unbemerkt; erkannt
+   werden nur Dateien, die sich nicht lesen lassen oder keine Fächer sind.
+3. **Kein Stromausfall geprüft.** Alle Absturzproben beenden einen
+   Prozess; ob `fsync` den Inhalt wirklich auf die Platte bringt, zeigen
+   sie nicht (Abschnitt 5).
+4. **Alles liegt im Arbeitsspeicher** (Abschnitt 3.4). Gemessen bis
+   100 000 Knoten und 200 000 Kanten; darüber gibt es keine Zahlen.

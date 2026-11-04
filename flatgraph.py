@@ -270,7 +270,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.5.2"
+__version__ = "4.5.3"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -306,6 +306,10 @@ FACH_GROESSE = 25
 # warf (gefunden von tests/test_flatgraph_belastung.py). 100 wie MongoDB;
 # weit unter dem, was json mit Einrueckung schafft, auch tief in einer App.
 MAX_VERSCHACHTELUNG = 100
+
+# Wie viele Eintraege datenbank/maintenance.log behaelt. Je Eintrag etwa
+# 230 Bytes, also hoechstens etwa 230 KB, die jeder purge neu schreibt.
+MAX_PROTOKOLL = 1000
 
 _log = logging.getLogger("flatgraph")
 
@@ -3453,12 +3457,31 @@ class FlatGraphDB:
         return asset_status
 
     def _write_maintenance_log(self, stats):
-        """Append an entry to the maintenance log."""
+        """Einen Eintrag ins Wartungsprotokoll; es behaelt die letzten
+        `MAX_PROTOKOLL` Eintraege.
+
+        Bis 4.5.2 wurde mit "a" angehaengt: an Ort und Stelle, gegen die
+        Regel, dass jede Datei ueber eine Arbeitsdatei geschrieben wird (ein
+        Absturz liess eine halbe Zeile), und ohne Grenze — jeder purge eine
+        Zeile mehr, ueber Jahre. Jetzt ganz neu, ueber Arbeitsdatei, fsync
+        und os.replace. Eine halbe Zeile von frueher wird mitgelesen, nicht
+        abgewiesen: das Protokoll ist kein Teil des Bestands.
+        """
         log_path = os.path.join(self.root, "datenbank", "maintenance.log")
         timestamp = datetime.now(timezone.utc).isoformat()
-        line = f"[{timestamp}] {json.dumps(stats, ensure_ascii=False)}\n"
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(line)
+        zeilen = []
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                zeilen = f.read().splitlines()
+        zeilen.append(f"[{timestamp}] {json.dumps(stats, ensure_ascii=False)}")
+        zeilen = zeilen[-MAX_PROTOKOLL:]
+        arbeit = log_path + ".tmp"
+        with open(arbeit, "w", encoding="utf-8") as f:
+            f.write("\n".join(zeilen) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(arbeit, log_path)
+        self._verzeichnis_sichern(os.path.dirname(log_path))
 
 
 # =============================================================================

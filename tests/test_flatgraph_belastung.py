@@ -210,6 +210,30 @@ def viele_sammlungen(n):
     return ok, dauer
 
 
+def protokoll_begrenzt(grenze=50, laeufe=120):
+    """maintenance.log behält die letzten `grenze` Einträge, der neueste
+    zuletzt, und keine Arbeitsdatei bleibt liegen."""
+    alt = getattr(fg, "MAX_PROTOKOLL", None)
+    if alt is not None:
+        fg.MAX_PROTOKOLL = grenze
+    try:
+        db = frisch()
+        with db.transaction():
+            for i in range(laeufe):
+                db.create_node("a", f"a{i}", {})
+        for i in range(laeufe):
+            db.soft_delete("a", f"a{i}")
+            db.purge("a", f"a{i}")
+        pfad = os.path.join(db.root, "datenbank", "maintenance.log")
+        zeilen = open(pfad, encoding="utf-8").read().splitlines()
+        rest = [f for f in os.listdir(os.path.dirname(pfad)) if f.endswith(".tmp")]
+        db.close()
+        return len(zeilen), f'"a/a{laeufe - 1}"' in zeilen[-1], rest
+    finally:
+        if alt is not None:
+            fg.MAX_PROTOKOLL = alt
+
+
 # ======================================================================
 # 9. Dauerlauf
 # ======================================================================
@@ -343,6 +367,10 @@ if __name__ == "__main__":
           ok, f"get_connected {dauer * 1000:.1f} ms")
     ok, dauer = viele_sammlungen(2000)
     check("2000 Sammlungen: nach dem Neustart alle da", ok, f"Öffnen {dauer:.2f} s")
+
+    zeilen, neuester, rest = protokoll_begrenzt()
+    check("maintenance.log behält nur die letzten Einträge (Grenze 50, 120 Läufe), der neueste zuletzt",
+          zeilen == 50 and neuester and not rest, f"{zeilen} Zeilen, Reste: {rest}")
 
     print("--- 9. Dauerlauf ---")
     t = time.perf_counter()
