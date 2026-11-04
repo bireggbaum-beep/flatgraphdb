@@ -1,6 +1,6 @@
 # flatgraph — was diese Bibliothek zusagt und was nicht
 
-Gilt für `4.5.0`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
+Gilt für `4.5.1`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
 soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
 
@@ -213,6 +213,16 @@ Knoten und Protokoll, und die gehen jetzt gemeinsam über die
 Absichtsdatei: `update_node` 4.17 → 5.11 ms (Median aus 5 × 200).
 Festgenagelt in `tests/test_flatgraph_robustheit.py`, „Platte voll bei …“.
 
+**`purge` und der Müllsammler** laufen nicht in einer Transaktion und haben
+kein Undo-Log. Scheitert einer ihrer Schritte, liest die Instanz ab `4.5.1`
+den Bestand neu von der Platte: danach gilt, was dort steht, auch wenn
+der Schritt nur halb geschafft ist (zugesagt ist dann 2.4 und 2.9). Bis
+4.5.0 zeigte der Speicher nach einem gescheiterten Schritt Kanten und
+Knoten schon entfernt, die auf der Platte noch standen. Das Neulesen
+kostet so viel wie Öffnen, aber nur im Fehlerfall; die Vorprüfungen
+(`KnotenFehlt`, `NichtImPapierkorb`, `NichtInTransaktion`) lösen es nicht
+aus. Festgenagelt in `tests/test_flatgraph_absturz.py`.
+
 Die Prüfung kostet 7 µs je Knoten mit 500 Bytes (40 µs bei 6 kB), unter
 1 % eines Schreibvorgangs. Festgenagelt in
 `tests/test_flatgraph_haertung.py`; gegen 3.0.0 fallen dort 34 von 47
@@ -324,7 +334,13 @@ nichts.
   Fassungen von Texten (Waisen) räumt weiter nur der Müllsammler ab —
   `purge` räumt nicht bestandsweit auf.
 - **Ablauf:** Kanten der Entfernten weg, Nummern merken (Abschnitt 7),
-  Knoten von der Platte, dann ihre Texte, dann dünne Fächer verdichten.
+  Knoten von der Platte — ab `4.5.1` alle Sammlungen in einem Schritt
+  über die Absichtsdatei —, dann ihre Texte, dann dünne Fächer verdichten.
+  Bis 4.5.0 ging das Sammlung für Sammlung: brach es dazwischen ab, war
+  der Ausgangsknoten weg, ein Mitgelöschter aus einer anderen Sammlung
+  noch im Papierkorb, und ein zweiter `purge` fand den Ausgangsknoten
+  nicht mehr. Kosten: `purge` mit einem Mitgelöschten in einer zweiten
+  Sammlung 2.96 → 4.03 ms (Median aus 5 × 50, Linux, 04.11.2026).
   Fehlt nach einem Abbruch etwas, zeigt höchstens eine Datei auf nichts
   mehr — nie ein Knoten auf eine fehlende Datei.
 - **Wie der Müllsammler:** unter der Sperre der Instanz, nicht in einer
@@ -769,6 +785,36 @@ allen 3 Seeds. Ein `fsync`, das fehlt, fällt hier nicht (siehe Grenze).
 Seitencache des Kernels bleibt erhalten. Ob `fsync` auf der Platte wirkt,
 zeigt das nicht. Ebenso nicht geprüft: Windows und Bestände über 100 000 Knoten.
 
+- **Absturz und Plattenfehler an jeder Stelle, für jede Operation über
+  mehrere Dateien** (`tests/test_flatgraph_absturz.py`, 04.11.2026): der
+  Zähler aus der Umzug-Probe; an der n-ten Aktion stirbt ein Kindprozess
+  (`os._exit`) oder wirft eine Aktion `OSError(EIO)` im selben Prozess.
+  Unteilbar müssen danach genau „vorher“ oder „nachher“ zeigen (hing eine
+  Absicht: „nachher“); aufräumend (`purge`, Müllsammler) dürfen halb
+  fertig sein, aber nichts ausserhalb der Löschmenge ändert sich, ein
+  Knoten der Löschmenge ist ganz da oder ganz weg, keine Kante zeigt auf
+  einen fehlenden Knoten, kein Knoten auf einen fehlenden langen Text,
+  `next_id` vergibt keine entfernte Nummer neu, und ein zweiter Lauf
+  bringt es zu Ende. Nach einem Plattenfehler muss der Speicher der
+  Platte gleichen.
+
+  | Operation | Schritte | Absturz | Plattenfehler |
+  |---|---|---|---|
+  | Transaktion über drei Fächer | 30 | 0 Abweichungen; Doppelabsturz im Nachholen: 169 Läufe, 0 | 0 |
+  | `soft_delete` mit Kaskade über zwei Sammlungen | 23 | 0 | 0 |
+  | `restore_node` mit Kaskade | 23 | 0 | 0 |
+  | Lange Texte in einer Transaktion | 35 | 0 | 0 |
+  | `purge` mit Kaskade | 27 | bis 4.5.0: 6 (zweiter Lauf fand den Ausgangsknoten nicht) | bis 4.5.0: 13 (Speicher ≠ Platte) |
+  | Müllsammler mit Verdichten | 66 | 0 | bis 4.5.0: 27 (Speicher ≠ Platte) |
+
+  Ab `4.5.1` alle 0. Gegenprobe: ohne das Neulesen fallen die
+  Plattenfehler bei `purge` und Müllsammler; `purge` wieder Sammlung für
+  Sammlung → Absturz bei `purge` fällt; Transaktion fachweise ohne
+  Absicht → zehn Prüfungen fallen; nur das erste Fach geschrieben →
+  „Ungestört“ fällt (der Sollwert „nachher“ stammt vom Prüfling selbst,
+  deshalb muss nach dem ungestörten Lauf die Platte dem Speicher
+  gleichen). Nicht geprüft: Import (der Vertrag sagt dazu nichts) und
+  Anhänge in `vault/` beim Archivieren.
 - **Absturz an jeder Stelle des Umzugs** (31.10.2026): das Kind zählt jede
   Aktion, die das Dateisystem ändert (schreibend öffnen, umbenennen,
   löschen, Verzeichnis anlegen und entfernen, `fsync`) und stirbt mit

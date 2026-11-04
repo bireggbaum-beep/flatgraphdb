@@ -270,7 +270,7 @@ class SpeicherformZuNeu(FlatGraphFehler):
         )
 
 
-__version__ = "4.5.0"
+__version__ = "4.5.1"
 __grundlage__ = "2.2.0, Uebernahme vom 19.09.2026"
 
 # Fassung der SPEICHERFORM, getrennt von der der Bibliothek. Sie aendert
@@ -3096,9 +3096,8 @@ class FlatGraphDB:
             print(f"[GC] {stats['assets_archived']} asset(s) archived, {stats['assets_kept']} kept.")
 
         # Die geloeschten Knoten von der Platte nehmen
-        purged_collections = {col for col, _, _ in to_delete}
-        for col in purged_collections:
-            self._persist_collection_full(col)
+        self._als_ein_plan(lambda: [self._persist_collection_full(col)
+                                    for col in sorted({c for c, _, _ in to_delete})])
 
         # Die Luecken, die das Loeschen gerade gerissen hat, wieder schliessen.
         stats["faecher_verdichtet"] = self._verdichten()
@@ -3175,8 +3174,13 @@ class FlatGraphDB:
             elif archiviert is False:
                 stats["assets_kept"] += 1
             self._log_audit("purge", col, nid)
-        for col in je_sammlung:
-            self._persist_collection_full(col)
+        # Alle Sammlungen als EIN Plan, ueber die Absichtsdatei. Sammlung fuer
+        # Sammlung war der Ausgangsknoten nach einem Abbruch schon weg, ein
+        # Mitgeloeschter aus einer anderen Sammlung noch im Papierkorb — und
+        # ein zweiter purge fand den Ausgangsknoten nicht mehr (VERTRAG 2.4:
+        # „neu starten, ohne Schaden“). Gefunden von test_flatgraph_absturz.py.
+        self._als_ein_plan(lambda: [self._persist_collection_full(col)
+                                    for col in sorted(je_sammlung)])
 
         # Erst wenn die Knoten von der Platte sind: bricht es vorher ab, zeigt
         # kein Knoten auf eine fehlende Datei. Nicht _collect_vault_text_orphans
@@ -3196,6 +3200,41 @@ class FlatGraphDB:
                   f"{stats['edges_removed']} edge(s) removed.")
         self._write_maintenance_log(stats)
         return stats
+
+    def _als_ein_plan(self, schreiben):
+        """Was `schreiben` an Faechern schreibt, als ein Plan ausfuehren: mehr
+        als ein Fach geht ueber die Absichtsdatei, ganz oder gar nicht."""
+        self._plan = []
+        try:
+            schreiben()
+            plan = self._plan
+        finally:
+            self._plan = None
+        self._schritte_ausfuehren(plan)
+
+    def _platte_gilt(self):
+        """Nach einem Fehler mitten in der Wartung: den Speicher von der Platte
+        neu lesen.
+
+        `purge` und der Muellsammler aendern erst den Speicher und schreiben
+        dann, in mehreren Schritten und ohne Undo-Log (sie laufen nicht in
+        einer Transaktion). Scheiterte ein Schritt, zeigte der Speicher schon
+        den neuen Stand, die Platte noch den alten (VERTRAG 2.6). Neu lesen
+        kostet so viel wie Oeffnen, aber nur im Fehlerfall. Stand schon eine
+        Absicht, wird sie vorher nachgeholt; scheitert auch das, bleibt sie
+        haengen und der naechste Schreibvorgang holt sie nach.
+        """
+        self._cache = {"nodes": {}, "edges": {}}
+        self._edge_type_index, self._out_index, self._in_index = {}, {}, {}
+        self._index_cache, self._dirty_nodes, self._dirty_edges = {}, {}, {}
+        self._purged_nodes, self._plan, self._undo = {}, None, None
+        self._nummern = self._load_json_from_disk(self._nummern_datei())
+        try:
+            self._absicht_nachholen()
+            self._absicht_haengt = False
+        except OSError:
+            self._absicht_haengt = True
+        self._initialize_cache()
 
     def _vault_text_verweise(self, knoten):
         """Die vault_text-Dateien, auf die diese Knoten zeigen, als
@@ -3456,6 +3495,29 @@ def _unteilbar(methode):
 
 for _name in ("create_node", "update_node", "create_edge", "delete_edge", "reverse_edge"):
     setattr(FlatGraphDB, _name, _unteilbar(vars(FlatGraphDB)[_name]))
+
+
+def _platte_gilt_bei_fehler(methode):
+    """Scheitert die Wartung mittendrin, gilt die Platte (siehe `_platte_gilt`).
+
+    Die Pruefungen vorher (Knoten fehlt, nicht im Papierkorb, in einer
+    Transaktion, geschlossen) aendern nichts; nach ihnen wird nicht neu
+    gelesen — ein vertippter Aufruf soll nicht so viel kosten wie Oeffnen.
+    """
+    @functools.wraps(methode)
+    def mit_rueckfall(self, *args, **kwargs):
+        try:
+            return methode(self, *args, **kwargs)
+        except (KnotenFehlt, NichtImPapierkorb, NichtInTransaktion, BestandGeschlossen):
+            raise
+        except BaseException:
+            self._platte_gilt()
+            raise
+    return mit_rueckfall
+
+
+for _name in ("purge", "run_garbage_collection"):
+    setattr(FlatGraphDB, _name, _platte_gilt_bei_fehler(vars(FlatGraphDB)[_name]))
 
 
 for _name, _methode in list(vars(FlatGraphDB).items()):

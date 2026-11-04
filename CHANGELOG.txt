@@ -1,6 +1,10 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 "pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
 
+4.5.1 (Speicherform 3)
+- purge entfernt die Knoten aller betroffenen Sammlungen in einem Schritt über die Absichtsdatei: ein Abbruch liess sonst Mitgelöschte im Papierkorb, die kein zweiter purge mehr erreichte.
+- purge und run_garbage_collection lesen nach einem gescheiterten Schritt den Bestand neu von der Platte; vorher zeigte der Speicher Entferntes, das auf der Platte noch stand.
+
 4.5.0 (Speicherform 3)
 - topological_sort(rel_type, direction, sammlung): Reihenfolge entlang einer Kantenart, stufenweise [[ref]]; Kreis wirft ZyklusGefunden (auch ValueError, .zyklen). detect_cycles(rel_type, sammlung) meldet Kreise als Liste. Ungerichtete Kanten: ValueError. (Issue #38) pDMS: keine.
 
