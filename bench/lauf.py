@@ -1,5 +1,5 @@
 """
-Leistungsmessung für flatgraph — ohne pDMS, nur Standardbibliothek.
+Leistungsmessung für flatgraph — allein, nur Standardbibliothek.
 
     python bench/lauf.py                    alle Blöcke
     python bench/lauf.py lesen              nur einen Block

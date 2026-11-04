@@ -1,6 +1,6 @@
 """
 next_id vergibt eine Nummer nicht noch einmal, auch nicht nach dem
-endgültigen Löschen der höchsten (Issue #37).
+endgültigen Löschen der höchsten.
 
     python tests/test_flatgraph_nummern.py
     FLATGRAPH_DATEI=/pfad/zu/flatgraph.py python tests/test_flatgraph_nummern.py

@@ -2,7 +2,7 @@
 `purge(sammlung, kennung)`: einen Knoten aus dem Papierkorb endgültig
 entfernen, mit genau seiner Kaskade — sonst nichts.
 
-Anlass: In partAtlas rief „Papierkorb leeren“ den Müllsammler auf. Der
+Anlass: In einer Anwendung rief „Papierkorb leeren“ den Müllsammler auf. Der
 entfernt ALLES Gelöschte im Bestand, auch entfernte Ordner und Baugruppen,
 an die beim Klick niemand dachte. Gezielt zurückholen konnte flatgraph
 (`restore_node`), gezielt endgültig entfernen nicht.
@@ -18,8 +18,6 @@ Zugesagt und hier geprüft:
 
 Gegenprobe: gegen 4.0.0 fällt diese Suite (es gibt kein `purge`); jede
 Eigenschaft einzeln an einer mutierten Kopie.
-
-Importiert `pdms` nicht.
 """
 import json
 import os

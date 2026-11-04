@@ -21,13 +21,11 @@ Nachgewiesen am 24.09.2026 an 3.0.0-entwurf:
     (Speicherform 2; seit den Fächern ist eine Kennung kein Dateiname mehr)
     im Speicher
 
-Gegen `flatgraph/flatgraph.py` (3.0.0) laufen gelassen, fällt diese Suite —
+Gegen die Fassung 3.0.0 laufen gelassen, fällt diese Suite —
 das ist ihre Gegenprobe:
 
     python tests/test_flatgraph_haertung.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_haertung.py
-
-Importiert `pdms` nicht.
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_haertung.py
 """
 import datetime
 import os

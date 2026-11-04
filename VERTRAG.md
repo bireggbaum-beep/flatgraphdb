@@ -2,7 +2,7 @@
 
 Gilt für `4.5.3`, soweit nicht anders vermerkt. **Beschrieben ist das heutige Verhalten, auch wo es schlecht
 ist** — ein Vertrag, der Absichten beschreibt, ist keiner. Was sich ändern
-soll, steht unter „Bekannte Schwächen" und in den GitHub-Issues des pDMS-Repos.
+soll, steht unter „Bekannte Schwächen“ und in den Issues dieses Repos.
 
 Alles hier ist **nachgemessen**, nicht aus dem Code gelesen. Die
 Messungen stammen vom 17.09.2026.
@@ -56,10 +56,6 @@ alten Knoten, und `DOC.1` und `DOC_1` teilten sich eine Datei. Geprüft in
 > jeder Datei ist gesichert, dass der neue Name nach einem Stromausfall
 > gilt, aber nicht. Das ist nicht geprüft.
 
-> **Einschränkung:** Diese Zusage gilt in der Basislinie und in der
-> Arbeitsfassung, **nicht in Version 1**. Sie ist eine örtliche Abweichung
-> (siehe `HERKUNFT.md`) und muss beim Zusammenführen nach oben.
-
 ### 2.3 Eine Transaktion ist alles oder nichts
 
 `transaction()` puffert Schreibvorgänge im Speicher und schreibt sie
@@ -85,7 +81,7 @@ ein `RuntimeError`). Er verschiebt Anhänge und schreibt sofort; ein
 Rollback könnte das nie zurücknehmen.
 
 **Ab `3.0.0-entwurf` gilt „alles oder nichts“ auch auf der Platte**
-(Absichtsdatei, Issue #32). Bis dahin wurde beim Verlassen Fach für Fach
+(Absichtsdatei). Bis dahin wurde beim Verlassen Fach für Fach
 geschrieben; ein Absturz, ein Stromausfall oder eine volle Platte
 dazwischen liess die Transaktion halb ausgeführt zurück — gezeigt an einer
 Umbuchung von 100 zwischen zwei Knoten, nach dem Neustart waren beide 0.
@@ -122,7 +118,7 @@ und `list_nodes`, bleibt aber lesbar über `get_node_raw`. Erst `purge`
 endgültig, und beides darf jederzeit abbrechen und neu starten, ohne
 Schaden anzurichten.
 
-**Kaskade (ab `3.0.0-entwurf`, Issue #34).** Eine Kante mit
+**Kaskade (ab `3.0.0-entwurf`).** Eine Kante mit
 `cascade_delete=True` nimmt ihr Ziel mit, über beliebig viele Stufen, nur
 in Richtung Quelle → Ziel. Im Normalfall ist das **aus**.
 
@@ -208,7 +204,7 @@ das Schreiben, widersprachen sich beide — nachgewiesen:
 | Sammlung `../../x` | Verzeichnis ausserhalb von `datenbank/` angelegt |
 
 **Auch ein Scheitern beim Schreiben selbst lässt den Speicher beim alten
-Stand** (ab `4.4.1`, Issue #39). Bis dahin galt das nur für eine
+Stand** (ab `4.4.1`). Bis dahin galt das nur für eine
 Transaktion, `soft_delete` und `restore_node`. `create_node`,
 `update_node`, `create_edge`, `delete_edge` und `reverse_edge` änderten
 erst den Speicher und schrieben dann; scheiterte `fsync` mit `ENOSPC`, kam
@@ -322,7 +318,7 @@ nichts.
 
 - **Der Weg für Anwendungen.** `run_garbage_collection` räumt den ganzen
   Papierkorb des Bestands auf einmal ab und ist für die Wartung gedacht.
-  Anlass: in partAtlas rief „Papierkorb leeren“ den Müllsammler auf und
+  Anlass: in einer Anwendung rief „Papierkorb leeren“ den Müllsammler auf und
   nahm damit auch entfernte Ordner, Baugruppen und Drucke mit, an die beim
   Klick niemand dachte.
 - **Nur aus dem Papierkorb.** Ein lebender Knoten wird mit
@@ -366,6 +362,93 @@ nichts.
 
 Geprüft in `tests/test_flatgraph_purge.py`.
 
+### 2.10 Eine Kante umdrehen: `reverse_edge`
+
+Ab `4.3.0`. `reverse_edge(edge_id)` tauscht Quelle und Ziel einer
+gerichteten Kante und gibt die Kennung zurück. **Kennung, `created_at` und
+Meta bleiben** — löschen und neu anlegen verlöre die Kennung und stempelte
+ein neues Datum. Index, Platte und Transaktion (Rollback stellt die alte
+Richtung her) verhalten sich wie bei `create_edge`/`delete_edge`; gemeldet
+wird `reverse_edge` mit der neuen Quelle und dem neuen Ziel.
+
+Abgewiesen mit `ValueError`, die Kante bleibt unverändert:
+
+- **ungerichtete Kante** — es gibt nichts zu drehen,
+- **Kante mit Kaskadenlöschen** — danach hinge die Quelle am Ziel, und ein
+  Löschen risse die falsche Seite mit,
+- **ein Paar, das `edge_constraints` nicht erlaubt.**
+
+Eine fehlende Kante wirft `KanteFehlt`. Dass die Kante gedreht wurde, steht
+nur in der Meldung, nicht an der Kante selbst.
+
+Geprüft in `tests/test_flatgraph_kante_drehen.py`.
+
+### 2.11 Kürzester Weg: `find_path`
+
+Ab `4.4.0`. `find_path(start, ziel, rel_type=None, direction="out",
+max_depth=None, kantenfilter=None)` sucht den Weg mit den wenigsten
+Sprüngen (Breitensuche, **ungewichtet**) und nimmt dieselben Parameter wie
+`traverse`, einschließlich `direction="both"` und ungerichteter Kanten.
+
+- **Rückgabe:** `[(knoten, kanten_id), …]`, beginnend mit `(start, None)`;
+  `kanten_id` ist die Kante, über die man zu diesem Knoten kam. Ohne Weg
+  (auch innerhalb von `max_depth`) `None`. Start gleich Ziel ist
+  `[(start, None)]`.
+- **Mehrere gleich kurze Wege:** Welcher zurückkommt, ist nicht zugesagt.
+- **Fehlender oder weich gelöschter Start oder Ziel:** `KnotenFehlt`. Ein
+  vertippter Verweis soll nicht wie „kein Weg“ aussehen. Weich gelöschte
+  Knoten liegen nie auf dem Weg.
+- **Kosten:** wie `traverse`, höchstens alle Knoten und Kanten, die ab dem
+  Start erreichbar sind. Gemessen ist das nicht.
+
+Geprüft in `tests/test_flatgraph_weg.py`.
+
+### 2.12 Reihenfolge und Kreise: `topological_sort`, `detect_cycles`
+
+Ab `4.5.0`. Beide arbeiten auf **einer** Kantenart
+(`rel_type` ist Pflicht): über alle Kantenarten zugleich ergäbe eine
+Reihenfolge keinen Sinn. Lesemethoden, die Speicherform bleibt.
+
+`topological_sort(rel_type, direction="out", sammlung=None)` gibt die
+Reihenfolge **stufenweise** zurück (Kahn): `[[ref, …], …]`. Eine Stufe
+hängt nur von früheren ab; was in derselben Stufe steht, kann parallel
+laufen. Jede Stufe ist sortiert, das Ergebnis bei gleichem Bestand also
+gleich. `direction="out"`: die Quelle kommt vor dem Ziel; `"in"`
+umgekehrt, für Arten wie „folgt auf“, die vom Späteren zum Früheren
+zeigen. `traverse` taugt dafür nicht: es sortiert nach Abstand vom Start,
+und bei A→B→D, A→C→E→D käme D vor E.
+
+`detect_cycles(rel_type, sammlung=None)` **meldet**, statt zu werfen (wie
+`schema_verstoesse`): eine Liste der Kreise, jeder als sortierte Liste
+aller Knoten, die gegenseitig voneinander erreichbar sind. Leer, wenn es
+keinen gibt.
+
+- **Kreis bei `topological_sort`:** `ZyklusGefunden` (auch ein
+  `ValueError`); `.zyklen` nennt dieselben Knoten wie `detect_cycles`.
+- **Eine Kante auf sich selbst** ist ein Kreis aus einem Knoten.
+- **Ungerichtete Kanten** in der Kantenart: `ValueError`. Sie haben kein
+  Vorher und Nachher; sie als Kreis zu melden wäre so falsch wie sie zu
+  übergehen.
+- **Weich gelöschte Knoten** zählen nicht, ihre Kanten auch nicht. Ein
+  gelöschter Knoten kann also einen Kreis brechen.
+- **`sammlung`:** nur Kanten zwischen Knoten dieser Sammlung; deren Knoten
+  ohne Kante stehen in der ersten Stufe. Ohne `sammlung` gehören nur
+  Knoten dazu, die eine Kante dieser Art haben.
+- **Unbekannte Kantenart:** `[]` von beiden, kein Fehler (wie `traverse`).
+- **Kosten**, nachgemessen (Linux, 01.11.2026, Median aus 5, je Knoten
+  zwei Kanten auf frühere Knoten): 2000 Knoten `topological_sort` 5 ms,
+  `detect_cycles` 6 ms; 20 000 Knoten 88 ms und 95 ms. Linear in Knoten
+  plus Kanten der Kantenart. Ohne Rekursion: ein Kreis über 5000 Knoten
+  wird gefunden.
+
+Kreise beim Anlegen verhindern (`create_edge` weist eine Kante ab, die
+einen Kreis schlösse) ist **nicht** zugesagt; das wäre eine
+Vertragsausweitung und ein eigenes Issue.
+
+Geprüft in `tests/test_flatgraph_reihenfolge.py`.
+
+---
+
 ## 3. Was ausdrücklich NICHT zugesagt wird
 
 ### 3.1 Threadsicherheit — ab `3.0.0-entwurf` zugesagt
@@ -387,7 +470,7 @@ Millisekunden dauern, fällt es nicht ins Gewicht.
 
 Bis 3.0.0 stand hier „KEINE Threadsicherheit“, und in Abschnitt 8 „keine
 Lücke, sondern eine Entscheidung“. Das war aus Sicht eines einzelnen
-Anwenders geurteilt, der selbst serialisierte (pDMS, nach einem Lasttest
+Anwenders geurteilt, der selbst serialisierte (nach einem Lasttest
 mit 1195 Fehlern, darunter halb geschriebenes JSON, am 09.09.2026). Für
 eine Bibliothek, die man ohne dieses Wissen einsetzt, ist lautloser
 Datenverlust keine vertretbare Voreinstellung. Geprüft in
@@ -470,98 +553,12 @@ durch die Namenslänge des Dateisystems begrenzt.
 > beim Umbau auf „eine Datei je Knoten" aufgefallen und war der Grund, ihn
 > zurückzunehmen.
 
-### 3.4 Keine Aussage über sehr grosse Bestände
+### 3.5 Keine Aussage über sehr grosse Bestände
 
-Alles liegt im Arbeitsspeicher. Es gibt keine gemessene Obergrenze; die
+Alles liegt im Arbeitsspeicher. Es gibt keine Obergrenze im Code; die
 Kosten in Abschnitt 5 wachsen linear und werden irgendwann untragbar,
-bevor der Speicher knapp wird.
-
-### 2.10 Eine Kante umdrehen: `reverse_edge`
-
-Ab `4.3.0`. `reverse_edge(edge_id)` tauscht Quelle und Ziel einer
-gerichteten Kante und gibt die Kennung zurück. **Kennung, `created_at` und
-Meta bleiben** — löschen und neu anlegen verlöre die Kennung und stempelte
-ein neues Datum. Index, Platte und Transaktion (Rollback stellt die alte
-Richtung her) verhalten sich wie bei `create_edge`/`delete_edge`; gemeldet
-wird `reverse_edge` mit der neuen Quelle und dem neuen Ziel.
-
-Abgewiesen mit `ValueError`, die Kante bleibt unverändert:
-
-- **ungerichtete Kante** — es gibt nichts zu drehen,
-- **Kante mit Kaskadenlöschen** — danach hinge die Quelle am Ziel, und ein
-  Löschen risse die falsche Seite mit,
-- **ein Paar, das `edge_constraints` nicht erlaubt.**
-
-Eine fehlende Kante wirft `KanteFehlt`. Dass die Kante gedreht wurde, steht
-nur in der Meldung, nicht an der Kante selbst.
-
-Geprüft in `tests/test_flatgraph_kante_drehen.py`.
-
-### 2.11 Kürzester Weg: `find_path`
-
-Ab `4.4.0`. `find_path(start, ziel, rel_type=None, direction="out",
-max_depth=None, kantenfilter=None)` sucht den Weg mit den wenigsten
-Sprüngen (Breitensuche, **ungewichtet**) und nimmt dieselben Parameter wie
-`traverse`, einschließlich `direction="both"` und ungerichteter Kanten.
-
-- **Rückgabe:** `[(knoten, kanten_id), …]`, beginnend mit `(start, None)`;
-  `kanten_id` ist die Kante, über die man zu diesem Knoten kam. Ohne Weg
-  (auch innerhalb von `max_depth`) `None`. Start gleich Ziel ist
-  `[(start, None)]`.
-- **Mehrere gleich kurze Wege:** Welcher zurückkommt, ist nicht zugesagt.
-- **Fehlender oder weich gelöschter Start oder Ziel:** `KnotenFehlt`. Ein
-  vertippter Verweis soll nicht wie „kein Weg“ aussehen. Weich gelöschte
-  Knoten liegen nie auf dem Weg.
-- **Kosten:** wie `traverse`, höchstens alle Knoten und Kanten, die ab dem
-  Start erreichbar sind. Gemessen ist das nicht.
-
-Geprüft in `tests/test_flatgraph_weg.py`.
-
-### 2.12 Reihenfolge und Kreise: `topological_sort`, `detect_cycles`
-
-Ab `4.5.0` (Issue #38). Beide arbeiten auf **einer** Kantenart
-(`rel_type` ist Pflicht): über alle Kantenarten zugleich ergäbe eine
-Reihenfolge keinen Sinn. Lesemethoden, die Speicherform bleibt.
-
-`topological_sort(rel_type, direction="out", sammlung=None)` gibt die
-Reihenfolge **stufenweise** zurück (Kahn): `[[ref, …], …]`. Eine Stufe
-hängt nur von früheren ab; was in derselben Stufe steht, kann parallel
-laufen. Jede Stufe ist sortiert, das Ergebnis bei gleichem Bestand also
-gleich. `direction="out"`: die Quelle kommt vor dem Ziel; `"in"`
-umgekehrt, für Arten wie „folgt auf“, die vom Späteren zum Früheren
-zeigen. `traverse` taugt dafür nicht: es sortiert nach Abstand vom Start,
-und bei A→B→D, A→C→E→D käme D vor E.
-
-`detect_cycles(rel_type, sammlung=None)` **meldet**, statt zu werfen (wie
-`schema_verstoesse`): eine Liste der Kreise, jeder als sortierte Liste
-aller Knoten, die gegenseitig voneinander erreichbar sind. Leer, wenn es
-keinen gibt.
-
-- **Kreis bei `topological_sort`:** `ZyklusGefunden` (auch ein
-  `ValueError`); `.zyklen` nennt dieselben Knoten wie `detect_cycles`.
-- **Eine Kante auf sich selbst** ist ein Kreis aus einem Knoten.
-- **Ungerichtete Kanten** in der Kantenart: `ValueError`. Sie haben kein
-  Vorher und Nachher; sie als Kreis zu melden wäre so falsch wie sie zu
-  übergehen.
-- **Weich gelöschte Knoten** zählen nicht, ihre Kanten auch nicht. Ein
-  gelöschter Knoten kann also einen Kreis brechen.
-- **`sammlung`:** nur Kanten zwischen Knoten dieser Sammlung; deren Knoten
-  ohne Kante stehen in der ersten Stufe. Ohne `sammlung` gehören nur
-  Knoten dazu, die eine Kante dieser Art haben.
-- **Unbekannte Kantenart:** `[]` von beiden, kein Fehler (wie `traverse`).
-- **Kosten**, nachgemessen (Linux, 01.11.2026, Median aus 5, je Knoten
-  zwei Kanten auf frühere Knoten): 2000 Knoten `topological_sort` 5 ms,
-  `detect_cycles` 6 ms; 20 000 Knoten 88 ms und 95 ms. Linear in Knoten
-  plus Kanten der Kantenart. Ohne Rekursion: ein Kreis über 5000 Knoten
-  wird gefunden.
-
-Kreise beim Anlegen verhindern (`create_edge` weist eine Kante ab, die
-einen Kreis schlösse) ist **nicht** zugesagt; das wäre eine
-Vertragsausweitung und ein eigenes Issue.
-
-Geprüft in `tests/test_flatgraph_reihenfolge.py`.
-
----
+bevor der Speicher knapp wird. Gemessen ist bis 100 000 Knoten und
+200 000 Kanten (Abschnitt 5, „Grosser Bestand“: Öffnen 5.6 s, 588 MB).
 
 ## 4. Verhalten im Fehlerfall
 
@@ -627,7 +624,7 @@ Bis 2.1 gaben `update_node`, `soft_delete`, `restore_node` und
 `delete_edge` bei einem fehlenden Ziel **`False`** zurück. Ein
 Schreibvorgang, der ins Leere ging, meldete sich also mit einem
 Rückgabewert, den Aufrufer routinemässig ignorieren — nachgezählt in
-pDMS: **22 Aufrufstellen, keine einzige liest ihn**. Eine vertippte
+einer Anwendung: **22 Aufrufstellen, keine einzige liest ihn**. Eine vertippte
 Kennung hiess damit: nichts passiert, niemand merkt es.
 
 Ebenso lieferte `get_node` bei einer Referenz ohne `/` schlicht `None` —
@@ -887,11 +884,11 @@ Sammlungsordner eine Datei `fach_<Zahl>.json` hat, gilt als Form 3.
 `update_node`, `create_edge`, `delete_edge`, `soft_delete`,
 `restore_node`, `reverse_edge`): der Fehler kommt an, Speicher und Platte
 bleiben beim alten Stand. Bis 4.4.0 blieb bei fünf dieser sieben Wege der
-Speicher beim neuen Stand (Issue #39, behoben in 4.4.1, siehe 2.6).
+Speicher beim neuen Stand (behoben in 4.4.1, siehe 2.6).
 
 ## 6. Die Form auf der Platte
 
-Speicherform 3 (ab `3.0.0-entwurf`, Issue #32):
+Speicherform 3 (ab `3.0.0-entwurf`):
 
     wurzel/
       datenbank/
@@ -941,7 +938,7 @@ umgezogenen Bestand mit `SpeicherformZuNeu`.
 **Der Feldindex liegt ab `3.0.0-entwurf` nicht mehr auf der Platte.** Bis
 3.0.0 stand er unter `datenbank/index/`, gesichert durch eine Prüfsumme
 über den Inhalt jedes Knotens. Diese Prüfung kostete bei 10 000 Knoten
-76 ms, der Neuaufbau aus dem Speicher 3.6 ms (flatgraph/bench, Block 6).
+76 ms, der Neuaufbau aus dem Speicher 3.6 ms (`bench/`, Block 6).
 Heute wird er beim ersten Suchen je Feld aus dem Speicher gebaut und bei
 jedem Schreibvorgang für den einen Knoten nachgeführt. Ein `index/`, das
 eine ältere Fassung hinterlassen hat, wird nicht gelesen und darf
@@ -960,7 +957,7 @@ Form 2 (3.0.0) hatte eine Datei je Knoten und eine je Kantenart.
 - `next_id(sammlung, prefix, padding)` liefert die höchste vorhandene Zahl
   mit diesem Präfix plus eins, aufgefüllt. Auf leerer Sammlung mit
   `padding=4`: `n_0001`. **Nachgemessen.**
-- **Die Zahl wird nie wiederverwendet (ab `4.0.0`, Issue #37).** Der
+- **Die Zahl wird nie wiederverwendet (ab `4.0.0`).** Der
   Müllsammler hält vor dem endgültigen Löschen die höchste Nummer je
   Sammlung und Präfix in `datenbank/_nummern.json` fest
   (`{sammlung: {präfix: zahl}}`), und `next_id` geht nie darunter, auch nicht
@@ -1002,5 +999,5 @@ Geschichte der früheren Punkte in `CHANGELOG.txt`.
 3. **Kein Stromausfall geprüft.** Alle Absturzproben beenden einen
    Prozess; ob `fsync` den Inhalt wirklich auf die Platte bringt, zeigen
    sie nicht (Abschnitt 5).
-4. **Alles liegt im Arbeitsspeicher** (Abschnitt 3.4). Gemessen bis
+4. **Alles liegt im Arbeitsspeicher** (Abschnitt 3.5). Gemessen bis
    100 000 Knoten und 200 000 Kanten; darüber gibt es keine Zahlen.

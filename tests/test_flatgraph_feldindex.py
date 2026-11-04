@@ -4,7 +4,7 @@ Der Feldindex: nachgeführt statt verworfen — und nie falsch.
 Seit 3.0.0-entwurf liegt der Feldindex nur im Speicher und wird bei jedem
 Schreibvorgang für genau den einen Knoten nachgeführt, statt bei jeder
 Änderung für die ganze Sammlung verworfen und neu gebaut zu werden.
-Gemessen (flatgraph/bench, Block 6, 10 000 Knoten): Änderung plus Suche
+Gemessen (bench/, Block 6, 10 000 Knoten): Änderung plus Suche
 kostete vorher 159 ms, die Änderung allein 0.8 ms.
 
 Die Gefahr dabei ist nicht Langsamkeit, sondern ein Index, der etwas
@@ -20,9 +20,7 @@ Wert und den tatsächlichen nicht mehr. Gegen 3.0.0 fällt diese Suite
 deshalb — das ist ihre Gegenprobe:
 
     python tests/test_flatgraph_feldindex.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_feldindex.py
-
-Importiert `pdms` nicht.
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_feldindex.py
 """
 import os
 import random

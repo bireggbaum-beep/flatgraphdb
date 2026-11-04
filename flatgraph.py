@@ -5,18 +5,12 @@ FlatGraphDB — Lightweight, file-based Graph Database for Python
 
 WAS ZUGESAGT WIRD UND WAS NICHT: siehe VERTRAG.md
 
-Diese Fassung kommt aus bireggbaum-beep/homedms (flatgraph/entwurf/,
-Issue #36, "flatgraph 4.0"). Herkunft, Abweichungen und ältere Belege
-liegen dort in flatgraph/HERKUNFT.md bzw. flatgraph/basislinie/ — hier
-absichtlich nicht dupliziert, um nicht zwei Quellen für dieselbe Frage
-zu haben.
-
 WAS DIESE BIBLIOTHEK NICHT GARANTIERT
 -------------------------------------
 THREADSICHER ab 3.0.0-entwurf: jede oeffentliche Methode nimmt eine
 Sperre der Instanz, eine Transaktion haelt sie ueber ihren ganzen Block.
 Bis 3.0.0 gab es keine, und zwei Threads zerstoerten den Bestand lautlos —
-pDMS hat das am 09.09.2026 mit Datenverlust bezahlt. NICHT geschuetzt ist,
+eine Anwendung hat das am 09.09.2026 mit Datenverlust bezahlt. NICHT geschuetzt ist,
 was `readonly=True` herausgibt: das sind Verweise in den Speicher, und wer
 sie spaeter liest, liest ohne Sperre.
 Ein Bestand hat EINE offene Instanz: beim Oeffnen wird er gesperrt, und
@@ -71,16 +65,10 @@ import warnings
 import weakref
 from datetime import datetime, timezone
 
-# Fassung IM CODE, nicht nur im readme. Dort steht seit dem 23.04.2026
-# unveraendert "2.1" — ueber 350 Zeilen Entwicklung hinweg, vom Stand
-# 3d6f67b bis aa6a993. Eine Nummer, die nichts unterscheidet, ist keine.
-# Deshalb hier mit dem Stand als Baumetadaten (semver "+"):
-#   3.0.0          ist die uebernommene Fassung in flatgraph/flatgraph.py
-#   4.0.0          ist diese Fassung (Neueinstufung 24.09.2026, Issue #36:
-#                  Speicherform 3 und die geaenderten Verhaltensweisen sind
-#                  eine neue Hauptversion)
-#   4.1.0          ist diese Fassung: purge() entfernt gezielt aus dem
-#                  Papierkorb — ab hier wird die naechste daraus
+# Die Fassung steht in __version__ (weiter unten), die Aenderungen je
+# Fassung in CHANGELOG.txt.
+
+
 class FlatGraphFehler(Exception):
     """Oberklasse aller flatgraph-Fehler. Wer alles fangen will, fängt die."""
 
@@ -1178,7 +1166,7 @@ class FlatGraphDB:
         """Die EINZIGE Stelle, an der Knoten auf die Platte gehen.
 
         Geschrieben wird je betroffenem Fach, jedes mit Arbeitsdatei, fsync
-        und `os.replace` (Invariante der pDMS-Kopie, siehe Kopf). Es wird nie
+        und `os.replace`. Es wird nie
         eine Datei an Ort und Stelle veraendert. Ein endgueltig geloeschter
         Knoten verschwindet aus seinem Fach; ein Fach ohne Knoten wird
         geloescht.
@@ -1879,7 +1867,7 @@ class FlatGraphDB:
     # verworfen und zusaetzlich als Datei unter datenbank/index/ abgelegt,
     # gesichert durch eine Pruefsumme ueber den Inhalt JEDES Knotens
     # (json.dumps + MD5). Gemessen am 24.09.2026 bei 10 000 Knoten
-    # (flatgraph/bench, Block 6): eine Aenderung 0.8 ms, dieselbe Aenderung
+    # (bench/, Block 6): eine Aenderung 0.8 ms, dieselbe Aenderung
     # mit anschliessender Suche 159 ms — zweimal die Pruefsumme zu je 76 ms
     # plus fsync der Indexdatei. Den Index aus dem Speicher zu bauen
     # kostet 3.6 ms; die Datei zu PRUEFEN kostete zwanzigmal so viel, wie
@@ -2053,8 +2041,8 @@ class FlatGraphDB:
         if node_id not in col_cache:
             # Vorher: `return False`. Ein Schreibvorgang, der ins Leere
             # geht, meldete sich mit einem Rueckgabewert, den Aufrufer
-            # routinemaessig ignorieren — nachgezaehlt in pDMS: 22
-            # Aufrufstellen, KEINE davon liest ihn. Eine vertippte Kennung
+            # routinemaessig ignorieren — nachgezaehlt in einer Anwendung:
+            # 22 Aufrufstellen, KEINE davon liest ihn. Eine vertippte Kennung
             # hiess damit: nichts passiert, niemand merkt es.
             raise KnotenFehlt(f"Node '{node_id}' does not exist in "
                               f"collection '{collection_name}'.")
@@ -2316,7 +2304,7 @@ class FlatGraphDB:
         # Bei der Dict-Form IST der Schluessel die Kennung — genau so schreibt
         # export_json. `list(data.values())` warf ihn weg, und danach verlangte
         # der Import ein id_field, das im Datensatz gar nicht steht: Export und
-        # Import passten nicht zusammen, obwohl beide aus Issue #16 stammen.
+        # Import passten nicht zusammen, obwohl beide aus derselben Änderung stammen.
         # Gefunden von tests/test_flatgraph_neuerungen.py.
         if isinstance(data, dict) and id_field is None:
             records = list(data.items())
@@ -3132,7 +3120,7 @@ class FlatGraphDB:
         dem, was `soft_delete` mit ihm hineingelegt hat (`_geloescht_durch`).
 
         Der Weg fuer Anwendungen. `run_garbage_collection` raeumt den GANZEN
-        Papierkorb ab und ist fuer die Wartung gedacht: in partAtlas hat ein
+        Papierkorb ab und ist fuer die Wartung gedacht: in einer Anwendung hat ein
         „Papierkorb leeren“ damit auch entfernte Ordner und Baugruppen
         mitgenommen, an die beim Klick niemand dachte.
 
@@ -3489,9 +3477,9 @@ class FlatGraphDB:
 # =============================================================================
 # Jede oeffentliche Methode laeuft unter der Sperre der Instanz. Bis 3.0.0
 # gab es keine; im Vertrag stand „keine Luecke, sondern eine Entscheidung“,
-# und jeder Anwender musste selbst serialisieren. pDMS tat es erst, nachdem
-# ein Lasttest mit drei Threads 1195 Fehler ergab, darunter halb
-# geschriebenes JSON (Commit 31dc756, 09.09.2026).
+# und jeder Anwender musste selbst serialisieren. Eine Anwendung tat es erst,
+# nachdem ein Lasttest mit drei Threads 1195 Fehler ergab, darunter halb
+# geschriebenes JSON (09.09.2026).
 #
 # Hier in einer Schleife statt als Dekorator an jeder Methode: eine neue
 # oeffentliche Methode ist damit geschuetzt, ohne dass jemand daran denken
@@ -3512,8 +3500,8 @@ def _unteilbar(methode):
 
     Bis hierher aenderten diese Methoden erst den Speicher und schrieben dann;
     scheiterte das Schreiben (volle Platte), kam der Fehler zwar an, der
-    Speicher aber zeigte den neuen Stand, die Platte den alten (Issue #39,
-    VERTRAG 2.6). Die Transaktion bringt das Undo-Log mit, das ein Scheitern
+    Speicher aber zeigte den neuen Stand, die Platte den alten
+    (VERTRAG 2.6). Die Transaktion bringt das Undo-Log mit, das ein Scheitern
     zuruecknimmt. Ein Fach bleibt ein Fach: geschrieben wird wie vorher direkt,
     ohne Absichtsdatei. Nur mit `audit=True` sind es zwei Faecher (Knoten und
     Protokoll), und die gehen jetzt gemeinsam ueber die Absichtsdatei.

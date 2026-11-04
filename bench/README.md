@@ -1,8 +1,6 @@
 # flatgraph — Leistungsmessung
 
-Misst flatgraph **ohne pDMS**, nur mit der Standardbibliothek. Die
-Messungen unter `tests/bench_*.py` messen pDMS (Server, Oberfläche,
-App-Funktionen); diese hier misst die Bibliothek.
+Misst flatgraph allein, nur mit der Standardbibliothek.
 
 Wozu: `VERTRAG.md` Abschnitt 5 nennt Zahlen vom 17.09.2026, gemessen
 noch in Speicherform 1 und ohne ein Skript im Repo, das sie wiederholt.
@@ -88,7 +86,7 @@ Python 3.11.
 | `list_nodes` | 1.19 ms | 4.61 ms | 25.67 ms |
 | `list_nodes readonly` | 0.08 ms | 0.26 ms | 1.37 ms |
 
-`FLATGRAPH_DATEI=flatgraph/flatgraph.py` (3.0.0) liefert bei 500 dieselben
+Fassung 3.0.0 liefert bei 500 dieselben
 Werte, im Rahmen der Streuung.
 
 Was daraus folgt:
@@ -258,8 +256,8 @@ Fassung gegen neue im selben Lauf, auf demselben Rechner.
 
 ### Hebel 1 — Feldindex nur im Speicher, nachgeführt statt verworfen
 
-24.09.2026. `flatgraph/flatgraph.py` (3.0.0) gegen
-`flatgraph/entwurf/flatgraph.py` (3.0.0-entwurf mit Hebel 1), Block 6.
+24.09.2026. Fassung 3.0.0 gegen
+Fassung 3.0.0-entwurf (3.0.0-entwurf mit Hebel 1), Block 6.
 
 | Messung | Bestand | 3.0.0 | Entwurf | Faktor |
 |---|---|---|---|---|
@@ -290,8 +288,8 @@ Fassung gegen neue im selben Lauf, auf demselben Rechner.
 
 ### H1 — ein Bestand, eine offene Instanz; Kantenschreiben ohne Nachlesen
 
-24.09.2026. `flatgraph/flatgraph.py` (3.0.0) gegen
-`flatgraph/entwurf/flatgraph.py` (mit H1), Blöcke 3 und 4, vier Kanten je
+24.09.2026. Fassung 3.0.0 gegen
+Fassung 3.0.0-entwurf (mit H1), Blöcke 3 und 4, vier Kanten je
 Knoten.
 
 | Messung | Bestand | 3.0.0 | Entwurf | Änderung |
@@ -317,8 +315,8 @@ Knoten.
 
 ### Hebel 2 — Transaktion mit Undo-Log statt Kopie des Bestands
 
-24.09.2026. `flatgraph/flatgraph.py` (3.0.0) gegen
-`flatgraph/entwurf/flatgraph.py` (mit Hebel 2), Block 4, vier Kanten je
+24.09.2026. Fassung 3.0.0 gegen
+Fassung 3.0.0-entwurf (mit Hebel 2), Block 4, vier Kanten je
 Knoten.
 
 | Messung | Bestand | 3.0.0 | Entwurf | Faktor |
@@ -417,13 +415,13 @@ Was daraus folgt:
 - **Mit Kanten kostet die Nachbarschaft sechs- bis siebenmal mehr**
   (`get_connected_edges`), ebenfalls wegen der Kopie jeder Kante.
 
-**Für die geplante Mustersuche (Issue #33) heisst das:** Sie muss über den
+**Für die geplante Mustersuche heisst das:** Sie muss über den
 Nachbarschaftsindex laufen, nie über `list_edges`, und sie muss bei dem
 Knoten anfangen, der am wenigsten erreicht — einem festen Knoten wie
 `raeume/R1` statt einer ganzen Sammlung. Dann kostet sie, was sie findet,
 und nicht, was im Bestand steht.
 
-### Speicherform 3 — Fächer statt einer Datei je Knoten (Issue #32)
+### Speicherform 3 — Fächer statt einer Datei je Knoten
 
 24.09.2026. Entwurf vor den Fächern (Speicherform 2) gegen Entwurf mit
 Fächern zu 25 (Speicherform 3), Blöcke 2 und 3, im selben Lauf.
@@ -451,7 +449,7 @@ Form 2 lag bei ~11 s kalt.
   (`_translate_legacy_edge`), die bei JEDEM Öffnen für jede Kante läuft,
   obwohl sie nur beim Umzug nötig wäre. Naheliegender nächster Schritt.
 
-### Absichtsdatei — Transaktion auch auf der Platte alles oder nichts (Issue #32)
+### Absichtsdatei — Transaktion auch auf der Platte alles oder nichts
 
 24.09.2026. Entwurf vor gegen Entwurf mit Absichtsdatei, Block 4, 4 Kanten
 je Knoten, im selben Lauf nacheinander.

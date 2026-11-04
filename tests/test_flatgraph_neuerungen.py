@@ -5,11 +5,9 @@ Der Stand vom 07.05.2026 brachte 13 neue Funktionen und 19 geänderte mit.
 Im flatgraph-Repo gibt es dazu **keine einzige Prüfung**. Diese Suite ist
 die erste, die diese Fläche anfasst.
 
-Sie prüft, was pDMS nicht braucht und deshalb auch nicht abdeckt:
+Sie prüft, was eine einfache Anwendung nicht braucht und deshalb nicht abdeckt:
 Aufzählungen und Referenzen im Schema, Kantenbedingungen, Import und
 Export, ausgelagerte Langtexte, und die kopierfreien Lesewege.
-
-Importiert `pdms` nicht.
 
     python tests/test_flatgraph_neuerungen.py
 """

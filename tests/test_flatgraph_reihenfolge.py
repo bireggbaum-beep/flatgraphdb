@@ -1,5 +1,5 @@
 """
-`topological_sort` und `detect_cycles` (Issue #38): Reihenfolge und Kreise
+`topological_sort` und `detect_cycles`: Reihenfolge und Kreise
 entlang EINER Kantenart.
 
 Der Anlass: `traverse` sortiert nach Abstand vom Start, nicht nach

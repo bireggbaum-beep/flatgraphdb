@@ -20,9 +20,7 @@ Müllsammler in einer Transaktion abgewiesen wird. Die eigentliche
 Gegenprobe ist, im Entwurf eine Vormerk-Stelle zu entfernen.
 
     python tests/test_flatgraph_transaktion.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_transaktion.py
-
-Importiert `pdms` nicht.
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_transaktion.py
 """
 import os
 import random

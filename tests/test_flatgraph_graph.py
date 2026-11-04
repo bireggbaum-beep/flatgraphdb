@@ -1,23 +1,18 @@
 """
-Die Graph-Natur von flatgraph — genau der Teil, den pDMS nie anfasst.
+Die Graph-Natur von flatgraph: Mehrsprung, Pfade und gerichtete
+Nachbarschaft — `traverse`, `collect_related`, `get_connected`,
+`find_nodes`, `get_node_raw`, `list_collections` und `transaction`.
 
-pDMS ruft 14 von 21 öffentlichen Methoden auf. Ungenutzt bleiben
-`traverse`, `collect_related`, `get_connected`, `find_nodes`,
-`get_node_raw`, `list_collections` und `transaction` — also Mehrsprung,
-Pfade und gerichtete Nachbarschaft. pDMS benutzt flatgraph im Grunde als
-flachen Schlüssel-Wert-Speicher mit einer Kantenart.
+Eine Anwendung, die flatgraph als flachen Schlüssel-Wert-Speicher mit einer
+Kantenart benutzt, fasst diese Fläche nie an. Diese Suite ist deshalb der
+Schutz gegen Overfitting: würde flatgraph nur gegen eine solche Anwendung
+entwickelt, verrottete ein Drittel seiner Oberfläche unbemerkt.
 
-Diese Suite prüft genau diese Fläche. Sie ist damit der eigentliche Schutz
-gegen Overfitting: würde flatgraph nur gegen pDMS entwickelt, verrottete
-ein Drittel seiner Oberfläche unbemerkt — ungeprüft, unentworfen,
-irgendwann falsch.
-
-Das Modell ist deshalb bewusst NICHT dokumentförmig: Anlagen, Räume und
-Prozesse, mit mehreren Kantenarten und beiden Richtungen. Käme hier
-"Dokument" oder "Kontext" vor, wäre die Prüfung schon wieder pDMS-förmig.
+Das Modell ist bewusst NICHT dokumentförmig: Anlagen, Räume und Prozesse,
+mit mehreren Kantenarten und beiden Richtungen.
 
     python tests/test_flatgraph_graph.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_graph.py
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_graph.py
 """
 import os
 import shutil
@@ -200,7 +195,7 @@ idx = os.path.join(ort_idx, "datenbank", "index")
 # Bis 3.0.0 lag der Index hier als Datei, gesichert durch eine Pruefsumme
 # ueber den ganzen Inhalt der Sammlung. Seit 3.0.0-entwurf liegt er nur im
 # Speicher: die Pruefung der Datei kostete zwanzigmal mehr als der
-# Neuaufbau, den sie ersparen sollte (flatgraph/bench, Block 6). Diese
+# Neuaufbau, den sie ersparen sollte (bench/, Block 6). Diese
 # Pruefung hiess vorher „Der Index landet auf der Platte“.
 check("Der Feldindex liegt nicht auf der Platte",
       not (os.path.isdir(idx) and os.listdir(idx)),

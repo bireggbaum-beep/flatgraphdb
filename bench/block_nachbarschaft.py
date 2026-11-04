@@ -3,7 +3,7 @@ Block 5 — Nachbarschaft: was kosten die Graph-Zugriffe, und wie hängen sie
 von der Dichte ab?
 
 Gemessen wird, worauf die geplanten Graphfunktionen (Mustersuche, Verbindung
-zeigen, mitgedachte Beziehungen, Regeln — Issue #33) aufbauen:
+zeigen, mitgedachte Beziehungen, Regeln) aufbauen:
 
   get_connected           Nachbarn eines Knotens, ausgehend
   get_connected_edges     dieselben, mit den Kanten

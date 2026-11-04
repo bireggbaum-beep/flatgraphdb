@@ -19,9 +19,7 @@ Zugesagt und hier geprüft:
 Gegen 3.0.0 fällt diese Suite — das ist ihre Gegenprobe:
 
     python tests/test_flatgraph_rueckruf.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_rueckruf.py
-
-Importiert `pdms` nicht.
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_rueckruf.py
 """
 import logging
 import os

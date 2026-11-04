@@ -1,5 +1,5 @@
 """
-Tut flatgraph, was `flatgraph/VERTRAG.md` zusagt?
+Tut flatgraph, was `VERTRAG.md` zusagt?
 
 Der Vertrag ist am 17.09.2026 aus Messungen entstanden, nicht aus dem
 Lesen des Codes. Diese Suite dreht das um: sie nimmt jede Zusage und
@@ -11,10 +11,8 @@ schlecht ist und im Vertrag als schlecht benannt wird. Das ist Absicht:
 Code gemeinsam nachgezogen werden. Ein Vertrag, der stillschweigend
 veraltet, ist schlimmer als keiner.
 
-Importiert `pdms` nicht.
-
     python tests/test_flatgraph_vertrag.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_vertrag.py
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_vertrag.py
 """
 import json
 import os
@@ -72,7 +70,7 @@ for name, fn, soll in erwartet:
 # Was frueher still scheiterte. Bis 2.1 gaben diese vier `False` zurueck —
 # ein Schreibvorgang, der ins Leere ging, meldete sich mit einem
 # Rueckgabewert, den Aufrufer routinemaessig ignorieren. Nachgezaehlt in
-# pDMS: 22 Aufrufstellen, KEINE davon liest ihn. Eine vertippte Kennung
+# einer Anwendung: 22 Aufrufstellen, KEINE davon liest ihn. Eine vertippte Kennung
 # hiess damit: nichts passiert, niemand merkt es.
 print("--- §4 was frueher still scheiterte ---")
 lautlos = [

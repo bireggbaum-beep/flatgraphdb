@@ -40,7 +40,7 @@ SAMEN = 20260924
 TEXT_BYTES = 500
 
 # Bewusst nicht dokumentförmig, wie in tests/test_flatgraph_graph.py:
-# flatgraph wird ohne pDMS gemessen.
+# flatgraph wird allein gemessen, nicht eine Anwendung.
 SAMMLUNG = "anlagen"
 KANTENART = "versorgt"
 ORTE = ["Halle 1", "Halle 2", "Keller", "Dach", "Werkstatt", "Lager"]

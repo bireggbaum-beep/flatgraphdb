@@ -15,8 +15,6 @@ neu sein, und ab dem Festschreiben der Absicht ganz neu.
 
 Gegenprobe: gegen die Fassung vor der Absichtsdatei fällt „ganz alt oder
 ganz neu“ beim zweiten Umbenennen.
-
-Importiert `pdms` nicht.
 """
 import json
 import os

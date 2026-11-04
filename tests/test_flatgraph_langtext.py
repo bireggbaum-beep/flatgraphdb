@@ -17,8 +17,6 @@ Verweis und löschte ihren Text; wer sie zurückholte, fand einen Pfad statt
 des Texts.
 
 Gegenprobe: gegen die Fassung davor fallen alle vier.
-
-Importiert `pdms` nicht.
 """
 import os
 import shutil

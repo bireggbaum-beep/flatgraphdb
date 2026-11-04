@@ -15,8 +15,6 @@ Zwei Dinge halten das auseinander, und beide werden hier geprüft:
                   ZULETZT. Ein Abbruch lässt damit einen unveränderten
                   Bestand zurück, keinen halb umgezogenen.
 
-Importiert `pdms` nicht.
-
     python tests/test_flatgraph_speicherform.py
 """
 import json
@@ -69,7 +67,7 @@ def bestand_in_form_1(knoten, delta=None):
 
 if getattr(fg, "SPEICHERFORM", 1) < 3:
     # Die Prüfungen für Form 2 stehen in der Git-Geschichte dieser Datei
-    # (bis Commit 67d066a). Ab hier prüft die Suite Form 3 samt Umzug 1 -> 3.
+    # (bis zur Fassung 3.0.0). Ab hier prüft die Suite Form 3 samt Umzug 1 -> 3.
     print("Diese Suite prüft SPEICHERFORM 3; der Prüfling liegt in Form "
           f"{getattr(fg, 'SPEICHERFORM', 1)}. Nichts zu tun.")
     print("0/0 Checks bestanden")

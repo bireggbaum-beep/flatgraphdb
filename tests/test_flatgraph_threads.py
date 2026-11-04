@@ -3,9 +3,9 @@ Threadsicherheit: mehrere Threads auf einer Instanz, und nichts geht verloren.
 
 Seit 3.0.0-entwurf läuft jede öffentliche Methode unter einer Sperre der
 Instanz, und eine Transaktion hält sie über ihren ganzen Block. Bis 3.0.0
-gab es keine. pDMS hat das am 09.09.2026 mit Datenverlust bezahlt: ein
-Lasttest mit drei Threads ergab 1195 Fehler, darunter halb geschriebenes
-JSON (Commit 31dc756). Die Reparatur lag danach im Anwender, nicht in der
+gab es keine. Eine Anwendung hat das am 09.09.2026 mit Datenverlust
+bezahlt: ein Lasttest mit drei Threads ergab 1195 Fehler, darunter halb
+geschriebenes JSON. Die Reparatur lag danach in der Anwendung, nicht in der
 Bibliothek.
 
 Nebenläufigkeitsfehler zeigen sich zufällig. Diese Suite muss sie deshalb
@@ -18,9 +18,7 @@ VERLÄSSLICH hervorrufen, sonst kann ihre Gegenprobe nicht fallen:
     Mikrosekunde, damit sie sich möglichst oft ins Wort fallen.
 
     python tests/test_flatgraph_threads.py
-    FLATGRAPH_DATEI=flatgraph/flatgraph.py python tests/test_flatgraph_threads.py
-
-Importiert `pdms` nicht.
+    FLATGRAPH_DATEI=/pfad/zu/anderer/flatgraph.py python tests/test_flatgraph_threads.py
 """
 import os
 import shutil

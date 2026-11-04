@@ -1,5 +1,5 @@
 """
-Löschen mit Vorschau (Issue #34): wissen, was passiert, bevor es passiert.
+Löschen mit Vorschau: wissen, was passiert, bevor es passiert.
 
 Bis 3.0.0 markierte erst der Müllsammler die Ziele von Kaskadenkanten und
 löschte sie im SELBEN Lauf endgültig. Sie lagen nie im Papierkorb, und man
@@ -16,8 +16,6 @@ Zugesagt und hier geprüft:
   - der Müllsammler löscht nur, was vor seinem Lauf im Papierkorb lag
 
 Gegenprobe: gegen die Fassung vor #34 fällt diese Suite.
-
-Importiert `pdms` nicht.
 """
 import os
 import shutil

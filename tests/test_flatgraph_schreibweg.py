@@ -16,9 +16,9 @@ und dann ist es zu spät.
 Sie prüft ausserdem die REIHENFOLGE. fsync NACH os.replace wäre wertlos:
 dann ist der Name schon getauscht, während der Inhalt noch im Puffer steht.
 
-WICHTIG: Diese Suite importiert `pdms` NICHT. Das ist Absicht und die
-mechanische Regel gegen Overfitting — lässt sich eine Eigenschaft von
-flatgraph nur über pDMS prüfen, gehört sie nicht zu flatgraph.
+Sie braucht nur flatgraph und die Standardbibliothek. Lässt sich eine
+Eigenschaft von flatgraph nur über eine Anwendung prüfen, gehört sie nicht
+zu flatgraph.
 
     python tests/test_flatgraph_schreibweg.py
 """
@@ -38,9 +38,6 @@ def check(name, ok, detail=""):
 
 
 from flatgraph import FlatGraphDB                                      # noqa: E402
-
-check("flatgraph lässt sich ohne pdms benutzen", "pdms" not in sys.modules,
-      "geladen: " + ", ".join(m for m in sys.modules if m.startswith("pdms")))
 
 ort = tempfile.mkdtemp(prefix="fg_schreibweg_")
 

@@ -1,5 +1,5 @@
 flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
-"pDMS:" nennt die Wirkung auf pDMS. Führend bleibt VERTRAG.md.
+Führend bleibt VERTRAG.md.
 
 4.5.3 (Speicherform 3)
 - datenbank/maintenance.log behält die letzten 1000 Einträge (MAX_PROTOKOLL) und wird über eine Arbeitsdatei geschrieben statt angehängt.
@@ -12,55 +12,53 @@ flatgraph — Änderungen. Neueste oben, eine Zeile je Änderung.
 - purge und run_garbage_collection lesen nach einem gescheiterten Schritt den Bestand neu von der Platte; vorher zeigte der Speicher Entferntes, das auf der Platte noch stand.
 
 4.5.0 (Speicherform 3)
-- topological_sort(rel_type, direction, sammlung): Reihenfolge entlang einer Kantenart, stufenweise [[ref]]; Kreis wirft ZyklusGefunden (auch ValueError, .zyklen). detect_cycles(rel_type, sammlung) meldet Kreise als Liste. Ungerichtete Kanten: ValueError. (Issue #38) pDMS: keine.
+- topological_sort(rel_type, direction, sammlung): Reihenfolge entlang einer Kantenart, stufenweise [[ref]]; Kreis wirft ZyklusGefunden (auch ValueError, .zyklen). detect_cycles(rel_type, sammlung) meldet Kreise als Liste. Ungerichtete Kanten: ValueError.
 
 4.4.3 (Speicherform 3)
-- Korrektur zu 4.4.2: Ein Bestand ohne _meta.json, dessen Umzug nach den Knoten, aber vor den Kanten abbrach, galt als fertig und verlor seine Kanten. Jetzt wird der Umzug zu Ende geführt, solange die Umzugsverzeichnisse noch da sind. pDMS: keine.
+- Korrektur zu 4.4.2: Ein Bestand ohne _meta.json, dessen Umzug nach den Knoten, aber vor den Kanten abbrach, galt als fertig und verlor seine Kanten. Jetzt wird der Umzug zu Ende geführt, solange die Umzugsverzeichnisse noch da sind.
 
 4.4.2 (Speicherform 3)
-- Fehlt _meta.json in einem Bestand der Form 3, wird er nicht mehr als alt umgezogen (jedes Fach wurde zu einem Knoten); die Marke wird nachgetragen. pDMS: keine.
-- Ein Fach, _meta.json oder _nummern.json mit falscher Struktur wirft DateiKaputt statt AttributeError/TypeError oder still angenommen zu werden. pDMS: keine.
+- Fehlt _meta.json in einem Bestand der Form 3, wird er nicht mehr als alt umgezogen (jedes Fach wurde zu einem Knoten); die Marke wird nachgetragen.
+- Ein Fach, _meta.json oder _nummern.json mit falscher Struktur wirft DateiKaputt statt AttributeError/TypeError oder still angenommen zu werden.
 
 4.4.1 (Speicherform 3)
-- Volle Platte: create_node, update_node, create_edge, delete_edge und reverse_edge lassen den Speicher beim alten Stand, wenn das Schreiben scheitert (Issue #39). Mit audit=True gehen Knoten und Protokoll gemeinsam über die Absichtsdatei. pDMS: keine.
-- Ungültiges UTF-8 in einem Fach und eine Kante ohne source/target werfen DateiKaputt statt UnicodeDecodeError/KeyError. pDMS: keine.
+- Volle Platte: create_node, update_node, create_edge, delete_edge und reverse_edge lassen den Speicher beim alten Stand, wenn das Schreiben scheitert. Mit audit=True gehen Knoten und Protokoll gemeinsam über die Absichtsdatei.
+- Ungültiges UTF-8 in einem Fach und eine Kante ohne source/target werfen DateiKaputt statt UnicodeDecodeError/KeyError.
 
 4.4.0 (Speicherform 3)
-- find_path(start, ziel, rel_type, direction, max_depth, kantenfilter): kürzester Weg nach Sprüngen, ungewichtet; gibt [(knoten, kanten_id)] oder None. Fehlender Start oder Ziel wirft KnotenFehlt. pDMS: keine.
+- find_path(start, ziel, rel_type, direction, max_depth, kantenfilter): kürzester Weg nach Sprüngen, ungewichtet; gibt [(knoten, kanten_id)] oder None. Fehlender Start oder Ziel wirft KnotenFehlt.
 
 4.3.0 (Speicherform 3)
-- reverse_edge(edge_id): dreht eine gerichtete Kante, Kennung und created_at bleiben. Wirft ValueError bei ungerichteter Kante, Kaskadenkante und nicht erlaubtem Paar. Neues Ereignis reverse_edge in bei_aenderung. pDMS: keine.
+- reverse_edge(edge_id): dreht eine gerichtete Kante, Kennung und created_at bleiben. Wirft ValueError bei ungerichteter Kante, Kaskadenkante und nicht erlaubtem Paar. Neues Ereignis reverse_edge in bei_aenderung.
 
 4.2.0 (Speicherform 3)
-- Schema: "optional": True an jeder Spec ({"type": int, "optional": True}); das Feld darf fehlen oder None sein, sonst wird es wie bisher geprüft. Die dict-Form gilt jetzt auch für int, float, bool. pDMS: keine, alte Schemata bleiben Pflicht.
-- schema_verstoesse(sammlung=None): meldet (ref, feld, grund), wo der Bestand gegen sein Schema verstösst, wirft nicht; gleiche Prüfung wie beim Schreiben. pDMS: keine.
+- Schema: "optional": True an jeder Spec ({"type": int, "optional": True}); das Feld darf fehlen oder None sein, sonst wird es wie bisher geprüft. Die dict-Form gilt jetzt auch für int, float, bool.
+- schema_verstoesse(sammlung=None): meldet (ref, feld, grund), wo der Bestand gegen sein Schema verstösst, wirft nicht; gleiche Prüfung wie beim Schreiben.
 
 4.1.0 (Speicherform 3)
-- purge(sammlung, kennung): einen Knoten aus dem Papierkorb endgültig entfernen, mit genau seiner Kaskade; lebende wirft NichtImPapierkorb. run_garbage_collection bleibt für die Wartung. pDMS: keine, kann aber ein „endgültig löschen“ je Eintrag bauen.
+- purge(sammlung, kennung): einen Knoten aus dem Papierkorb endgültig entfernen, mit genau seiner Kaskade; lebende wirft NichtImPapierkorb. run_garbage_collection bleibt für die Wartung.
 
 4.0.0 (Speicherform 3)
-Nach dem pDMS-Pin 8779e66 (noch nicht in pDMS):
-- next_id vergibt eine Nummer nicht mehr neu, auch nicht nach dem endgültigen Löschen der höchsten (neue Datei datenbank/_nummern.json). pDMS: behebt d_/q_/l_-Wiederverwendung, gilt erst ab dem nächsten endgültigen Löschen.
-- Ungerichtete Kanten: create_edge(..., gerichtet=False), Doppelschutz (KanteExistiert). pDMS: keine, Speicherform bleibt 3. (2d1d217)
-- direction="both" in get_connected, get_connected_edges, traverse. pDMS: keine, es nutzt nur "out" und "in". (2d1d217)
-- Unbekannte direction wirft ValueError statt wie "in" zu gelten. pDMS: keine. (2d1d217)
-- String-Interning für Quelle, Ziel, Kantenart: 80.2 auf 66.8 MB bei 80 000 Kanten. pDMS: keine. (2d1d217)
-- Kantenfeld "gerichtet" ist reserviert und wird aus meta verworfen. pDMS: keine. (2d1d217)
-- Speicherbarkeit per Typgang statt JSON hin und zurück; einzelnes Surrogat in Kennung oder Wert wird abgewiesen. pDMS: Upload mit fremd kodiertem Dateinamen gibt womöglich Fehler statt Datenverlust, ungeprüft. (2e653b4)
-- Eigene Kopie statt copy.deepcopy: 100 000 Knoten 995 auf 435 ms. pDMS: keine. (2e653b4)
-Bis zum pDMS-Pin 8779e66 (in pDMS seit 0.5.0):
-- Speicherform 3, Fächer mit bis zu 25 Knoten je Datei. pDMS: Umzug beim ersten Start ohne Rückweg, pDMS sichert vorher.
-- Absichtsdatei: Transaktion auch auf der Platte ganz oder gar nicht. pDMS: keine.
-- Löschen mit Vorschau: verwendungen(), loeschfolgen(), Kaskade in den Papierkorb, traverse(kantenfilter=). pDMS: nutzt keine Kaskadenkanten.
-- Müllsammler ist Methode der Instanz (run_garbage_collection), läuft nicht in Transaktionen. pDMS: services/aufraeumen.py umgestellt.
-- Rückruf bei_aenderung statt webhooks=; webhooks= wirft TypeError. pDMS: nutzt beides nicht.
-- Ein Bestand, eine offene Instanz (BestandBelegt); file_lock ohne Wirkung. pDMS: hält seine eigene Sperre zusätzlich.
-- Threadsicherheit: jede öffentliche Methode unter einer Sperre der Instanz. pDMS: keine.
-- Transaktion mit Undo-Log. pDMS: keine.
-- Feldindex nur im Speicher, nachgeführt. pDMS: keine.
-- Speicher ändert sich erst, wenn die Platte die Änderung aufnimmt (Werte, Namen, Kennungen). pDMS: ungültige Namen werden jetzt abgewiesen.
-- Namensregeln für Sammlungen und Kantenarten; Kennungen ohne Längengrenze. pDMS: keine.
-- Langtext-Dateien heissen mit Hash im Namen, alte bleiben lesbar. pDMS: nutzt longtext_threshold.
+- next_id vergibt eine Nummer nicht mehr neu, auch nicht nach dem endgültigen Löschen der höchsten (neue Datei datenbank/_nummern.json).
+- Ungerichtete Kanten: create_edge(..., gerichtet=False), Doppelschutz (KanteExistiert).
+- direction="both" in get_connected, get_connected_edges, traverse.
+- Unbekannte direction wirft ValueError statt wie "in" zu gelten.
+- String-Interning für Quelle, Ziel, Kantenart: 80.2 auf 66.8 MB bei 80 000 Kanten.
+- Kantenfeld "gerichtet" ist reserviert und wird aus meta verworfen.
+- Speicherbarkeit per Typgang statt JSON hin und zurück; einzelnes Surrogat in Kennung oder Wert wird abgewiesen.
+- Eigene Kopie statt copy.deepcopy: 100 000 Knoten 995 auf 435 ms.
+- Speicherform 3, Fächer mit bis zu 25 Knoten je Datei.
+- Absichtsdatei: Transaktion auch auf der Platte ganz oder gar nicht.
+- Löschen mit Vorschau: verwendungen(), loeschfolgen(), Kaskade in den Papierkorb, traverse(kantenfilter=).
+- Müllsammler ist Methode der Instanz (run_garbage_collection), läuft nicht in Transaktionen.
+- Rückruf bei_aenderung statt webhooks=; webhooks= wirft TypeError.
+- Ein Bestand, eine offene Instanz (BestandBelegt); file_lock ohne Wirkung.
+- Threadsicherheit: jede öffentliche Methode unter einer Sperre der Instanz.
+- Transaktion mit Undo-Log.
+- Feldindex nur im Speicher, nachgeführt.
+- Speicher ändert sich erst, wenn die Platte die Änderung aufnimmt (Werte, Namen, Kennungen).
+- Namensregeln für Sammlungen und Kantenarten; Kennungen ohne Längengrenze.
+- Langtext-Dateien heissen mit Hash im Namen, alte bleiben lesbar.
 
 3.0.0 (Speicherform 2, eine Datei je Knoten)
-- Stand von pDMS vor 0.5.0.
+- Ausgangsstand dieses Repos: eine Datei je Knoten.

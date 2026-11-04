@@ -1,13 +1,13 @@
 # flatgraph — Regeln für die Arbeit an diesem Repo
 
 Eine Graph-Datenbank in einer Python-Datei (`flatgraph.py`), dateibasiert,
-ohne fremde Datenbank. Ziel: eine Bibliothek, die jemand **ohne pDMS und PartAtlas**
-ernsthaft einsetzen kann. pDMS (`bireggbaum-beep/homedms`) und PartAtlas
-sind Anwender, kein Massstab.
+ohne fremde Datenbank. Ziel: eine Bibliothek, die jemand ohne eine
+bestimmte Anwendung ernsthaft einsetzen kann. Anwendungen sind Anwender,
+kein Massstab.
 
 - **Führend ist `VERTRAG.md`**: was zugesagt wird und was nicht. Jede
   Verhaltensänderung zieht ihn nach.
-- **Offene Punkte sind Issues in `bireggbaum-beep/flatgraphdb`.**
+- **Offene Punkte sind Issues in diesem Repo.**
 - **Alles auf Deutsch**: Kommentare, Tests, Commits, Antworten. Kommentare
   sagen warum, nicht was. Vorhandene englische Bezeichner bleiben.
 
